@@ -64,7 +64,7 @@ FocusScope {
         function onBrowserChanged() { Qt.callLater(root.revealCurrent) }
     }
     Rectangle {
-        anchors.fill: parent; color: Theme.panelBg
+        anchors.fill: parent; color: Theme.framePanel
         Rectangle { anchors.right: parent.right; width: Theme.hairline; height: parent.height; color: Theme.border; visible: !root.sorter }
     }
     Keys.onPressed: event => {
