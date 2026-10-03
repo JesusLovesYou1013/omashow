@@ -18,9 +18,20 @@ Sheet {
         standardButton(Dialog.Apply).objectName = "applySlideSize"
         standardButton(Dialog.Apply).enabled = Qt.binding(() => root.deckWidth !== backend.slideSize.width || root.deckHeight !== backend.slideSize.height)
     }
+    // The two everyday shapes. Switching keeps the height and moves the width, the way the start
+    // page's Widescreen (1920 × 1080) and Standard (1440 × 1080) differ.
+    readonly property bool wide: Math.abs(deckWidth - Math.round(deckHeight * 16 / 9)) <= 1
+    readonly property bool standard: Math.abs(deckWidth - Math.round(deckHeight * 4 / 3)) <= 1
+    function setAspect(w, h) { deckWidth = Math.max(240, Math.min(10000, Math.round(deckHeight * w / h))) }
     onApplied: { if(backend.resizeDeck(deckWidth,deckHeight,strategy.currentIndex===0)) close() }
     ColumnLayout {
         width: parent.width; spacing: Theme.s3
+        RowLayout {
+            spacing: Theme.s2
+            Label { text: qsTr("Shape"); color: Theme.textSecondary }
+            Button { objectName: "resizeWide"; text: qsTr("Widescreen · 16:9"); checked: root.wide; onClicked: root.setAspect(16, 9) }
+            Button { objectName: "resizeStandard"; text: qsTr("Standard · 4:3"); checked: root.standard; onClicked: root.setAspect(4, 3) }
+        }
         RowLayout {
             Label { text: qsTr("Width"); color: Theme.textSecondary }
             SpinBox { objectName: "resizeWidth"; from: 240; to: 10000; value: root.deckWidth; editable: true; onValueModified: root.deckWidth=value; Layout.fillWidth: true }
