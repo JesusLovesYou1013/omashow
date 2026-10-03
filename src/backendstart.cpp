@@ -4,7 +4,32 @@
 #include "io/recovery.h"
 #include <QDesktopServices>
 #include <QFileInfo>
+#include <QSettings>
 #include <QStandardPaths>
+
+namespace {
+QString startSettingsPath() {
+    return QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation) + "/start.ini";
+}
+} // namespace
+
+// The slide size last chosen on the start page, so the next launch offers it again. A file someone
+// edited by hand can hold anything, so every value is brought back into range here.
+QVariantMap Backend::startState() const {
+    QSettings settings(startSettingsPath(), QSettings::IniFormat);
+    return {{"slideSize", qBound(0, settings.value("slideSize", 0).toInt(), 4)},
+            {"customWidth", qBound(240, settings.value("customWidth", 1920).toInt(), 10000)},
+            {"customHeight", qBound(240, settings.value("customHeight", 1080).toInt(), 10000)}};
+}
+
+void Backend::setStartState(const QString &key, const QVariant &value) {
+    static const QStringList known{"slideSize", "customWidth", "customHeight"};
+    if (!known.contains(key)) return;
+    QSettings settings(startSettingsPath(), QSettings::IniFormat);
+    if (settings.value(key) == value) return;
+    settings.setValue(key, value);
+    settings.sync();
+}
 void Backend::activateDocument() {
     m_hasDocument = true;
     m_startVisible = false;

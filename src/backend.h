@@ -114,6 +114,7 @@ class Backend : public QObject {
     Q_PROPERTY(QVariantList outline READ outline NOTIFY documentChanged)
     Q_PROPERTY(QVariantMap findState READ findState NOTIFY findChanged)
     Q_PROPERTY(QVariantMap panelState READ panelState CONSTANT)
+    Q_PROPERTY(QVariantMap startState READ startState CONSTANT)
     Q_PROPERTY(bool reducedMotion READ reducedMotion WRITE setReducedMotion NOTIFY viewPreferencesChanged)
     Q_PROPERTY(bool highContrast READ highContrast WRITE setHighContrast NOTIFY viewPreferencesChanged)
     Q_PROPERTY(QVariantMap slideTransition READ slideTransition NOTIFY selectionChanged)
@@ -495,6 +496,8 @@ public:
     QVariantMap findState() const;
     QVariantMap panelState() const;
     Q_INVOKABLE void setPanelState(const QString &key, const QVariant &value);
+    QVariantMap startState() const;
+    Q_INVOKABLE void setStartState(const QString &key, const QVariant &value);
     bool reducedMotion() const;
     void setReducedMotion(bool reduced);
     bool highContrast() const;
