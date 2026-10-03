@@ -210,7 +210,9 @@ public:
     Q_INVOKABLE bool createDeck(int theme, qreal width, qreal height, int layout = 0);
     QVariantList templates() const;
     Q_INVOKABLE void refreshTemplates();
-    Q_INVOKABLE bool createFromTemplate(const QString &id);
+    // A width and height open the template at that size, its content fitted to it; without them it
+    // opens at the size it was kept at.
+    Q_INVOKABLE bool createFromTemplate(const QString &id, qreal width = 0, qreal height = 0);
     Q_INVOKABLE void installTemplateDialog();
     Q_INVOKABLE bool installTemplate(const QUrl &url);
     Q_INVOKABLE bool saveAsTemplate(const QString &name);

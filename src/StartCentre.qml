@@ -194,7 +194,9 @@ Rectangle {
                                         Layout.fillWidth: true
                                         Layout.preferredHeight: width * 9 / 16
                                         radius: Theme.rControl
-                                        color: Theme.showBg
+                                        // The preview takes the deck's shape inside a box that keeps its
+                                        // own, so the card shows around it and no card changes size.
+                                        color: templateCard.modelData.broken ? Theme.showBg : "transparent"
                                         clip: true
                                         Image {
                                             anchors.fill: parent
@@ -202,7 +204,7 @@ Rectangle {
                                             cache: false
                                             sourceSize.width: 360
                                             source: templateCard.modelData.broken ? ""
-                                                    : "image://slides/template/" + encodeURIComponent(templateCard.modelData.id)
+                                                    : "image://slides/template-at/" + root.deckWidth + "/" + root.deckHeight + "/" + encodeURIComponent(templateCard.modelData.id)
                                         }
                                         Label {
                                             anchors.centerIn: parent
@@ -244,7 +246,7 @@ Rectangle {
                                 Layout.fillWidth: true; wrapMode: Text.Wrap; color: Theme.textSecondary
                                 font.pixelSize: Theme.fsLabel
                                 text: qsTr("%1 · %2 masters · %3 · typefaces: %4")
-                                      .arg(root.chosen.size ?? "").arg(root.chosen.masters ?? 0)
+                                      .arg(Math.round(root.deckWidth) + " × " + Math.round(root.deckHeight)).arg(root.chosen.masters ?? 0)
                                       .arg((root.chosen.layouts ?? []).join(", "))
                                       .arg((root.chosen.fonts ?? []).join(", "))
                             }

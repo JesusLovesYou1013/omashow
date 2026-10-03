@@ -115,15 +115,20 @@ QImage SlideThumbnailProvider::requestImage(const QString &id, QSize *size,
     // "template/<id>" draws a template's opening slide. The id is a file path
     // or a built-in name, and the deck is read here rather than through Backend
     // — this thread must never touch the live document.
-    if (id.startsWith("template/")) {
+    // "template-at/<width>/<height>/<id>" draws it as it would open at that size.
+    if (id.startsWith("template/") || id.startsWith("template-at/")) {
+        const bool sized = id.startsWith("template-at/");
         Document document;
         QString error;
-        // Everything after the first slash is the id, so a template path with
+        // Everything after the prefix is the id, so a template path with
         // slashes in it survives whether or not the URL arrived decoded.
         const auto templateId = QUrl::fromPercentEncoding(
-            id.mid(QStringLiteral("template/").size()).toUtf8());
+            (sized ? id.section('/', 3) : id.mid(QStringLiteral("template/").size())).toUtf8());
         if (!Templates::open(templateId, &document, &error) ||
             document.slides.isEmpty())
+            return blank();
+        const QSizeF asked(id.section('/', 1, 1).toDouble(), id.section('/', 2, 2).toDouble());
+        if (sized && asked != document.size && !DeckResize::apply(document, asked, true))
             return blank();
         const auto slide = Design::resolve(document, 0);
         const int width = requestedSize.width() > 0 ? requestedSize.width() : 480;

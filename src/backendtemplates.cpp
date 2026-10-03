@@ -1,4 +1,5 @@
 #include "backend.h"
+#include "core/deckresize.h"
 #include "core/templates.h"
 #include "filepicker.h"
 #include "io/recovery.h"
@@ -8,10 +9,20 @@ QVariantList Backend::templates() const { return Templates::all(); }
 
 void Backend::refreshTemplates() { emit templatesChanged(); }
 
-bool Backend::createFromTemplate(const QString &id) {
+bool Backend::createFromTemplate(const QString &id, qreal width, qreal height) {
     Document document;
     QString error;
     if (!Templates::open(id, &document, &error)) {
+        setStatus(error);
+        emit failed(error);
+        return false;
+    }
+    // The start page's slide size is for every new deck, not only a blank one. Resizing here, before
+    // the deck exists, leaves nothing to undo.
+    const QSizeF asked(width, height);
+    if (width > 0 && height > 0 && asked != document.size &&
+        !DeckResize::apply(document, asked, true)) {
+        error = tr("Choose dimensions between 240 and 10,000, and a valid template.");
         setStatus(error);
         emit failed(error);
         return false;
