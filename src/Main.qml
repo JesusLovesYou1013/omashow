@@ -45,7 +45,9 @@ ApplicationWindow {
     readonly property bool dialogOpen: Sheets.count > 0
     font.family: Theme.fontFamily
     font.pixelSize: Theme.fsControl
-    color: Theme.windowBg
+    color: Theme.frameWindow
+    // Focused or not decides which of the two frame levels applies (see Theme.frameAlpha).
+    onActiveChanged: Theme.frameActive = active
 
     // Presenter notes under the Edit canvas, as in the concept; View toggles it.
     // Closed until asked for, as in Keynote: the slide gets the room.
@@ -467,7 +469,7 @@ ApplicationWindow {
         Rectangle {
             Layout.fillWidth: true
             implicitHeight: Theme.hTitleBar
-            color: Theme.windowBg
+            color: Theme.frameFlush
 
             RowLayout {
                 anchors.fill: parent
@@ -684,7 +686,7 @@ ApplicationWindow {
             Layout.fillWidth: true
             // A room's bar is only a title and Done, so it takes the slimmer height.
             implicitHeight: win.inMode ? Theme.hWorkspaceBar : Theme.hToolbar
-            color: Theme.panelBg
+            color: Theme.framePanel
             Hairline { anchors.top: parent.top; width: parent.width }
 
             RowLayout {
@@ -876,7 +878,7 @@ ApplicationWindow {
                     id: canvasArea
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    color: Theme.pasteboard
+                    color: Theme.framePasteboard
                     EditCanvas { id: editCanvas; anchors.fill: parent }
 
                 }
@@ -885,7 +887,7 @@ ApplicationWindow {
                 Rectangle {
                     Layout.fillWidth: true
                     implicitHeight: win.notesOpen ? Theme.hCardHeader + Theme.hNotes : Theme.hCardHeader
-                    color: Theme.panelBg
+                    color: Theme.framePanel
                     Hairline { anchors.top: parent.top; width: parent.width }
                     RowLayout {
                         id: notesHeader
@@ -1100,7 +1102,7 @@ ApplicationWindow {
             objectName: "statusBar"
             Layout.fillWidth: true
             implicitHeight: Theme.hStatusBar
-            color: Theme.windowBg
+            color: Theme.frameFlush
             Hairline { anchors.top: parent.top; width: parent.width }
 
             RowLayout {
@@ -1255,6 +1257,7 @@ ApplicationWindow {
     }
 
     Component.onCompleted: {
+        Theme.frameActive = active
         win.sanePanels()
         presenter.attach(audienceWindow,consoleWindow,win)
         const found = backend.recoveryCandidates()

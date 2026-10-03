@@ -53,6 +53,30 @@ QtObject {
     readonly property color accentText:
         (0.2126 * accent.r + 0.7152 * accent.g + 0.0722 * accent.b) > 0.55 ? "#04121A" : "#F2F7FF"
 
+    // ── The editing window's frame ──────────────────────────────────────────
+    // The palette above is fixed. What a desktop transparency setting may change is how SOLID the main
+    // editing window's frame is drawn (OmarchyTheme.frameOpacity; 1 unless such a setting lowers it).
+    // Only these frame tokens follow it. Slides, thumbnails, dialogs, menus and every other window keep
+    // the solid tokens, so the work is always judged against solid colour.
+    property bool frameActive: true      // set by the main window: focused or not
+    // A new level fades in over the time the desktop takes to fade its windows to it, so the frame moves
+    // with them instead of jumping. Focus changes switch at once, as the compositor does for windows.
+    readonly property int durFrameFade: 1500
+    property real frameFocused: OmarchyTheme.frameOpacity
+    property real frameUnfocused: OmarchyTheme.frameOpacityInactive
+    Behavior on frameFocused { NumberAnimation { duration: theme.durFrameFade } }
+    Behavior on frameUnfocused { NumberAnimation { duration: theme.durFrameFade } }
+    readonly property real frameAlpha: frameActive ? frameFocused : frameUnfocused
+    readonly property bool frameSeeThrough: frameAlpha < 0.999
+    // A panel sits on the window, so its own layer only adds what makes the two together a little
+    // more solid than the bare window (framePanelExtra more), instead of stacking to almost solid.
+    readonly property real framePanelExtra: 0.05
+    readonly property real framePanelLayer: frameSeeThrough ? (Math.min(1, frameAlpha + framePanelExtra) - frameAlpha) / (1 - frameAlpha) : 1
+    readonly property color frameWindow: frameSeeThrough ? withAlpha(windowBg, frameAlpha) : windowBg
+    readonly property color frameFlush: frameSeeThrough ? "transparent" : windowBg     // bars the window's own colour
+    readonly property color framePanel: frameSeeThrough ? withAlpha(panelBg, framePanelLayer) : panelBg
+    readonly property color framePasteboard: frameSeeThrough ? withAlpha(pasteboard, framePanelLayer) : pasteboard
+
     function hovered(base) { return Qt.lighter(base, 1.06) }
     function pressedOn(base) { return Qt.darker(base, 1.08) }
     function withAlpha(c, a) { return Qt.rgba(c.r, c.g, c.b, a) }

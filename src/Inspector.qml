@@ -9,7 +9,7 @@ import Omashow 1.0
 Rectangle {
     id: root
     objectName: "inspector"
-    color: Theme.panelBg
+    color: Theme.framePanel
 
     property bool stylesExpanded: false
     signal applyLayoutRequested(string layoutId)

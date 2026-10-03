@@ -3,6 +3,7 @@
 #include <QHash>
 #include <QFileSystemWatcher>
 #include <QObject>
+#include <QPair>
 #include <QString>
 
 class QDBusVariant;
@@ -25,6 +26,12 @@ class OmarchyTheme : public QObject {
     Q_PROPERTY(bool accentFollowed READ accentFollowed NOTIFY colorsChanged)
     Q_PROPERTY(QString accentForeground READ accentForeground NOTIFY colorsChanged)
     Q_PROPERTY(QString selection READ selection NOTIFY colorsChanged)
+    // How solid the editing window's frame (bars, panels, the surround of the slide) is drawn, for the
+    // focused and the unfocused window: 1 = solid, the default. A desktop transparency setting can lower
+    // it (OmaSkins publishes one), and only the frame follows: slides and thumbnails stay solid, as they
+    // must for judging the work. Without such a setting nothing changes.
+    Q_PROPERTY(qreal frameOpacity READ frameOpacity NOTIFY frameOpacityChanged)
+    Q_PROPERTY(qreal frameOpacityInactive READ frameOpacityInactive NOTIFY frameOpacityChanged)
 
 public:
     explicit OmarchyTheme(QObject *parent = nullptr);
@@ -37,6 +44,10 @@ public:
     bool accentFollowed() const { return m_accentFollowed; }
     QString selection() const { return m_selection; }
     QString accentForeground() const { return foregroundFor(m_accent); }
+    qreal frameOpacity() const { return m_frameOpacity; }
+    qreal frameOpacityInactive() const { return m_frameOpacityInactive; }
+    // "focused unfocused ..." as OmaSkins writes it; (1, 1) for anything else.
+    static QPair<qreal, qreal> frameOpacityFromText(const QString &text);
 
     // key = value pairs from an omarchy colors.toml; empty when there is none.
     static QHash<QString, QString> colorsFromFile(const QString &path);
@@ -47,6 +58,7 @@ public:
 
 public slots:
     void reload();
+    void reloadFrameOpacity();
 
 private slots:
     void handlePortalSettingChanged(const QString &nameSpace, const QString &key,
@@ -54,6 +66,7 @@ private slots:
 
 private:
     static QString colorsPath();
+    static QString frameOpacityPath();
     void watchTheme();
     bool detectDarkMode() const;
     qreal detectTextScale() const;
@@ -66,9 +79,13 @@ private:
     bool m_accentFollowed = false;
     QString m_selection;
     QFileSystemWatcher m_watcher;
+    qreal m_frameOpacity = 1.0;
+    qreal m_frameOpacityInactive = 1.0;
+    QFileSystemWatcher m_frameWatcher;
 
 signals:
     void darkModeChanged();
     void textScaleChanged();
     void colorsChanged();
+    void frameOpacityChanged();
 };

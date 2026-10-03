@@ -105,6 +105,52 @@ OmarchyTheme::OmarchyTheme(QObject *parent) : QObject(parent) {
     connect(&m_watcher, &QFileSystemWatcher::fileChanged, this, &OmarchyTheme::reload);
 
     reload();
+
+    connect(&m_frameWatcher, &QFileSystemWatcher::directoryChanged, this, &OmarchyTheme::reloadFrameOpacity);
+    connect(&m_frameWatcher, &QFileSystemWatcher::fileChanged, this, &OmarchyTheme::reloadFrameOpacity);
+    reloadFrameOpacity();
+}
+
+// OmaSkins (a look manager for Omarchy) keeps the desktop's transparency step here as
+// "<focused> <unfocused> <blur|noblur>", e.g. "0.75 0.68 blur"; no file means the desktop's default.
+QString OmarchyTheme::frameOpacityPath() {
+    QString config = qEnvironmentVariable("XDG_CONFIG_HOME");
+    if (config.isEmpty())
+        config = QDir::homePath() + QStringLiteral("/.config");
+    return config + QStringLiteral("/omaskins/transparency");
+}
+
+QPair<qreal, qreal> OmarchyTheme::frameOpacityFromText(const QString &text) {
+    const QStringList parts = text.simplified().split(QLatin1Char(' '), Qt::SkipEmptyParts);
+    if (parts.size() < 2)
+        return {1.0, 1.0};
+    bool okFocused = false, okUnfocused = false;
+    const qreal focused = parts.at(0).toDouble(&okFocused);
+    const qreal unfocused = parts.at(1).toDouble(&okUnfocused);
+    if (!okFocused || !okUnfocused)
+        return {1.0, 1.0};
+    // Never clearer than half: the frame's labels and icons still have to read.
+    return {qBound(0.5, focused, 1.0), qBound(0.5, unfocused, 1.0)};
+}
+
+void OmarchyTheme::reloadFrameOpacity() {
+    const QString path = frameOpacityPath();
+    const QString dir = QFileInfo(path).absolutePath();
+    // The file is replaced (and removed at the default step), so the folder is watched too.
+    if (QDir(dir).exists() && !m_frameWatcher.directories().contains(dir))
+        m_frameWatcher.addPath(dir);
+    if (QFileInfo::exists(path) && !m_frameWatcher.files().contains(path))
+        m_frameWatcher.addPath(path);
+
+    QPair<qreal, qreal> next{1.0, 1.0};
+    QFile file(path);
+    if (file.open(QIODevice::ReadOnly | QIODevice::Text))
+        next = frameOpacityFromText(QString::fromUtf8(file.readLine()));
+    if (qFuzzyCompare(next.first, m_frameOpacity) && qFuzzyCompare(next.second, m_frameOpacityInactive))
+        return;
+    m_frameOpacity = next.first;
+    m_frameOpacityInactive = next.second;
+    emit frameOpacityChanged();
 }
 
 QString OmarchyTheme::colorsPath() {
