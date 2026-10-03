@@ -108,6 +108,9 @@ Rectangle {
                             objectName: "startDimensions"
                             Layout.fillWidth: true
                             model: [qsTr("Widescreen · 16:9"),qsTr("Standard · 4:3"),qsTr("Portrait · 9:16"),qsTr("Square · 1:1"),qsTr("Custom")]
+                            // The size chosen last time is the one offered next time.
+                            currentIndex: backend.startState.slideSize
+                            onActivated: backend.setStartState("slideSize", currentIndex)
                         }
                         ComboBox {
                             objectName: "startLayout"
@@ -119,8 +122,8 @@ Rectangle {
                         RowLayout {
                             visible: dimensions.currentIndex === 4
                             Layout.columnSpan: 2
-                            NumField { id: customWidth; objectName: "startWidth"; Layout.fillWidth: true; label: qsTr("W"); value: 1920; onCommitted: v => value = Math.max(240,Math.min(10000,v)) }
-                            NumField { id: customHeight; objectName: "startHeight"; Layout.fillWidth: true; label: qsTr("H"); value: 1080; onCommitted: v => value = Math.max(240,Math.min(10000,v)) }
+                            NumField { id: customWidth; objectName: "startWidth"; Layout.fillWidth: true; label: qsTr("W"); value: backend.startState.customWidth; onCommitted: v => { value = Math.max(240,Math.min(10000,v)); backend.setStartState("customWidth", value) } }
+                            NumField { id: customHeight; objectName: "startHeight"; Layout.fillWidth: true; label: qsTr("H"); value: backend.startState.customHeight; onCommitted: v => { value = Math.max(240,Math.min(10000,v)); backend.setStartState("customHeight", value) } }
                         }
                     }
                     RowLayout {
