@@ -76,6 +76,19 @@ QtObject {
     readonly property color frameFlush: frameSeeThrough ? "transparent" : windowBg     // bars the window's own colour
     readonly property color framePanel: frameSeeThrough ? withAlpha(panelBg, framePanelLayer) : panelBg
     readonly property color framePasteboard: frameSeeThrough ? withAlpha(pasteboard, framePanelLayer) : pasteboard
+    // The start page has no bars and no pasteboard: the page itself is the surface, so it takes the
+    // panels' level and reads as solid as the editing view beside it. Its cards sit on the page one
+    // step up, and a card that is hovered or chosen comes forward one step more.
+    readonly property real frameCardExtra: 0.10
+    readonly property real frameCardRaisedExtra: 0.15
+    // The layer that lifts a surface already `from` solid to `to` solid.
+    function frameLayerOver(from, to) {
+        const base = Math.min(1, from)
+        return base >= 1 ? 1 : (Math.min(1, to) - base) / (1 - base)
+    }
+    readonly property color framePage: frameSeeThrough ? withAlpha(windowBg, framePanelLayer) : windowBg
+    readonly property color frameCard: frameSeeThrough ? withAlpha(panelBg, frameLayerOver(frameAlpha + framePanelExtra, frameAlpha + frameCardExtra)) : panelBg
+    readonly property color frameCardRaised: frameSeeThrough ? withAlpha(panelRaised, frameLayerOver(frameAlpha + framePanelExtra, frameAlpha + frameCardRaisedExtra)) : panelRaised
 
     function hovered(base) { return Qt.lighter(base, 1.06) }
     function pressedOn(base) { return Qt.darker(base, 1.08) }
