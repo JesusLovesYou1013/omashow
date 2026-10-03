@@ -456,7 +456,7 @@ ApplicationWindow {
         onCreateRequested: win.confirmThenNew()
         onOpenRequested: win.confirmThenOpen()
         onRecentRequested: path => win.guard(() => backend.openRecent(path))
-        onTemplateRequested: id => win.guard(() => { if (backend.createFromTemplate(id)) win.workspace = 0 })
+        onTemplateRequested: id => win.guard(() => { if (backend.createFromTemplate(id, startCentre.deckWidth, startCentre.deckHeight)) win.workspace = 0 })
     }
     ColumnLayout {
         anchors.fill: parent
