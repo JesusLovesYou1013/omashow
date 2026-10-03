@@ -6,7 +6,7 @@ import Omashow 1.0
 Rectangle {
     id: root
     objectName: "startCentre"
-    color: Theme.windowBg
+    color: Theme.framePage
     property int themeIndex: 0
     property int layoutIndex: 0
     readonly property real deckWidth: dimensions.currentIndex === 4 ? customWidth.value : sizes[dimensions.currentIndex].w
@@ -78,7 +78,7 @@ Rectangle {
                                 checked: root.themeIndex === index
                                 onClicked: root.themeIndex = index
                                 background: Rectangle {
-                                    color: card.hovered ? Theme.panelRaised : Theme.panelBg
+                                    color: card.hovered ? Theme.frameCardRaised : Theme.frameCard
                                     border.color: card.checked ? Theme.accent : Theme.border
                                     border.width: card.checked ? Theme.selectionRing : Theme.hairline
                                     radius: Theme.rControl
@@ -180,7 +180,7 @@ Rectangle {
                                 Layout.fillWidth: true
                                 implicitHeight: templateBody.implicitHeight + Theme.s3 * 2
                                 radius: Theme.rCard
-                                color: chosen ? Theme.panelRaised : Theme.panelBg
+                                color: chosen ? Theme.frameCardRaised : Theme.frameCard
                                 border.width: chosen ? Theme.selectionRing : Theme.hairline
                                 border.color: chosen ? Theme.accent : Theme.border
                                 readonly property bool chosen: root.chosenTemplate === modelData.id
@@ -285,7 +285,7 @@ Rectangle {
                         required property int index
                         width: recentList.width
                         implicitHeight: recentContent.implicitHeight + Theme.s3 * 2
-                        color: Theme.panelBg; radius: Theme.rControl
+                        color: Theme.frameCard; radius: Theme.rControl
                         ColumnLayout {
                             id: recentContent
                             anchors.left: parent.left; anchors.right: parent.right
