@@ -84,6 +84,9 @@ class Backend : public QObject {
     Q_PROPERTY(bool canRedo READ canRedo NOTIFY documentChanged)
     Q_PROPERTY(QString undoLabel READ undoLabel NOTIFY documentChanged)
     Q_PROPERTY(QSizeF slideSize READ slideSize NOTIFY documentChanged)
+    // Points per slide unit, as a pptx is written (the slide 12192000 EMU,
+    // 960 pt, wide). Type is stored in units and shown in points.
+    Q_PROPERTY(qreal ptPerUnit READ ptPerUnit NOTIFY documentChanged)
     Q_PROPERTY(bool modified READ modified NOTIFY documentChanged)
     Q_PROPERTY(bool snapEnabled READ snapEnabled WRITE setSnapEnabled NOTIFY snapEnabledChanged)
     // The alignments the current drag is sitting on, for the canvas to draw.
@@ -137,6 +140,10 @@ public:
     // suggested stand-in; and the rewrite, as one undo step.
     Q_INVOKABLE QVariantList missingFonts() const;
     Q_INVOKABLE int substituteFonts(const QVariantMap &replacements);
+    // The upright weights (100-900) the typeface really has, ascending. A name
+    // that is not installed answers for the face it falls back to. Cached per
+    // family, so the inspector asks once per family change.
+    Q_INVOKABLE QVariantList fontWeights(const QString &family) const;
     Q_INVOKABLE void keepMyVersion();
     Q_INVOKABLE void reloadFromDisk();
     QString status() const { return m_status; }
@@ -261,6 +268,7 @@ public:
     bool canRedo() const { return m_history.canRedo(); }
     QString undoLabel() const { return m_history.undoLabel(); }
     QSizeF slideSize() const { return m_document.size; }
+    qreal ptPerUnit() const { return 12192000.0 / qMax(1.0, m_document.size.width()) / 12700.0; }
     bool modified() const { return m_modified; }
     bool snapEnabled() const { return m_snapEnabled; }
     void setSnapEnabled(bool enabled);
@@ -289,6 +297,10 @@ public:
     Q_INVOKABLE bool moveCustomShowSlide(const QString &id, int from, int to);
     Q_INVOKABLE bool resizeDeck(qreal width, qreal height, bool scaleContent = true);
     Q_INVOKABLE QRectF selectionVisualBounds() const;
+    // How far a slide's visible objects reach above and below the slide, in
+    // slide units: {top: <= 0, bottom: >= slide height}. The edit canvas keeps
+    // that whole stretch clear of the neighbouring slides.
+    Q_INVOKABLE QVariantMap slideExtent(int index) const;
     Q_INVOKABLE void rotateSelection(qreal degrees, bool snap = false);
     Q_INVOKABLE void resizeSelectionHandle(qreal hx, qreal hy, qreal dx, qreal dy);
     Q_INVOKABLE void addSlide();
@@ -297,6 +309,8 @@ public:
     Q_INVOKABLE void moveSlide(int from, int to);
 
     Q_INVOKABLE bool selectAt(qreal x, qreal y, bool extend = false, bool behind = false);
+    // Whether a click at this slide point would pick (and so could move) an object.
+    Q_INVOKABLE bool hitsObject(qreal x, qreal y) const;
     Q_INVOKABLE void select(const QString &id);
     Q_INVOKABLE void clearSelection();
 
@@ -626,6 +640,7 @@ private:
     std::shared_ptr<MediaAsset::Job> m_mediaJob;
     QTimer m_mediaProgressTimer;
     QHash<QString,QString> m_mediaPermissions;
+    mutable QHash<QString,QVariantList> m_fontWeights;
     int m_documentGeneration = 0, m_mediaPickerGeneration = 0;
     bool m_mediaPickerEmbed = true;
     QString m_mediaPickerSlide, m_mediaPickerTarget;

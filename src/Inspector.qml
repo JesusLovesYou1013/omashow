@@ -16,9 +16,33 @@ Rectangle {
     readonly property var sel: backend.selection
     // While text is selected on the slide, formatting applies to that stretch.
     readonly property var range: backend.textSelection
+    // Type sizes and other text measures are shown and typed in points, the
+    // way PowerPoint shows them, and stored in slide units as before.
+    readonly property real ptPerUnit: backend.ptPerUnit
     function style(key, on) {
         if (range.active) backend.formatSelection(key, on ? 1 : 2)
         else backend.setSelectedProperty(key, on)
+    }
+    // Bold is the same weight the Size row already writes: 700 on, 400 off.
+    // A selected stretch uses "weight"; the whole box uses "fontWeight".
+    function bold(on) {
+        if (range.active) backend.formatSelection("weight", on ? 700 : 400)
+        else backend.setSelectedProperty("fontWeight", on ? 700 : 400)
+    }
+    readonly property int currentWeight: range.active ? (range.weight ?? 400) : (sel.fontWeight ?? 400)
+    // Asked once per family change; the backend caches each family's faces.
+    readonly property string weightFamily: (range.active ? range.fontFamily : sel.fontFamily) ?? Theme.fontFamily
+    readonly property var familyWeights: isText ? backend.fontWeights(weightFamily) : []
+    readonly property var weightChoices: {
+        const list = familyWeights.slice()
+        if (list.indexOf(currentWeight) < 0) list.push(currentWeight)
+        return list.sort((a, b) => a - b)
+    }
+    function weightName(w) {
+        const names = { 100: qsTr("Thin"), 200: qsTr("Extra light"), 300: qsTr("Light"), 400: qsTr("Regular"),
+                        500: qsTr("Medium"), 600: qsTr("Semibold"), 700: qsTr("Bold"), 800: qsTr("Extra bold"),
+                        900: qsTr("Black") }
+        return names[w] ?? String(w)
     }
     readonly property bool isMedia: backend.hasSelection && sel.type === "media"
     readonly property bool isImage: backend.hasSelection && sel.type === "image"
@@ -53,6 +77,16 @@ Rectangle {
         display: AbstractButton.IconOnly
         implicitWidth: Theme.hControl + Theme.s1
         implicitHeight: Theme.hControl + Theme.s1
+        ToolTip.visible: hovered && tip !== ""
+        ToolTip.delay: Theme.tooltipDelay
+        ToolTip.text: tip
+        Accessible.name: tip
+    }
+    // B / I / U. The letter is the icon; the accessible name stays the word.
+    component StyleMark: Button {
+        property string tip: ""
+        property bool mark: true
+        checkable: true
         ToolTip.visible: hovered && tip !== ""
         ToolTip.delay: Theme.tooltipDelay
         ToolTip.text: tip
@@ -434,31 +468,37 @@ Rectangle {
             }
             FieldRow {
                 label: qsTr("Size")
-                NumField {
-                    Layout.fillWidth: true
-                    suffix: " pt"
-                    value: root.range.active ? (root.range.fontSize ?? Theme.fsBase) : (root.sel.fontSize ?? Theme.fsBase)
-                    onCommitted: (v) => root.range.active ? backend.formatSelection("fontSize", v)
-                                                          : backend.setSelectedProperty("fontSize", v)
+                // Half points; grow / shrink beside it. One undo step per change.
+                FontSizeField {
+                    value: (root.range.active ? (root.range.fontSize ?? Theme.fsBase) : (root.sel.fontSize ?? Theme.fsBase)) * root.ptPerUnit
+                    onCommitted: (v) => root.range.active ? backend.formatSelection("fontSize", v / root.ptPerUnit)
+                                                          : backend.setSelectedProperty("fontSize", v / root.ptPerUnit)
                 }
                 ComboBox {
+                    objectName: "textWeight"
                     Layout.preferredWidth: Theme.s5 * 5
-                    model: [400, 500, 600, 700]
-                    displayText: [qsTr("Regular"), qsTr("Medium"), qsTr("Semibold"), qsTr("Bold")][currentIndex] ?? currentText
-                    currentIndex: Math.max(0, model.indexOf(root.range.active ? (root.range.weight ?? 400)
-                                                                              : (root.sel.fontWeight ?? 400)))
-                    onActivated: root.range.active ? backend.formatSelection("weight", model[currentIndex])
-                                                   : backend.setSelectedProperty("fontWeight", model[currentIndex])
+                    // Only weights the typeface really has, so each entry looks
+                    // different; the current value stays listed even if odd.
+                    model: root.weightChoices.map(w => ({ value: w, text: root.weightName(w) }))
+                    textRole: "text"
+                    valueRole: "value"
+                    visible: root.weightChoices.some(w => w !== 400 && w !== 700)
+                    currentIndex: Math.max(0, root.weightChoices.indexOf(root.currentWeight))
+                    onActivated: (index) => root.range.active ? backend.formatSelection("weight", root.weightChoices[index])
+                                                              : backend.setSelectedProperty("fontWeight", root.weightChoices[index])
                 }
             }
             FieldRow {
                 label: qsTr("Style")
-                Button { objectName: "textItalic"; checkable: true; text: qsTr("Italic")
-                         checked: root.range.active ? (root.range.italic ?? false) : (root.sel.italic ?? false)
-                         onToggled: root.style("italic", checked) }
-                Button { objectName: "textUnderline"; checkable: true; text: qsTr("Underline")
-                         checked: root.range.active ? (root.range.underline ?? false) : (root.sel.underline ?? false)
-                         onToggled: root.style("underline", checked) }
+                StyleMark { objectName: "textBold"; text: "B"; font.bold: true; tip: qsTr("Bold")
+                            checked: root.currentWeight >= 700
+                            onToggled: root.bold(checked) }
+                StyleMark { objectName: "textItalic"; text: "I"; font.italic: true; tip: qsTr("Italic")
+                            checked: root.range.active ? (root.range.italic ?? false) : (root.sel.italic ?? false)
+                            onToggled: root.style("italic", checked) }
+                StyleMark { objectName: "textUnderline"; text: "U"; font.underline: true; tip: qsTr("Underline")
+                            checked: root.range.active ? (root.range.underline ?? false) : (root.sel.underline ?? false)
+                            onToggled: root.style("underline", checked) }
                 Button { objectName: "textStrike"; checkable: true; text: qsTr("Strike")
                          visible: root.range.active
                          checked: root.range.strike ?? false
@@ -516,19 +556,19 @@ Rectangle {
             }
             FieldRow {
                 label: qsTr("Tab stop")
-                NumField { objectName: "textTabStop"; Layout.fillWidth: true; suffix: " pt"
-                           value: root.sel.tabStop ?? 0
-                           onCommitted: v => backend.setSelectedProperty("tabStop", v) }
+                NumField { objectName: "textTabStop"; Layout.fillWidth: true; suffix: " pt"; decimals: 1
+                           value: (root.sel.tabStop ?? 0) * root.ptPerUnit
+                           onCommitted: v => backend.setSelectedProperty("tabStop", v / root.ptPerUnit) }
             }
             FieldRow {
                 label: qsTr("Columns")
                 SpinBox { objectName: "textColumns"; Layout.fillWidth: true; from: 1; to: 6
                           value: root.sel.columns ?? 1
                           onValueModified: backend.setSelectedProperty("columns", value) }
-                NumField { objectName: "textColumnGap"; Layout.fillWidth: true; suffix: " pt"
+                NumField { objectName: "textColumnGap"; Layout.fillWidth: true; suffix: " pt"; decimals: 1
                            visible: (root.sel.columns ?? 1) > 1
-                           value: root.sel.columnGap ?? 0
-                           onCommitted: v => backend.setSelectedProperty("columnGap", v) }
+                           value: (root.sel.columnGap ?? 0) * root.ptPerUnit
+                           onCommitted: v => backend.setSelectedProperty("columnGap", v / root.ptPerUnit) }
             }
             FieldRow {
                 label: qsTr("Direction")
@@ -652,7 +692,7 @@ Rectangle {
                 Label {
                     Layout.fillWidth: true; wrapMode: Text.Wrap
                     color: (root.sel.textOverflow ?? false) ? Theme.warning : Theme.textSecondary
-                    text: (root.sel.textOverflow ?? false) ? qsTr("Some text is outside this box.") : qsTr("Displayed at %1 to fit.").arg(root.sel.effectiveFontSize)
+                    text: (root.sel.textOverflow ?? false) ? qsTr("Some text is outside this box.") : qsTr("Displayed at %1 pt to fit.").arg(Math.round((root.sel.effectiveFontSize ?? 0) * root.ptPerUnit * 10) / 10)
                 }
             }
             Button { objectName: "fitTextBox"; Layout.fillWidth: true; text: qsTr("Resize box to fit text"); onClicked: backend.fitSelectedTextBox() }

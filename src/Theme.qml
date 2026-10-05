@@ -187,6 +187,10 @@ QtObject {
     readonly property int wNavigatorMin: 180
     readonly property int wInspector: 320
     readonly property int wInspectorMin: 300
+    // The right sidebar is a fixed width, not dragged: the width it had been
+    // dragged to (panels.ini inspectorWidth) when it was locked. Other preset
+    // widths can sit beside this one later.
+    readonly property int wInspectorFixed: 360
     readonly property int szHandle: 10
     readonly property int szHandleHit: 6
     readonly property int szIcon: 16

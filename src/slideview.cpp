@@ -8,6 +8,7 @@
 #include "render/scenerenderer.h"
 
 #include <QPainter>
+#include <QPainterPath>
 #include <QQuickWindow>
 #include <QPaintEngine>
 #include <cmath>
@@ -88,13 +89,22 @@ void SlideView::paint(QPainter *painter) {
     painter->setRenderHint(QPainter::SmoothPixmapTransform, true);
     painter->fillRect(slideRect, m_background);
     painter->save();
-    painter->setClipRect(slideRect);
+    if (m_clipToSlide) painter->setClipRect(slideRect);
     painter->translate(slideRect.topLeft());
     painter->scale(m_scale, m_scale);
     if (m_cropObject.isEmpty()) SceneRenderer::paint(*painter, m_states);
     else for (const auto &o : m_states) {
-        if (o.id == m_cropObject && o.type == ObjectType::Image)
+        if (o.id == m_cropObject && o.type == ObjectType::Image) {
+            // Only around the kept frame, so pictures with transparency stay
+            // clean inside; the kept part is then drawn normally on top.
+            const auto cut = ImageCrop::cutArea(o);
+            painter->save();
+            painter->setClipPath(cut, Qt::IntersectClip);
             SceneRenderer::paint(*painter, {ImageCrop::preview(o)});
+            if (o.imageFormat == QLatin1String("svg")) // vectors skip the colour adjustment
+                painter->fillPath(cut, QColor::fromRgbF(0, 0, 0, ImageCrop::cutDarken * ImageCrop::cutOpacity * o.opacity));
+            painter->restore();
+        }
         SceneRenderer::paint(*painter, {o});
     }
     painter->restore();
@@ -119,9 +129,11 @@ void SlideView::geometryChange(const QRectF &next, const QRectF &previous) {
 void SlideView::updateLayout() {
     if (!m_deck || m_deck->slideSize().isEmpty() || width() <= 0 || height() <= 0) return;
     const auto size = m_deck->slideSize();
-    const qreal scale = m_zoom > 0 ? m_zoom : qMin(width()/size.width(),height()/size.height());
-    const QPointF origin((width()-size.width()*scale)/2 + m_pan.x(),
-                         (height()-size.height()*scale)/2 + m_pan.y());
+    const bool placed = m_fixedScale > 0;
+    const qreal scale = placed ? m_fixedScale : m_zoom > 0 ? m_zoom : qMin(width()/size.width(),height()/size.height());
+    const QPointF origin = placed ? m_fixedOrigin
+                                  : QPointF((width()-size.width()*scale)/2 + m_pan.x(),
+                                            (height()-size.height()*scale)/2 + m_pan.y());
     if (!qFuzzyCompare(m_scale,scale) || origin != m_origin) {
         m_scale = scale; m_origin = origin; emit layoutChanged();
     }
@@ -140,6 +152,18 @@ void SlideView::fit() { m_zoom = 0; m_pan = {}; updateLayout(); emit layoutChang
 void SlideView::panBy(qreal dx, qreal dy) {
     if (!std::isfinite(dx) || !std::isfinite(dy)) return;
     m_pan += QPointF(dx,dy); updateLayout(); polish(); update();
+}
+void SlideView::setPan(const QPointF &pan) {
+    if (!std::isfinite(pan.x()) || !std::isfinite(pan.y()) || pan == m_pan) return;
+    m_pan = pan; updateLayout(); update();
+}
+void SlideView::setFixedScale(qreal scale) {
+    if (!std::isfinite(scale) || qFuzzyCompare(m_fixedScale + 1, scale + 1)) return;
+    m_fixedScale = scale; updateLayout(); update();
+}
+void SlideView::setFixedOrigin(const QPointF &origin) {
+    if (!std::isfinite(origin.x()) || !std::isfinite(origin.y()) || origin == m_fixedOrigin) return;
+    m_fixedOrigin = origin; updateLayout(); update();
 }
 
 void SlideView::fitRect(const QRectF &rect) {

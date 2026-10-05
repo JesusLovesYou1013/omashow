@@ -2,6 +2,8 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import Omashow 1.0
+import "canvasstrip.js" as Strip
+import "canvascursor.js" as Cursors
 
 // The Edit canvas: the slide, plus selection. The slide itself is painted by
 // SlideView (the same renderer as the export); everything here is chrome drawn
@@ -26,10 +28,10 @@ Item {
     clip: true
     readonly property point origin: Qt.point(view.x + view.contentOrigin.x, view.y + view.contentOrigin.y)
     function documentPoint(x,y) { const p = view.mapFromItem(root,x,y); return view.toDocument(p.x,p.y) }
-    function zoomBy(factor) { root.commitTextEdit(); view.zoomAt(view.zoom*factor,view.width/2,view.height/2) }
-    function fitSelection() { root.commitTextEdit(); view.fitRect(backend.selectionVisualBounds()) }
-    function fit() { root.commitTextEdit(); view.fit() }
-    function actualSize() { root.commitTextEdit(); view.zoomAt(1,view.width/2,view.height/2) }
+    function zoomBy(factor) { root.commitTextEdit(); snapAnim.stop(); view.zoomAt(view.zoom*factor,view.width/2,view.height/2) }
+    function fitSelection() { root.commitTextEdit(); snapAnim.stop(); view.fitRect(backend.selectionVisualBounds()) }
+    function fit() { root.commitTextEdit(); snapAnim.stop(); view.fit() }
+    function actualSize() { root.commitTextEdit(); snapAnim.stop(); view.zoomAt(1,view.width/2,view.height/2) }
     Connections {
         target: backend
         function onStartChanged() { if (!backend.startVisible) view.fit() }
@@ -70,6 +72,113 @@ Item {
         root.forceActiveFocus()
     }
 
+    // ── Cursors (OS-011) ─────────────────────────────────────────────────────
+    // Arrow over empty canvas, open hand over anything a press would move,
+    // closed hand while moving. A handle being dragged keeps its own cursor.
+    property int handleCursor: -1
+    readonly property int dragCursor: area.dragging || area.panning ? Qt.ClosedHandCursor : root.handleCursor
+    function canMoveAt(x, y) {
+        if (cropper.active || pathTools.mode === 1 || pathTools.mode === 2) return false
+        const p = root.documentPoint(x, y)
+        return backend.hitsObject(p.x, p.y)
+    }
+
+    // ── One strip of slides, like a PDF (OS-010) ────────────────────────────
+    // The current slide is `view`, the only editable one. The slides either
+    // side are drawn read-only, and only while their reach is near the
+    // viewport. A slide's reach is the slide plus whatever spills past its top
+    // and bottom; reaches are kept apart so they never overlap and, with one
+    // slide centred, no neighbour shows. Scroll more than 25 % into a
+    // neighbour's reach and the canvas snaps to it (see canvasstrip.js).
+    readonly property real slidePx: backend.slideSize.height * view.contentScale
+    readonly property real stripGap: Strip.gap(view.height, slidePx, Theme.s5 * 2)
+    function extentOf(index) { backend.revision; return backend.slideExtent(index) }
+    readonly property var curExtent: extentOf(backend.currentSlide)
+    readonly property var prevExtent: backend.currentSlide > 0 ? extentOf(backend.currentSlide - 1) : null
+    readonly property var nextExtent: backend.currentSlide < backend.slideCount - 1 ? extentOf(backend.currentSlide + 1) : null
+    readonly property real prevSlideTop: prevExtent ? Strip.prevTop(view.contentOrigin.y, view.contentScale, curExtent, prevExtent, stripGap) : 0
+    readonly property real nextSlideTop: nextExtent ? Strip.nextTop(view.contentOrigin.y, view.contentScale, curExtent, nextExtent, stripGap) : 0
+    // Made half a viewport early, so it is ready when it scrolls in; painted
+    // only while some of it is actually on screen.
+    function nearViewport(top, ext, margin) {
+        if (!ext) return false
+        const r = Strip.region(top, view.contentScale, ext)
+        return r.bottom > -margin && r.top < view.height + margin
+    }
+    // Wheel input is set aside while a snap runs, and after it until the wheel
+    // pauses, so a trackpad's coasting does not carry on into another slide.
+    property double lastWheel: 0
+    property bool wheelLatched: false
+    function settleScroll() {
+        if (snapAnim.running || area.pressed || root.editingText || cropper.active || pathTools.mode !== 0) return
+        const g = { curTop: view.contentOrigin.y, s: view.contentScale, viewportH: view.height, gap: root.stripGap,
+                    curExt: root.curExtent, prevExt: root.prevExtent, nextExt: root.nextExtent }
+        const dir = Strip.snapDirection(g)
+        if (dir !== 0) { root.wheelLatched = true; backend.currentSlide = backend.currentSlide + dir; return }
+        const top = Strip.clampTop(g.curTop, g.s, g.viewportH, backend.slideSize.height, g.curExt,
+                                   g.prevExt !== null, g.nextExt !== null, Theme.s5)
+        if (top !== g.curTop) view.pan = Qt.point(view.pan.x, view.pan.y + top - g.curTop)
+    }
+    // A new current slide, by snapping or from anywhere else (the slide list,
+    // keys, undo): a neighbour glides in from where it sat in the strip; a
+    // slide further away is simply shown centred.
+    property int lastSlide: -1
+    property real snapPanY: 0
+    NumberAnimation { id: snapAnim; target: root; property: "snapPanY"; to: 0; duration: 300; easing.type: Easing.OutCubic }
+    onSnapPanYChanged: if (snapAnim.running) view.pan = Qt.point(view.pan.x, root.snapPanY)
+    function slideMoved() {
+        const from = root.lastSlide, to = backend.currentSlide
+        root.lastSlide = to
+        if (from === to) return
+        snapAnim.stop()
+        const centred = Strip.centredTop(view.height, root.slidePx)
+        let startTop = centred
+        if (Math.abs(to - from) === 1 && from >= 0) {
+            const fromExt = root.extentOf(from), toExt = root.extentOf(to)
+            startTop = to > from ? Strip.nextTop(view.contentOrigin.y, view.contentScale, fromExt, toExt, root.stripGap)
+                                 : Strip.prevTop(view.contentOrigin.y, view.contentScale, fromExt, toExt, root.stripGap)
+        }
+        if (startTop === centred || Theme.reducedMotion) { view.pan = Qt.point(view.pan.x, 0); return }
+        view.pan = Qt.point(view.pan.x, startTop - centred)
+        root.snapPanY = view.pan.y
+        snapAnim.from = view.pan.y
+        snapAnim.restart()
+    }
+    Connections { target: backend; function onCurrentSlideChanged() { root.slideMoved() } }
+    Component.onCompleted: root.lastSlide = backend.currentSlide
+
+    Component {
+        id: neighbourSlide
+        SlideView {
+            deck: backend
+            clipToSlide: false
+            visible: parent ? parent.onScreen : false
+            editSlide: parent ? parent.slideIndex : -1
+            fixedScale: view.contentScale
+            fixedOrigin: Qt.point(view.contentOrigin.x, parent ? parent.slideTop : 0)
+            property int rev: backend.revision
+            onRevChanged: update()
+        }
+    }
+    Loader {
+        objectName: "prevSlideView"
+        x: view.x; y: view.y; width: view.width; height: view.height
+        property int slideIndex: backend.currentSlide - 1
+        property real slideTop: root.prevSlideTop
+        readonly property bool onScreen: root.nearViewport(root.prevSlideTop, root.prevExtent, 0)
+        active: root.nearViewport(root.prevSlideTop, root.prevExtent, view.height / 2)
+        sourceComponent: neighbourSlide
+    }
+    Loader {
+        objectName: "nextSlideView"
+        x: view.x; y: view.y; width: view.width; height: view.height
+        property int slideIndex: backend.currentSlide + 1
+        property real slideTop: root.nextSlideTop
+        readonly property bool onScreen: root.nearViewport(root.nextSlideTop, root.nextExtent, 0)
+        active: root.nearViewport(root.nextSlideTop, root.nextExtent, view.height / 2)
+        sourceComponent: neighbourSlide
+    }
+
     SlideView {
         Accessible.role: Accessible.Canvas
         Accessible.name: qsTr("Slide %1 of %2").arg(backend.currentSlide + 1).arg(backend.slideCount)
@@ -86,6 +195,8 @@ Item {
         editSlide: backend.currentSlide
         cropObject: cropper.active?cropper.imageId:""
         hiddenObject: root.editingText ? root.textObjectId : ""
+        // What spills past the slide stays visible and editable.
+        clipToSlide: false
         // The revision is the one signal meaning "these pixels are stale".
         property int rev: backend.revision
         onRevChanged: view.update()
@@ -95,7 +206,10 @@ Item {
         id: area
         anchors.fill: parent
         acceptedButtons: Qt.LeftButton | Qt.MiddleButton
-        cursorShape: (dragging || panning) ? Qt.ClosedHandCursor : Qt.ArrowCursor
+        cursorShape: (dragging || panning) ? Qt.ClosedHandCursor : overObject ? Qt.OpenHandCursor : Qt.ArrowCursor
+        hoverEnabled: true
+        property bool overObject: false
+        onExited: overObject = false
 
         objectName: "canvasMouseArea"
         property bool panning: false
@@ -131,6 +245,7 @@ Item {
             backend.beginEdit(qsTr("Move object"))
         }
         onPositionChanged: (mouse) => {
+            if (!pressed) { overObject = root.canMoveAt(mouse.x, mouse.y); return }
             if (panning) { view.panBy(mouse.x-panGrab.x,mouse.y-panGrab.y); panGrab = Qt.point(mouse.x,mouse.y); return }
             const p = root.documentPoint(mouse.x, mouse.y)
             if (boxSelecting) { boxEnd = p; return }
@@ -140,8 +255,9 @@ Item {
                                     startRect.width, startRect.height,
                                     root.snapTolerance, true)
         }
-        onReleased: {
-            if (panning) { panning = false; return }
+        onReleased: (mouse) => {
+            overObject = root.canMoveAt(mouse.x, mouse.y)
+            if (panning) { panning = false; root.settleScroll(); return }
             if (boxSelecting) {
                 boxSelecting = false
                 backend.selectRegion(grabDoc.x,grabDoc.y,boxEnd.x-grabDoc.x,boxEnd.y-grabDoc.y,extendBox)
@@ -152,17 +268,25 @@ Item {
             dragging = false
             backend.endEdit()
         }
-        onCanceled: { if (dragging) backend.cancelEdit(); dragging = false; boxSelecting = false; panning = false }
+        onCanceled: { if (dragging) backend.cancelEdit(); dragging = false; boxSelecting = false; panning = false; overObject = false }
         onWheel: wheel => {
             root.commitTextEdit()
+            wheel.accepted = true
             if (wheel.modifiers & Qt.ControlModifier) {
+                snapAnim.stop()
                 const p = view.mapFromItem(root,wheel.x,wheel.y)
                 view.zoomAt(view.zoom * Math.pow(1.2,wheel.angleDelta.y/120),p.x,p.y)
-            } else {
-                const d = wheel.pixelDelta.x || wheel.pixelDelta.y ? wheel.pixelDelta : Qt.point(wheel.angleDelta.x/2,wheel.angleDelta.y/2)
-                view.panBy(d.x,d.y)
+                return
             }
-            wheel.accepted = true
+            const now = Date.now(), paused = now - root.lastWheel > 120
+            root.lastWheel = now
+            if (snapAnim.running || (root.wheelLatched && !paused)) return
+            root.wheelLatched = false
+            // Trackpads send pixels; a mouse wheel sends notches (120 = one).
+            const d = wheel.pixelDelta.x || wheel.pixelDelta.y ? wheel.pixelDelta : Qt.point(wheel.angleDelta.x/2,wheel.angleDelta.y/2)
+            view.panBy(d.x,d.y)
+            root.settleScroll()
+            overObject = root.canMoveAt(wheel.x, wheel.y)
         }
         onDoubleClicked: {
             if (backend.selection.groupId) backend.enterGroup()
@@ -237,6 +361,7 @@ Item {
                 onPressed: mouse => {
                     root.forceActiveFocus(); pivot=Qt.point(backend.selection.x+backend.selection.w/2,backend.selection.y+backend.selection.h/2)
                     lastAngle=angle(mouse); totalAngle=0; backend.beginEdit(qsTr("Rotate objects"))
+                    root.handleCursor = Qt.CrossCursor
                 }
                 onPositionChanged: mouse => {
                     if(!pressed) return
@@ -245,27 +370,31 @@ Item {
                     totalAngle+=delta; lastAngle=next
                     backend.rotateSelection(totalAngle,(mouse.modifiers & Qt.ShiftModifier)!==0)
                 }
-                onReleased: backend.endEdit()
-                onCanceled: backend.cancelEdit()
+                onReleased: { root.handleCursor = -1; backend.endEdit() }
+                onCanceled: { root.handleCursor = -1; backend.cancelEdit() }
             }
         }
         // Eight handles, each resizing from its own corner or edge.
         Repeater {
             model: [
-                { hx: 0,   hy: 0,   dx: 1, dy: 1, dw: -1, dh: -1, cur: Qt.SizeFDiagCursor },
-                { hx: 0.5, hy: 0,   dx: 0, dy: 1, dw:  0, dh: -1, cur: Qt.SizeVerCursor },
-                { hx: 1,   hy: 0,   dx: 0, dy: 1, dw:  1, dh: -1, cur: Qt.SizeBDiagCursor },
-                { hx: 1,   hy: 0.5, dx: 0, dy: 0, dw:  1, dh:  0, cur: Qt.SizeHorCursor },
-                { hx: 1,   hy: 1,   dx: 0, dy: 0, dw:  1, dh:  1, cur: Qt.SizeFDiagCursor },
-                { hx: 0.5, hy: 1,   dx: 0, dy: 0, dw:  0, dh:  1, cur: Qt.SizeVerCursor },
-                { hx: 0,   hy: 1,   dx: 1, dy: 0, dw: -1, dh:  1, cur: Qt.SizeBDiagCursor },
-                { hx: 0,   hy: 0.5, dx: 1, dy: 0, dw: -1, dh:  0, cur: Qt.SizeHorCursor }
+                { hx: 0,   hy: 0,   dx: 1, dy: 1, dw: -1, dh: -1 },
+                { hx: 0.5, hy: 0,   dx: 0, dy: 1, dw:  0, dh: -1 },
+                { hx: 1,   hy: 0,   dx: 0, dy: 1, dw:  1, dh: -1 },
+                { hx: 1,   hy: 0.5, dx: 0, dy: 0, dw:  1, dh:  0 },
+                { hx: 1,   hy: 1,   dx: 0, dy: 0, dw:  1, dh:  1 },
+                { hx: 0.5, hy: 1,   dx: 0, dy: 0, dw:  0, dh:  1 },
+                { hx: 0,   hy: 1,   dx: 1, dy: 0, dw: -1, dh:  1 },
+                { hx: 0,   hy: 0.5, dx: 1, dy: 0, dw: -1, dh:  0 }
             ]
 
             Rectangle {
                 required property var modelData
-                width: Theme.szHandle
-                height: Theme.szHandle
+                required property int index
+                objectName: "resizeHandle" + index
+                // The resize cursor nearest the handle's direction once rotated.
+                readonly property int cursor: [Qt.SizeHorCursor, Qt.SizeFDiagCursor, Qt.SizeVerCursor, Qt.SizeBDiagCursor][Cursors.handleAxis(modelData.hx, modelData.hy, selection.rotation)]
+                width: Cursors.handleSize(Theme.szHandle)
+                height: width
                 radius: Theme.rHandle
                 color: Theme.handleBg
                 border.color: Theme.accent
@@ -276,7 +405,7 @@ Item {
                 MouseArea {
                     anchors.fill: parent
                     anchors.margins: -Theme.szHandleHit
-                    cursorShape: modelData.cur
+                    cursorShape: parent.cursor
                     property point grabDoc
                     property rect startRect
 
@@ -286,6 +415,7 @@ Item {
                         startRect = Qt.rect(backend.selection.x, backend.selection.y,
                                             backend.selection.w, (backend.selection.h ?? 0))
                         backend.beginEdit(qsTr("Resize object"))
+                        root.handleCursor = parent.cursor
                     }
                     onPositionChanged: (mouse) => {
                         if (!pressed)
@@ -301,8 +431,8 @@ Item {
                                                 startRect.height + ddy * modelData.dh,
                                                 root.snapTolerance, false)
                     }
-                    onReleased: backend.endEdit()
-                    onCanceled: backend.cancelEdit()
+                    onReleased: { root.handleCursor = -1; backend.endEdit() }
+                    onCanceled: { root.handleCursor = -1; backend.cancelEdit() }
                 }
             }
         }
@@ -384,5 +514,18 @@ Item {
             Keys.onEscapePressed: root.commitTextEdit()
             onActiveFocusChanged: if (!activeFocus) root.commitTextEdit()
         }
+    }
+
+    // While something is moved, resized or rotated, its cursor stays put
+    // wherever the pointer wanders (other handles, objects, empty canvas).
+    // Takes no buttons and passes the wheel on, so it never catches input.
+    MouseArea {
+        objectName: "dragCursorOverlay"
+        anchors.fill: parent
+        z: 100
+        acceptedButtons: Qt.NoButton
+        visible: root.dragCursor >= 0
+        cursorShape: root.dragCursor >= 0 ? root.dragCursor : Qt.ArrowCursor
+        onWheel: wheel => wheel.accepted = false
     }
 }

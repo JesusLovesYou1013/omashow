@@ -52,49 +52,57 @@ ApplicationWindow {
     // Presenter notes under the Edit canvas, as in the concept; View toggles it.
     // Closed until asked for, as in Keynote: the slide gets the room.
     property bool notesOpen: (backend.panelState.notesOpen ?? "false") === "true"
-    // Panels: dragged wider or narrower, collapsed out of the way, and put back
-    // where they were next time.
+    // Panels: the navigator is dragged wider or narrower; the right sidebar
+    // has a fixed width. Either can be put away, and comes back as it was left.
     property real navigatorWidth: backend.panelState.navigatorWidth ?? Theme.wNavigator
-    property real inspectorWidth: backend.panelState.inspectorWidth ?? Theme.wInspector
+    readonly property real inspectorWidth: Theme.wInspectorFixed
     property bool navigatorCollapsed: (backend.panelState.navigatorCollapsed ?? "false") === "true"
     property bool inspectorCollapsed: (backend.panelState.inspectorCollapsed ?? "false") === "true"
-    onNavigatorWidthChanged: backend.setPanelState("navigatorWidth", Math.round(navigatorWidth))
-    onInspectorWidthChanged: backend.setPanelState("inspectorWidth", Math.round(inspectorWidth))
+    // Saved when a drag ends, not on every move (each save rewrites panels.ini).
+    function saveNavigatorWidth() { backend.setPanelState("navigatorWidth", Math.round(navigatorWidth)) }
+    function clampNavigator(w) {
+        const room = Math.max(320, win.width - 360)
+        return Math.min(Math.max(Theme.wNavigatorMin, w), room / 2)
+    }
+    property real navigatorDragStart: 0
     onNavigatorCollapsedChanged: backend.setPanelState("navigatorCollapsed", navigatorCollapsed)
     onInspectorCollapsedChanged: backend.setPanelState("inspectorCollapsed", inspectorCollapsed)
     onNotesOpenChanged: backend.setPanelState("notesOpen", notesOpen)
     // A panel dragged to nothing, or a remembered width from a bigger screen,
     // comes back to something usable rather than disappearing.
     function sanePanels() {
-        const room = Math.max(320, win.width - 360)
-        win.navigatorWidth = Math.min(Math.max(Theme.wNavigatorMin, win.navigatorWidth), room / 2)
-        win.inspectorWidth = Math.min(Math.max(Theme.wInspectorMin, win.inspectorWidth), room / 2)
+        const w = win.clampNavigator(win.navigatorWidth)
+        if (w === win.navigatorWidth) return
+        win.navigatorWidth = w
+        win.saveNavigatorWidth()
     }
     onWidthChanged: win.sanePanels()
 
-    // The grip between a panel and the canvas.
-    component PanelGrip: Item {
-        id: grip
-        property Item panel
-        property bool fromLeft: true
+    // The right sidebar's edge: no dragging, just an arrow that puts the
+    // sidebar away and, from the window edge, brings it back.
+    component SidebarToggle: Item {
+        id: edge
         property bool collapsed: false
-        signal resized(real delta)
         signal toggled()
-        objectName: "panelGrip"
-        implicitWidth: Theme.s2
+        implicitWidth: Theme.s4
         Layout.fillHeight: true
-        Rectangle { anchors.fill: parent; color: hover.hovered || drag.active ? Theme.accent : "transparent"; opacity: .35 }
-        HoverHandler { id: hover; cursorShape: Qt.SplitHCursor }
-        DragHandler {
-            id: drag
-            target: null
-            yAxis.enabled: false
-            onTranslationChanged: {
-                if (!active) return
-                grip.resized(grip.fromLeft ? translation.x : -translation.x)
-            }
+        Button {
+            objectName: "sidebarToggleButton"
+            readonly property string tip: edge.collapsed ? qsTr("Show sidebar") : qsTr("Hide sidebar")
+            anchors.centerIn: parent
+            implicitWidth: edge.width
+            implicitHeight: Theme.s5 * 2
+            flat: true
+            display: AbstractButton.IconOnly
+            icon.name: edge.collapsed ? "chevron-left" : "chevron-right"
+            icon.width: Theme.szIcon - 2
+            icon.height: Theme.szIcon - 2
+            onClicked: edge.toggled()
+            ToolTip.visible: hovered
+            ToolTip.delay: Theme.tooltipDelay
+            ToolTip.text: tip
+            Accessible.name: tip
         }
-        TapHandler { onDoubleTapped: grip.toggled() }
     }
     // Below this width the toolbar drops its labels and keeps the icons.
     readonly property bool compactToolbar: width < 1440
@@ -297,7 +305,7 @@ ApplicationWindow {
             { group: qsTr("View"), name: qsTr("Presenter notes"), also: "speaker script", run: () => win.notesOpen = !win.notesOpen },
             { group: qsTr("View"), name: win.navigatorCollapsed ? qsTr("Show the slide list") : qsTr("Hide the slide list"), also: "navigator panel thumbnails sidebar", run: () => win.navigatorCollapsed = !win.navigatorCollapsed },
             { group: qsTr("View"), name: win.inspectorCollapsed ? qsTr("Show the inspector") : qsTr("Hide the inspector"), also: "panel properties sidebar", run: () => win.inspectorCollapsed = !win.inspectorCollapsed },
-            { group: qsTr("View"), name: qsTr("Put the panels back"), also: "reset widths restore layout", run: () => { win.navigatorCollapsed = false; win.inspectorCollapsed = false; win.navigatorWidth = Theme.wNavigator; win.inspectorWidth = Theme.wInspector } },
+            { group: qsTr("View"), name: qsTr("Put the panels back"), also: "reset widths restore layout", run: () => { win.navigatorCollapsed = false; win.inspectorCollapsed = false; win.navigatorWidth = Theme.wNavigator; win.saveNavigatorWidth() } },
             { group: qsTr("View"), name: qsTr("Snap to guides"), also: "align magnet", run: () => backend.snapEnabled = !backend.snapEnabled },
             { group: qsTr("View"), name: backend.reducedMotion ? qsTr("Allow movement again") : qsTr("Less movement"), also: "reduced motion animation accessibility vestibular", run: () => backend.reducedMotion = !backend.reducedMotion },
             { group: qsTr("View"), name: backend.highContrast ? qsTr("Ordinary contrast") : qsTr("Stronger contrast"), also: "high contrast accessibility legible", run: () => backend.highContrast = !backend.highContrast },
@@ -598,7 +606,7 @@ ApplicationWindow {
                                    onTriggered: win.inspectorCollapsed = !win.inspectorCollapsed }
                         MenuItem { objectName: "resetPanels"; text: qsTr("Put the panels back")
                                    onTriggered: { win.navigatorCollapsed = false; win.inspectorCollapsed = false
-                                                  win.navigatorWidth = Theme.wNavigator; win.inspectorWidth = Theme.wInspector } }
+                                                  win.navigatorWidth = Theme.wNavigator; win.saveNavigatorWidth() } }
                         MenuItem { objectName: "commandSearchMenuItem"; text: qsTr("Find a command…"); onTriggered: commandPalette.show() }
                         MenuSeparator {}
                         MenuItem { objectName: "reducedMotionItem"; checkable: true; checked: backend.reducedMotion
@@ -833,8 +841,9 @@ ApplicationWindow {
                 objectName: "navigatorGrip"
                 visible: win.workspace === 0 || win.workspace === 2
                 collapsed: win.navigatorCollapsed
-                onResized: delta => { win.navigatorCollapsed = false
-                                      win.navigatorWidth += delta; win.sanePanels() }
+                onResizeStarted: { win.navigatorCollapsed = false; win.navigatorDragStart = win.navigatorWidth }
+                onResizedBy: total => win.navigatorWidth = Math.round(win.clampNavigator(win.navigatorDragStart + total))
+                onResizeFinished: win.saveNavigatorWidth()
                 onToggled: win.navigatorCollapsed = !win.navigatorCollapsed
             }
 
@@ -923,21 +932,18 @@ ApplicationWindow {
                 onStarting: win.commitEditors()
             }
 
-            PanelGrip {
-                objectName: "inspectorGrip"
-                fromLeft: false
+            SidebarToggle {
+                objectName: "inspectorToggle"
                 visible: win.editing
                 collapsed: win.inspectorCollapsed
-                onResized: delta => { win.inspectorCollapsed = false
-                                      win.inspectorWidth += delta; win.sanePanels() }
                 onToggled: win.inspectorCollapsed = !win.inspectorCollapsed
             }
             Inspector {
                 objectName: "inspectorPanel"
                 onApplyLayoutRequested: layoutId => { win.commitEditors(); layoutApplyDialog.show(layoutId) }
                 Layout.preferredWidth: win.inspectorCollapsed ? 0 : win.inspectorWidth
-                Layout.minimumWidth: win.inspectorCollapsed ? 0 : Theme.wInspectorMin
-                Layout.maximumWidth: win.inspectorCollapsed ? 0 : Number.POSITIVE_INFINITY
+                Layout.minimumWidth: Layout.preferredWidth
+                Layout.maximumWidth: Layout.preferredWidth
                 Layout.fillHeight: true
                 clip: true
                 visible: win.editing && win.sidebar === 0 && !win.inspectorCollapsed
@@ -948,8 +954,8 @@ ApplicationWindow {
                 onPresenterSetupRequested: { win.commitEditors(); win.workspace = 4 }
                 onReviewRequested: { win.commitEditors(); win.workspace = 3 }
                 Layout.preferredWidth: win.inspectorCollapsed ? 0 : win.inspectorWidth
-                Layout.minimumWidth: win.inspectorCollapsed ? 0 : Theme.wInspectorMin
-                Layout.maximumWidth: win.inspectorCollapsed ? 0 : Number.POSITIVE_INFINITY
+                Layout.minimumWidth: Layout.preferredWidth
+                Layout.maximumWidth: Layout.preferredWidth
                 Layout.fillHeight: true
                 clip: true
                 visible: win.editing && win.sidebar === 1 && !win.inspectorCollapsed
@@ -1147,6 +1153,27 @@ ApplicationWindow {
         anchors.centerIn: parent
         property var candidates: []
 
+        // Runs in the sheet's scope, not the row's: replacing `candidates`
+        // destroys the row that was clicked, and a handler still running in
+        // that row loses its ids (ReferenceError) before it can close the sheet.
+        function settle(handledPath) {
+            const remaining = backend.recoveryCandidates()
+                .filter(c => c.journalPath !== handledPath)
+            if (remaining.length === 0)
+                close()
+            candidates = remaining
+        }
+        function discard(journalPath) {
+            backend.discardRecovery(journalPath)
+            settle(journalPath)
+        }
+        function recover(journalPath) {
+            // The journal is forgotten only once the open finishes, so leave it
+            // out of what remains rather than offering it again.
+            backend.openAsync("file://" + journalPath, true)
+            settle(journalPath)
+        }
+
         ColumnLayout {
             spacing: Theme.s3
 
@@ -1180,21 +1207,11 @@ ApplicationWindow {
                     Item { Layout.fillWidth: true }
                     ToolAction {
                         text: qsTr("Discard")
-                        onClicked: {
-                            backend.discardRecovery(modelData.journalPath)
-                            recoverySheet.candidates = backend.recoveryCandidates()
-                            if (recoverySheet.candidates.length === 0)
-                                recoverySheet.close()
-                        }
+                        onClicked: recoverySheet.discard(modelData.journalPath)
                     }
                     ToolAction {
                         text: qsTr("Recover")
-                        onClicked: {
-                            backend.openAsync("file://" + modelData.journalPath, true)
-                            recoverySheet.candidates = backend.recoveryCandidates()
-                            if (recoverySheet.candidates.length === 0)
-                                recoverySheet.close()
-                        }
+                        onClicked: recoverySheet.recover(modelData.journalPath)
                     }
                 }
             }
