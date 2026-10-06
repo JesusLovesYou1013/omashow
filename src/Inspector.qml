@@ -20,7 +20,8 @@ Rectangle {
     // way PowerPoint shows them, and stored in slide units as before.
     readonly property real ptPerUnit: backend.ptPerUnit
     function style(key, on) {
-        if (range.active) backend.formatSelection(key, on ? 1 : 2)
+        // Selection or caret while editing: run/typing format. Otherwise the box.
+        if (range.active || range.caret) backend.formatSelection(key, on ? 1 : 2)
         else backend.setSelectedProperty(key, on)
     }
     readonly property int currentWeight: range.active ? (range.weight ?? 400) : (sel.fontWeight ?? 400)
@@ -75,6 +76,25 @@ Rectangle {
         ToolTip.delay: Theme.tooltipDelay
         ToolTip.text: tip
         Accessible.name: tip
+    }
+    // B / I / U / S. The letter is the icon; the accessible name stays the word.
+    // NoFocus keeps the slide TextEdit selection (and caret) when toggling.
+    component StyleMark: Button {
+        property string tip: ""
+        property bool mark: true
+        checkable: true
+        focusPolicy: Qt.NoFocus
+        ToolTip.visible: hovered && tip !== ""
+        ToolTip.delay: Theme.tooltipDelay
+        ToolTip.text: tip
+        Accessible.name: tip
+    }
+    readonly property bool runStyle: range.active || range.caret === true
+    // Bold is the same weight the Size row's weight menu writes: 700 on, 400
+    // off. A selected stretch uses "weight"; the whole box uses "fontWeight".
+    function bold(on) {
+        if (runStyle) backend.formatSelection("weight", on ? 700 : 400)
+        else backend.setSelectedProperty("fontWeight", on ? 700 : 400)
     }
 
     Rectangle {
@@ -461,9 +481,6 @@ Rectangle {
                 ComboBox {
                     objectName: "textWeight"
                     Layout.preferredWidth: Theme.s5 * 5
-                    // Only weights the typeface really has, so each entry looks
-                    // different; the current value stays listed even if odd.
-                    // A face with a single weight has nothing to choose.
                     model: root.weightChoices.map(w => ({ value: w, text: root.weightName(w) }))
                     textRole: "text"
                     valueRole: "value"
@@ -475,16 +492,19 @@ Rectangle {
             }
             FieldRow {
                 label: qsTr("Style")
-                Button { objectName: "textItalic"; checkable: true; text: qsTr("Italic")
-                         checked: root.range.active ? (root.range.italic ?? false) : (root.sel.italic ?? false)
-                         onToggled: root.style("italic", checked) }
-                Button { objectName: "textUnderline"; checkable: true; text: qsTr("Underline")
-                         checked: root.range.active ? (root.range.underline ?? false) : (root.sel.underline ?? false)
-                         onToggled: root.style("underline", checked) }
-                Button { objectName: "textStrike"; checkable: true; text: qsTr("Strike")
-                         visible: root.range.active
-                         checked: root.range.strike ?? false
-                         onToggled: backend.formatSelection("strike", checked ? 1 : 2) }
+                StyleMark { // OMASHOW-PERSONAL: B/I/U/S + caret typing (PR #11)
+                objectName: "textBold"; text: "B"; font.bold: true; tip: qsTr("Bold")
+                            checked: (root.runStyle ? (root.range.weight ?? 400) : (root.sel.fontWeight ?? 400)) >= 700
+                            onToggled: root.bold(checked) }
+                StyleMark { objectName: "textItalic"; text: "I"; font.italic: true; tip: qsTr("Italic")
+                            checked: root.runStyle ? (root.range.italic ?? false) : (root.sel.italic ?? false)
+                            onToggled: root.style("italic", checked) }
+                StyleMark { objectName: "textUnderline"; text: "U"; font.underline: true; tip: qsTr("Underline")
+                            checked: root.runStyle ? (root.range.underline ?? false) : (root.sel.underline ?? false)
+                            onToggled: root.style("underline", checked) }
+                StyleMark { objectName: "textStrike"; text: "S"; font.strikeout: true; tip: qsTr("Strikethrough")
+                            checked: root.runStyle ? (root.range.strike ?? false) : (root.sel.strike ?? false)
+                            onToggled: root.style("strike", checked) }
                 Item { Layout.fillWidth: true }
             }
             FieldRow {

@@ -48,6 +48,7 @@ Item {
     // Typing happens on the slide, not in a side panel. A text object is edited
     // where it lives, at the size it will be.
     property bool editingText: false
+    property int typingFormatLen: -1
     property string textObjectId
     property string textSlideId
 
@@ -57,15 +58,18 @@ Item {
         root.textObjectId = backend.selectedId
         root.textSlideId = backend.navigator[backend.currentSlide].id
         root.editingText = true
+        backend.setTextEditing(true)
         textEditor.text = backend.selection.editHtml
         textEditor.forceActiveFocus()
         textEditor.selectAll()
+        root.typingFormatLen = textEditor.length
     }
 
     function commitTextEdit() {
         if (!root.editingText)
             return
         root.editingText = false
+        backend.setTextEditing(false)
         backend.setTextSelection(0, 0)
         backend.commitTextDocument(root.textSlideId,root.textObjectId,textEditor.textDocument)
         root.forceActiveFocus()
@@ -393,8 +397,15 @@ Item {
             selectByMouse: true
             // The inspector formats whatever is selected here, so it needs to
             // know what that is — and to be rebuilt when the looks change.
-            onSelectionStartChanged: backend.setTextSelection(selectionStart, selectionEnd)
+            onSelectionStartChanged: {
+                backend.setTextSelection(selectionStart, selectionEnd)
+                // Arrow / click moved the caret without typing: drop sticky looks.
+                if (root.editingText && textEditor.selectionStart === textEditor.selectionEnd
+                        && textEditor.length === root.typingFormatLen)
+                    backend.clearTypingFormat()
+            }
             onSelectionEndChanged: backend.setTextSelection(selectionStart, selectionEnd)
+            onLengthChanged: root.typingFormatLen = length
             Connections {
                 target: backend
                 function onTextFormattingChanged() {
@@ -402,6 +413,12 @@ Item {
                     const from = textEditor.selectionStart, to = textEditor.selectionEnd
                     textEditor.text = backend.selection.editHtml
                     textEditor.select(from, to)
+                    root.typingFormatLen = textEditor.length
+                }
+                function onTypingFormatChanged() {
+                    if (!textEditor.activeFocus) return
+                    root.typingFormatLen = textEditor.length
+                    backend.applyTypingFormatToEditor(textEditor.textDocument, textEditor.cursorPosition)
                 }
             }
 

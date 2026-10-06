@@ -10,6 +10,8 @@
 #include "render/mathlayout.h"
 #include <QQuickTextDocument>
 #include <QTextDocument>
+#include <QTextCursor>
+#include <QTextCharFormat>
 #include <QTextBlock>
 #include <QTextList>
 #include <QTransform>
@@ -601,11 +603,33 @@ void Backend::commitTextDocument(const QString &slideId,const QString &id,QQuick
   auto text=paragraphs.join('\n');
   // The marks people mean, settled when the words are, not under the cursor.
   if(m_document.smartPunctuation && authored->textKind!=1) text=Punctuation::smarten(text);
-  if(text==authored->text) return;
+  if(text==authored->text) {
+    if (!m_typingFormat.isEmpty()) {
+      m_typingFormat.clear();
+      emit typingFormatChanged();
+    }
+    return;
+  }
+  // Where new letters landed, so a caret format can cover them.
+  const QString before = authored->text;
+  int head = 0;
+  const int most = qMin(before.size(), text.size());
+  while (head < most && before.at(head) == text.at(head)) ++head;
+  int tail = 0;
+  while (tail < most - head && before.at(before.size() - 1 - tail) == text.at(text.size() - 1 - tail))
+    ++tail;
+  const int inserted = text.size() - head - tail;
   m_history.begin(m_document,tr("Edit text"));
   auto *object=m_document.slides[index].find(id);
   object->runs=TextRuns::afterEdit(object->runs,object->text,text);
   object->text=text; Design::markOverride(*object,"text");
+  if (!m_typingFormat.isEmpty() && inserted > 0) {
+    for (auto it = m_typingFormat.cbegin(); it != m_typingFormat.cend(); ++it)
+      TextRuns::apply(*object, head, head + inserted, it.key(), it.value());
+    Design::markOverride(*object, QStringLiteral("runs"));
+  }
+  m_typingFormat.clear();
+  emit typingFormatChanged();
   m_history.commit(); touch();
 }
 
@@ -646,15 +670,22 @@ QVariantMap Backend::textSelection() const {
   const auto *object = selectedObject();
   const bool active = object && object->type == ObjectType::Text &&
                       m_textSelectionEnd > m_textSelectionStart;
+  const bool caret = object && object->type == ObjectType::Text && m_textEditing && !active;
   QVariantMap values{{"active", active},
+                     {"caret", caret},
                      {"start", m_textSelectionStart},
                      {"end", m_textSelectionEnd}};
-  if (!active) return values;
+  if (!active && !caret) return values;
   // What the whole stretch looks like, and where it disagrees with itself.
-  const int start = qBound(0, m_textSelectionStart, int(object->text.size()));
-  const int end = qBound(start, m_textSelectionEnd, int(object->text.size()));
+  // A caret uses the look of the character before it (or the box, at the start).
+  const int length = int(object->text.size());
+  const int start = active ? qBound(0, m_textSelectionStart, length)
+                           : qBound(0, m_textSelectionStart > 0 ? m_textSelectionStart - 1
+                                                                : m_textSelectionStart, length);
+  const int end = active ? qBound(start, m_textSelectionEnd, length)
+                         : (length == 0 ? 0 : qMin(start + 1, length));
   int weight = object->fontWeight;
-  bool italic = object->italic, underline = object->underline, strike = false;
+  bool italic = object->italic, underline = object->underline, strike = object->strike;
   int baseline = 0;
   qreal size = object->fontSize;
   QString family = object->fontFamily;
@@ -662,12 +693,14 @@ QVariantMap Backend::textSelection() const {
   QString language = object->language;
   QStringList mixed;
   bool first = true;
-  for (int i = start; i < end; ++i) {
+  if (length == 0) {
+    // Empty box: box look only.
+  } else for (int i = start; i < end; ++i) {
     const auto *run = TextRuns::at(object->runs, i);
     const int thisWeight = run && run->weight ? run->weight : object->fontWeight;
     const bool thisItalic = run && run->italic ? run->italic == 1 : object->italic;
     const bool thisUnderline = run && run->underline ? run->underline == 1 : object->underline;
-    const bool thisStrike = run && run->strike == 1;
+    const bool thisStrike = run && run->strike ? run->strike == 1 : object->strike;
     const int thisBaseline = run ? run->baseline : 0;
     const qreal thisSize = run && run->fontSize > 0 ? run->fontSize : object->fontSize;
     const QString thisFamily = run && !run->fontFamily.isEmpty() ? run->fontFamily
@@ -695,6 +728,17 @@ QVariantMap Backend::textSelection() const {
     if (thisColour != colour) disagree("color");
     if (thisLanguage != language) disagree("language");
   }
+  // Pending caret toggles win over the look under the caret.
+  if (caret && !m_typingFormat.isEmpty()) {
+    if (m_typingFormat.contains(QLatin1String("weight")))
+      weight = m_typingFormat.value(QLatin1String("weight")).toInt();
+    if (m_typingFormat.contains(QLatin1String("italic")))
+      italic = m_typingFormat.value(QLatin1String("italic")).toInt() == 1;
+    if (m_typingFormat.contains(QLatin1String("underline")))
+      underline = m_typingFormat.value(QLatin1String("underline")).toInt() == 1;
+    if (m_typingFormat.contains(QLatin1String("strike")))
+      strike = m_typingFormat.value(QLatin1String("strike")).toInt() == 1;
+  }
   values["weight"] = weight;
   values["italic"] = italic;
   values["underline"] = underline;
@@ -713,14 +757,52 @@ void Backend::setTextSelection(int start, int end) {
   if (from == m_textSelectionStart && to == m_textSelectionEnd) return;
   m_textSelectionStart = from;
   m_textSelectionEnd = to;
+  // A real selection replaces caret typing looks.
+  if (to > from && !m_typingFormat.isEmpty()) {
+    m_typingFormat.clear();
+    emit typingFormatChanged();
+  }
+  emit textSelectionChanged();
+}
+
+void Backend::setTextEditing(bool on) {
+  if (m_textEditing == on) return;
+  m_textEditing = on;
+  if (!on && !m_typingFormat.isEmpty()) {
+    m_typingFormat.clear();
+    emit typingFormatChanged();
+  }
+  emit textSelectionChanged();
+}
+
+void Backend::clearTypingFormat() {
+  if (m_typingFormat.isEmpty()) return;
+  m_typingFormat.clear();
+  emit typingFormatChanged();
   emit textSelectionChanged();
 }
 
 bool Backend::formatSelection(const QString &key, const QVariant &value) {
   const auto *object = static_cast<const Backend *>(this)->selectedObject();
-  if (!object || object->type != ObjectType::Text ||
-      m_textSelectionEnd <= m_textSelectionStart)
+  if (!object || object->type != ObjectType::Text)
     return false;
+  // Caret with nothing selected: remember the look for the next typed stretch.
+  if (m_textSelectionEnd <= m_textSelectionStart) {
+    if (!m_textEditing) return false;
+    static const QStringList keys{"weight", "italic", "underline", "strike"};
+    if (!keys.contains(key)) return false;
+    if (key == QLatin1String("weight")) {
+      const int weight = value.toInt();
+      if (weight != 0 && (weight < 100 || weight > 900)) return false;
+    } else {
+      const int state = value.toInt();
+      if (state < 0 || state > 2) return false;
+    }
+    m_typingFormat.insert(key, value);
+    emit typingFormatChanged();
+    emit textSelectionChanged();
+    return true;
+  }
   SceneObject changed = *object;
   if (!TextRuns::apply(changed, m_textSelectionStart, m_textSelectionEnd, key, value))
     return false;
@@ -734,6 +816,24 @@ bool Backend::formatSelection(const QString &key, const QVariant &value) {
   emit textSelectionChanged();
   emit textFormattingChanged();
   return true;
+}
+
+void Backend::applyTypingFormatToEditor(QQuickTextDocument *editor, int cursorPos) {
+  if (!editor || !editor->textDocument() || m_typingFormat.isEmpty()) return;
+  QTextCursor cursor(editor->textDocument());
+  cursor.setPosition(qBound(0, cursorPos, editor->textDocument()->characterCount() - 1));
+  QTextCharFormat format;
+  if (m_typingFormat.contains(QLatin1String("weight")))
+    format.setFontWeight(QFont::Weight(m_typingFormat.value(QLatin1String("weight")).toInt()));
+  if (m_typingFormat.contains(QLatin1String("italic")))
+    format.setFontItalic(m_typingFormat.value(QLatin1String("italic")).toInt() == 1);
+  if (m_typingFormat.contains(QLatin1String("underline")))
+    format.setFontUnderline(m_typingFormat.value(QLatin1String("underline")).toInt() == 1);
+  if (m_typingFormat.contains(QLatin1String("strike")))
+    format.setFontStrikeOut(m_typingFormat.value(QLatin1String("strike")).toInt() == 1);
+  cursor.mergeCharFormat(format);
+  // So the next keypress inherits it even with an empty document.
+  cursor.setCharFormat(cursor.charFormat());
 }
 
 // --- named text styles -------------------------------------------------------

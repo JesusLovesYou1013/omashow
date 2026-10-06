@@ -922,6 +922,7 @@ struct Reader {
         o.fontWeight = b.b > 0 ? 700 : 400;
         o.italic = b.i > 0;
         o.underline = b.u > 0;
+        o.strike = b.strike > 0;
         o.textColor = b.color.isValid() ? b.color : fallback.color.isValid() ? fallback.color : QColor(Qt::black);
         o.fontFamily = !b.family.isEmpty() ? b.family : !fallback.family.isEmpty() ? fallback.family : QStringLiteral("Inter");
         o.uppercase = b.caps;

@@ -581,6 +581,7 @@ void Chart::paint(QPainter &p, const SceneObject &o) {
   font.setWeight(QFont::Weight(o.fontWeight));
   font.setItalic(o.italic);
   font.setUnderline(o.underline);
+  font.setStrikeOut(o.strike);
   p.setFont(font);
   p.setPen(o.textColor);
   const QString horizontalTitle =
