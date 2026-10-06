@@ -147,6 +147,9 @@ public:
     // that is not installed answers for the face it falls back to. Cached per
     // family, so the inspector asks once per family change.
     Q_INVOKABLE QVariantList fontWeights(const QString &family) const;
+    // Family rows plus real extra weights (not Regular/Bold), cached once.
+    Q_INVOKABLE QVariantList fontPickerEntries() const;
+    Q_INVOKABLE void setSelectedFontFace(const QString &family, int weight);
     Q_INVOKABLE void keepMyVersion();
     Q_INVOKABLE void reloadFromDisk();
     QString status() const { return m_status; }
@@ -643,6 +646,7 @@ private:
     QTimer m_mediaProgressTimer;
     QHash<QString,QString> m_mediaPermissions;
     mutable QHash<QString,QVariantList> m_fontWeights;
+    mutable QVariantList m_fontPickerEntries;
     int m_documentGeneration = 0, m_mediaPickerGeneration = 0;
     bool m_mediaPickerEmbed = true;
     QString m_mediaPickerSlide, m_mediaPickerTarget;
