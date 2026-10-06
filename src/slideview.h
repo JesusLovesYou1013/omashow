@@ -33,6 +33,15 @@ class SlideView : public QQuickPaintedItem {
     Q_PROPERTY(bool fitMode READ fitMode NOTIFY layoutChanged)
     Q_PROPERTY(qreal contentScale READ contentScale NOTIFY layoutChanged)
     Q_PROPERTY(QPointF contentOrigin READ contentOrigin NOTIFY layoutChanged)
+    // Offset from the centred position, in pixels; the edit canvas scrolls with it.
+    Q_PROPERTY(QPointF pan READ pan WRITE setPan NOTIFY layoutChanged)
+    // Paint objects that reach past the slide's edges too (the edit canvas);
+    // other views keep the slide's own frame.
+    Q_PROPERTY(bool clipToSlide READ clipToSlide WRITE setClipToSlide NOTIFY clipToSlideChanged)
+    // A view placed by another: with fixedScale > 0 it ignores its own zoom and
+    // pan and draws the slide at fixedOrigin (the canvas's neighbouring slides).
+    Q_PROPERTY(qreal fixedScale READ fixedScale WRITE setFixedScale NOTIFY layoutChanged)
+    Q_PROPERTY(QPointF fixedOrigin READ fixedOrigin WRITE setFixedOrigin NOTIFY layoutChanged)
 
 public:
     explicit SlideView(QQuickItem *parent = nullptr);
@@ -66,6 +75,14 @@ public:
     Q_INVOKABLE void fit();
     Q_INVOKABLE void fitRect(const QRectF &rect);
     Q_INVOKABLE void panBy(qreal dx, qreal dy);
+    QPointF pan() const { return m_pan; }
+    void setPan(const QPointF &pan);
+    bool clipToSlide() const { return m_clipToSlide; }
+    void setClipToSlide(bool clip) { if (m_clipToSlide == clip) return; m_clipToSlide = clip; emit clipToSlideChanged(); update(); }
+    qreal fixedScale() const { return m_fixedScale; }
+    void setFixedScale(qreal scale);
+    QPointF fixedOrigin() const { return m_fixedOrigin; }
+    void setFixedOrigin(const QPointF &origin);
     void paint(QPainter *painter) override;
 protected:
     void updatePolish() override;
@@ -79,6 +96,7 @@ signals:
     void timeChanged();
     void editSlideChanged();
     void layoutChanged();
+    void clipToSlideChanged();
 
 private:
     std::atomic_bool m_hardwarePainting{false};
@@ -96,4 +114,7 @@ private:
     int m_editSlide = -1;
     qreal m_scale = 1.0;
     QPointF m_origin;
+    bool m_clipToSlide = true;
+    qreal m_fixedScale = 0;
+    QPointF m_fixedOrigin;
 };
