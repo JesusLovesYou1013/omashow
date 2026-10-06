@@ -492,7 +492,8 @@ Rectangle {
             }
             FieldRow {
                 label: qsTr("Style")
-                StyleMark { objectName: "textBold"; text: "B"; font.bold: true; tip: qsTr("Bold")
+                StyleMark { // OMASHOW-PERSONAL: B/I/U/S + caret typing (PR #11)
+                objectName: "textBold"; text: "B"; font.bold: true; tip: qsTr("Bold")
                             checked: (root.runStyle ? (root.range.weight ?? 400) : (root.sel.fontWeight ?? 400)) >= 700
                             onToggled: root.bold(checked) }
                 StyleMark { objectName: "textItalic"; text: "I"; font.italic: true; tip: qsTr("Italic")
