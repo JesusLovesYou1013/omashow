@@ -20,6 +20,7 @@ QFont fontFor(const SceneObject &o, qreal size) {
     font.setWeight(QFont::Weight(o.fontWeight));
     font.setItalic(o.italic);
     font.setUnderline(o.underline);
+    font.setStrikeOut(o.strike);
     font.setLetterSpacing(QFont::AbsoluteSpacing, o.letterSpacing);
     // Capitals as a transform, not a different string: run offsets are against
     // what was typed, and a few letters change length when uppercased.
@@ -159,7 +160,7 @@ std::shared_ptr<QTextDocument> layout(const SceneObject &o, qreal size) {
     QDataStream stream(&key, QIODevice::WriteOnly);
     stream << o.text << o.fontFamily << size << o.rect.width() << o.rect.height()
            << o.tabStop << o.columns << o.columnGap << o.direction << o.fontWeight
-           << o.italic << o.underline << o.letterSpacing << o.uppercase
+           << o.italic << o.underline << o.strike << o.letterSpacing << o.uppercase
            << o.textAlign << o.lineHeight << o.paragraphSpacing << o.textIndent
            << o.listStyle << o.listStart << o.textColor;
     for (const auto &run : o.runs)

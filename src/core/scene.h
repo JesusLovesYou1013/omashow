@@ -121,7 +121,7 @@ struct SceneObject {
     QColor textColor = QColor(255, 255, 255);
     bool uppercase = false;
     qreal letterSpacing = 0.0;
-    bool italic = false, underline = false;
+    bool italic = false, underline = false, strike = false;
     int textAlign = 0;       // left, centre, right, justify
     int verticalAlign = 1;   // top, middle, bottom; middle preserves older decks
     qreal lineHeight = 100;  // percentage

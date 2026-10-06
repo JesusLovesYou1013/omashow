@@ -323,7 +323,12 @@ public:
     Q_INVOKABLE void commitTextDocument(const QString &slideId, const QString &id, QQuickTextDocument *editor);
     QVariantMap textSelection() const;
     Q_INVOKABLE void setTextSelection(int start, int end);
+    Q_INVOKABLE void setTextEditing(bool on);
+    Q_INVOKABLE void clearTypingFormat();
     Q_INVOKABLE bool formatSelection(const QString &key, const QVariant &value);
+    // Mirror the inspector's B/I/U/S onto the live TextEdit caret so new typing
+    // shows the chosen look before commit remaps the runs.
+    Q_INVOKABLE void applyTypingFormatToEditor(QQuickTextDocument *editor, int cursorPos);
     Q_INVOKABLE int pasteEditorText(QQuickTextDocument *editor, int start, int end);
     Q_INVOKABLE void resetImageCrop();
     Q_INVOKABLE void insertImageDialog();
@@ -588,6 +593,7 @@ signals:
     void selectionChanged();
     void textSelectionChanged();
     void textFormattingChanged();
+    void typingFormatChanged();
     void documentChanged();
     void snapEnabledChanged();
     void guidesChanged();
@@ -703,6 +709,10 @@ private:
     int m_currentSlide = 0;
     QString m_selectedId;
     int m_textSelectionStart = 0, m_textSelectionEnd = 0;
+    bool m_textEditing = false;
+    // Looks chosen at a caret with nothing selected: applied to the next typed
+    // stretch on commit, and mirrored into the live editor.
+    QVariantMap m_typingFormat;
     QStringList m_selectedIds;
     QStringList m_groupScope;
     QVariantMap m_diagramPreview;
