@@ -1,6 +1,8 @@
 #include "backend.h"
 
 #include <QFontDatabase>
+#include <QSet>
+#include <QPair>
 #include <QFontInfo>
 #include <algorithm>
 #include "mediaplayback.h"
@@ -340,6 +342,10 @@ QVariantList Backend::fontWeights(const QString &family) const {
   QList<int> weights;
   for (const auto &style : QFontDatabase::styles(real)) {
     if (QFontDatabase::italic(real, style)) continue;
+    // Some faces mis-report italic(); skip by style name too.
+    if (style.contains(QLatin1String("Italic"), Qt::CaseInsensitive)
+        || style.contains(QLatin1String("Oblique"), Qt::CaseInsensitive))
+      continue;
     const int w = QFontDatabase::weight(real, style);
     if (w > 0 && !weights.contains(w)) weights.append(w);
   }
@@ -352,33 +358,81 @@ QVariantList Backend::fontWeights(const QString &family) const {
 
 QVariantList Backend::fontPickerEntries() const {
   if (!m_fontPickerEntries.isEmpty()) return m_fontPickerEntries;
+  // One canonical English name per weight step (Regular/Bold stay on the
+  // plain family row and the B toggle — never listed as their own rows).
   const auto weightLabel = [](int w) -> QString {
-    switch (w) {
-    case 100: return QObject::tr("Thin");
-    case 200: return QObject::tr("Extra light");
-    case 300: return QObject::tr("Light");
-    case 500: return QObject::tr("Medium");
-    case 600: return QObject::tr("Semibold");
-    case 800: return QObject::tr("Extra bold");
-    case 900: return QObject::tr("Black");
-    default: return w == 400 || w == 700 ? QString() : QString::number(w);
-    }
+    if (w <= 0) return {};
+    if (w < 150) return QStringLiteral("Thin");
+    if (w < 250) return QStringLiteral("Extra light");
+    if (w < 350) return QStringLiteral("Light");
+    if (w < 450) return {};                         // Regular
+    if (w < 550) return QStringLiteral("Medium");
+    if (w < 650) return QStringLiteral("Semibold");
+    if (w < 750) return {};                         // Bold
+    if (w < 850) return QStringLiteral("Extra bold");
+    return QStringLiteral("Black");
   };
+  const auto weightFromTrailingName = [](const QString &family) -> int {
+    static const QList<QPair<QString, int>> tails = {
+        {QStringLiteral("Extra light"), 200}, {QStringLiteral("Extra Light"), 200},
+        {QStringLiteral("Extra bold"), 800},  {QStringLiteral("Extra Bold"), 800},
+        {QStringLiteral("Semibold"), 600},    {QStringLiteral("SemiBold"), 600},
+        {QStringLiteral("Semi Bold"), 600},
+        {QStringLiteral("Thin"), 100},        {QStringLiteral("Light"), 300},
+        {QStringLiteral("Medium"), 500},      {QStringLiteral("Black"), 900},
+        {QStringLiteral("Heavy"), 900},       {QStringLiteral("Bold"), 700},
+        {QStringLiteral("Regular"), 400},     {QStringLiteral("Book"), 400},
+        {QStringLiteral("Normal"), 400}};
+    for (const auto &tail : tails) {
+      if (family.endsWith(QLatin1Char(' ') + tail.first, Qt::CaseInsensitive))
+        return tail.second;
+    }
+    return 0;
+  };
+  const auto isItalicFamily = [](const QString &family) {
+    return family.endsWith(QLatin1String(" Italic"), Qt::CaseInsensitive)
+        || family.endsWith(QLatin1String(" Oblique"), Qt::CaseInsensitive)
+        || family.endsWith(QLatin1String(" It"), Qt::CaseInsensitive);
+  };
+
   QVariantList rows;
-  for (const QString &family : QFontDatabase::families()) {
-    // Plain family name covers Regular; Bold is the B toggle.
-    rows.append(QVariantMap{{"label", family},
+  QSet<QString> seenLabels;   // case-folded — kills Light Light + cross-family dupes
+  QSet<QPair<QString, int>> seenFace;  // (family, weight)
+
+  const auto addRow = [&](const QString &label, const QString &family, int weight) {
+    const QString key = label.toCaseFolded();
+    const auto face = qMakePair(family, weight);
+    if (seenLabels.contains(key) || seenFace.contains(face)) return;
+    seenLabels.insert(key);
+    seenFace.insert(face);
+    rows.append(QVariantMap{{"label", label},
                             {"family", family},
-                            {"weight", 400}});
+                            {"weight", weight}});
+  };
+
+  for (const QString &family : QFontDatabase::families()) {
+    if (family.isEmpty() || isItalicFamily(family)) continue;
+    const int namedWeight = weightFromTrailingName(family);
+    if (namedWeight > 0) {
+      // Qt already exposed "Family Light" as its own family — list it once
+      // and do not append another "Light". Regular/Bold-named faces store
+      // weight 400 so the B toggle still owns bold.
+      const int stored = (namedWeight == 400 || namedWeight == 700) ? 400 : namedWeight;
+      addRow(family, family, stored);
+      continue;
+    }
+    // Plain family covers Regular; Bold is the B toggle.
+    addRow(family, family, 400);
     const auto weights = fontWeights(family);
     for (const auto &value : weights) {
       const int w = value.toInt();
       if (w == 400 || w == 700) continue;
       const QString name = weightLabel(w);
       if (name.isEmpty()) continue;
-      rows.append(QVariantMap{{"label", family + QLatin1Char(' ') + name},
-                              {"family", family},
-                              {"weight", w}});
+      // Never "Family Light Light" if the family string already ends that way
+      // (defensive — namedWeight path above should have caught it).
+      if (family.endsWith(QLatin1Char(' ') + name, Qt::CaseInsensitive)) continue;
+      addRow(family + QLatin1Char(' ') + name, family, w);
     }
   }
   m_fontPickerEntries = rows;
