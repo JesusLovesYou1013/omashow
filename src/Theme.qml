@@ -53,7 +53,7 @@ QtObject {
     readonly property color accentText:
         (0.2126 * accent.r + 0.7152 * accent.g + 0.0722 * accent.b) > 0.55 ? "#04121A" : "#F2F7FF"
 
-    // OMASHOW-PERSONAL: frame transparency (not upstream)
+    // OMASHOW-PERSONAL: theme transparency-only (frame opacity from OmaSkins; not upstream)
     // ── The editing window's frame ──────────────────────────────────────────
     // The palette above is fixed. What a desktop transparency setting may change is how SOLID the main
     // editing window's frame is drawn (OmarchyTheme.frameOpacity; 1 unless such a setting lowers it).
