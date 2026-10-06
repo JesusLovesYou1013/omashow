@@ -109,6 +109,7 @@ Rectangle {
                             Layout.fillWidth: true
                             model: [qsTr("Widescreen · 16:9"),qsTr("Standard · 4:3"),qsTr("Portrait · 9:16"),qsTr("Square · 1:1"),qsTr("Custom")]
                             // The size chosen last time is the one offered next time.
+                            // OMASHOW-PERSONAL: start-slide-size
                             currentIndex: backend.startState.slideSize
                             onActivated: backend.setStartState("slideSize", currentIndex)
                         }

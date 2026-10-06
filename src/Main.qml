@@ -45,6 +45,7 @@ ApplicationWindow {
     readonly property bool dialogOpen: Sheets.count > 0
     font.family: Theme.fontFamily
     font.pixelSize: Theme.fsControl
+    // OMASHOW-PERSONAL: frame transparency / theme transparency-only
     color: Theme.frameWindow
     // Focused or not decides which of the two frame levels applies (see Theme.frameAlpha).
     onActiveChanged: Theme.frameActive = active

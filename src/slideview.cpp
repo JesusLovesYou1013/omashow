@@ -97,6 +97,7 @@ void SlideView::paint(QPainter *painter) {
         if (o.id == m_cropObject && o.type == ObjectType::Image) {
             // Only around the kept frame, so pictures with transparency stay
             // clean inside; the kept part is then drawn normally on top.
+            // OMASHOW-PERSONAL: crop cut-area look (upstream #12 deferred)
             const auto cut = ImageCrop::cutArea(o);
             painter->save();
             painter->setClipPath(cut, Qt::IntersectClip);
