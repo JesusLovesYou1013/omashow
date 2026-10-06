@@ -91,12 +91,15 @@ ApplicationWindow {
         property Item panel
         property bool fromLeft: true
         property bool collapsed: false
+        // One-click hide/show (OS-008 arrow), kept alongside drag-to-resize.
+        property bool showToggle: true
         signal resizeStarted()
         signal resizedBy(real total)     // pointer travel since the press, toward the canvas
         signal resizeFinished()
         signal toggled()
         objectName: "panelGrip"
-        implicitWidth: Theme.s2
+        // Wide enough for the chevron; the rest of the strip is still the drag hit area.
+        implicitWidth: Theme.s4
         Layout.fillHeight: true
         Rectangle { anchors.fill: parent; color: hover.hovered || drag.active ? Theme.accent : "transparent"; opacity: .35 }
         HoverHandler { id: hover; cursorShape: Qt.SplitHCursor }
@@ -118,7 +121,34 @@ ApplicationWindow {
             onActiveChanged: if (active) { grip.resizeStarted(); follow() } else grip.resizeFinished()
             onCentroidChanged: if (active) follow()
         }
-        TapHandler { onDoubleTapped: grip.toggled() }
+        // Visible arrow: click toggles collapse; drag still works on the bar around it.
+        Button {
+            id: toggleBtn
+            objectName: grip.fromLeft ? "navigatorToggleButton" : "sidebarToggleButton"
+            visible: grip.showToggle
+            anchors.centerIn: parent
+            z: 1
+            implicitWidth: grip.width
+            implicitHeight: Theme.s5 * 2
+            flat: true
+            focusPolicy: Qt.NoFocus
+            display: AbstractButton.IconOnly
+            // Point toward where the panel will go (out when shown, in when hidden).
+            icon.name: grip.fromLeft
+                       ? (grip.collapsed ? "chevron-right" : "chevron-left")
+                       : (grip.collapsed ? "chevron-left" : "chevron-right")
+            icon.width: Theme.szIcon
+            icon.height: Theme.szIcon
+            readonly property string tip: grip.collapsed
+                ? (grip.fromLeft ? qsTr("Show the slide list") : qsTr("Show sidebar"))
+                : (grip.fromLeft ? qsTr("Hide the slide list") : qsTr("Hide sidebar"))
+            onClicked: grip.toggled()
+            ToolTip.visible: hovered
+            ToolTip.delay: Theme.tooltipDelay
+            ToolTip.text: tip
+            Accessible.name: tip
+        }
+        TapHandler { objectName: "gripTap"; onDoubleTapped: grip.toggled() }
     }
     // Below this width the toolbar drops its labels and keeps the icons.
     readonly property bool compactToolbar: width < 1440
