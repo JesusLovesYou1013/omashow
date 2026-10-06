@@ -56,6 +56,10 @@ ApplicationWindow {
     property real inspectorWidth: backend.panelState.inspectorWidth ?? Theme.wInspector
     property bool navigatorCollapsed: (backend.panelState.navigatorCollapsed ?? "false") === "true"
     property bool inspectorCollapsed: (backend.panelState.inspectorCollapsed ?? "false") === "true"
+    // OMASHOW-PERSONAL: fixed sidebar option (upstream #15 deferred) — when true,
+    // the right panel stays at Theme.wInspectorFixed; drag still collapses via the
+    // chevron (feat/sidebar-collapse) but does not change width.
+    property bool inspectorFixed: (backend.panelState.inspectorFixed ?? "false") === "true"
     // Saved when a drag ends, not on every move: each save rewrites the panel
     // settings file.
     function savePanelWidths() {
@@ -64,12 +68,22 @@ ApplicationWindow {
     }
     onNavigatorCollapsedChanged: backend.setPanelState("navigatorCollapsed", navigatorCollapsed)
     onInspectorCollapsedChanged: backend.setPanelState("inspectorCollapsed", inspectorCollapsed)
+    onInspectorFixedChanged: {
+        backend.setPanelState("inspectorFixed", inspectorFixed)
+        if (inspectorFixed) {
+            inspectorWidth = Theme.wInspectorFixed
+            savePanelWidths()
+        }
+    }
     onNotesOpenChanged: backend.setPanelState("notesOpen", notesOpen)
     // A panel dragged to nothing, or a remembered width from a bigger screen,
     // comes back to something usable rather than disappearing.
     function panelRoom() { return Math.max(320, win.width - 360) / 2 }
     function clampNavigator(w) { return Math.min(Math.max(Theme.wNavigatorMin, w), panelRoom()) }
-    function clampInspector(w) { return Math.min(Math.max(Theme.wInspectorMin, w), panelRoom()) }
+    function clampInspector(w) {
+        if (win.inspectorFixed) return Theme.wInspectorFixed
+        return Math.min(Math.max(Theme.wInspectorMin, w), panelRoom())
+    }
     function sanePanels() {
         const nav = clampNavigator(win.navigatorWidth), side = clampInspector(win.inspectorWidth)
         if (nav === win.navigatorWidth && side === win.inspectorWidth) return
@@ -352,7 +366,8 @@ ApplicationWindow {
             { group: qsTr("View"), name: qsTr("Presenter notes"), also: "speaker script", run: () => win.notesOpen = !win.notesOpen },
             { group: qsTr("View"), name: win.navigatorCollapsed ? qsTr("Show the slide list") : qsTr("Hide the slide list"), also: "navigator panel thumbnails sidebar", run: () => win.navigatorCollapsed = !win.navigatorCollapsed },
             { group: qsTr("View"), name: win.inspectorCollapsed ? qsTr("Show the inspector") : qsTr("Hide the inspector"), also: "panel properties sidebar", run: () => win.inspectorCollapsed = !win.inspectorCollapsed },
-            { group: qsTr("View"), name: qsTr("Put the panels back"), also: "reset widths restore layout", run: () => { win.navigatorCollapsed = false; win.inspectorCollapsed = false; win.navigatorWidth = Theme.wNavigator; win.inspectorWidth = Theme.wInspector; win.savePanelWidths() } },
+            { group: qsTr("View"), name: win.inspectorFixed ? qsTr("Unlock sidebar width") : qsTr("Lock sidebar width"), also: "fixed inspector panel", run: () => win.inspectorFixed = !win.inspectorFixed },
+            { group: qsTr("View"), name: qsTr("Put the panels back"), also: "reset widths restore layout", run: () => { win.navigatorCollapsed = false; win.inspectorCollapsed = false; win.navigatorWidth = Theme.wNavigator; win.inspectorWidth = Theme.wInspector; win.inspectorFixed = false; win.savePanelWidths() } },
             { group: qsTr("View"), name: qsTr("Snap to guides"), also: "align magnet", run: () => backend.snapEnabled = !backend.snapEnabled },
             { group: qsTr("View"), name: backend.reducedMotion ? qsTr("Allow movement again") : qsTr("Less movement"), also: "reduced motion animation accessibility vestibular", run: () => backend.reducedMotion = !backend.reducedMotion },
             { group: qsTr("View"), name: backend.highContrast ? qsTr("Ordinary contrast") : qsTr("Stronger contrast"), also: "high contrast accessibility legible", run: () => backend.highContrast = !backend.highContrast },
@@ -651,6 +666,8 @@ ApplicationWindow {
                                    onTriggered: win.navigatorCollapsed = !win.navigatorCollapsed }
                         MenuItem { objectName: "toggleInspector"; text: win.inspectorCollapsed ? qsTr("Show the inspector") : qsTr("Hide the inspector")
                                    onTriggered: win.inspectorCollapsed = !win.inspectorCollapsed }
+                        MenuItem { objectName: "toggleInspectorFixed"; text: win.inspectorFixed ? qsTr("Unlock sidebar width") : qsTr("Lock sidebar width")
+                                   onTriggered: win.inspectorFixed = !win.inspectorFixed }
                         MenuItem { objectName: "resetPanels"; text: qsTr("Put the panels back")
                                    onTriggered: { win.navigatorCollapsed = false; win.inspectorCollapsed = false
                                                   win.navigatorWidth = Theme.wNavigator; win.inspectorWidth = Theme.wInspector; win.savePanelWidths() } }
