@@ -108,6 +108,9 @@ Rectangle {
                             objectName: "startDimensions"
                             Layout.fillWidth: true
                             model: [qsTr("Widescreen · 16:9"),qsTr("Standard · 4:3"),qsTr("Portrait · 9:16"),qsTr("Square · 1:1"),qsTr("Custom")]
+                            // The size chosen last time is the one offered next time.
+                            currentIndex: backend.startState.slideSize
+                            onActivated: backend.setStartState("slideSize", currentIndex)
                         }
                         ComboBox {
                             objectName: "startLayout"
@@ -119,8 +122,8 @@ Rectangle {
                         RowLayout {
                             visible: dimensions.currentIndex === 4
                             Layout.columnSpan: 2
-                            NumField { id: customWidth; objectName: "startWidth"; Layout.fillWidth: true; label: qsTr("W"); value: 1920; onCommitted: v => value = Math.max(240,Math.min(10000,v)) }
-                            NumField { id: customHeight; objectName: "startHeight"; Layout.fillWidth: true; label: qsTr("H"); value: 1080; onCommitted: v => value = Math.max(240,Math.min(10000,v)) }
+                            NumField { id: customWidth; objectName: "startWidth"; Layout.fillWidth: true; label: qsTr("W"); value: backend.startState.customWidth; onCommitted: v => { value = Math.max(240,Math.min(10000,v)); backend.setStartState("customWidth", value) } }
+                            NumField { id: customHeight; objectName: "startHeight"; Layout.fillWidth: true; label: qsTr("H"); value: backend.startState.customHeight; onCommitted: v => { value = Math.max(240,Math.min(10000,v)); backend.setStartState("customHeight", value) } }
                         }
                     }
                     RowLayout {
@@ -194,7 +197,9 @@ Rectangle {
                                         Layout.fillWidth: true
                                         Layout.preferredHeight: width * 9 / 16
                                         radius: Theme.rControl
-                                        color: Theme.showBg
+                                        // The preview takes the deck's shape inside a box that keeps its
+                                        // own, so the card shows around it and no card changes size.
+                                        color: templateCard.modelData.broken ? Theme.showBg : "transparent"
                                         clip: true
                                         Image {
                                             anchors.fill: parent
@@ -202,7 +207,7 @@ Rectangle {
                                             cache: false
                                             sourceSize.width: 360
                                             source: templateCard.modelData.broken ? ""
-                                                    : "image://slides/template/" + encodeURIComponent(templateCard.modelData.id)
+                                                    : "image://slides/template-at/" + root.deckWidth + "/" + root.deckHeight + "/" + encodeURIComponent(templateCard.modelData.id)
                                         }
                                         Label {
                                             anchors.centerIn: parent
@@ -244,7 +249,7 @@ Rectangle {
                                 Layout.fillWidth: true; wrapMode: Text.Wrap; color: Theme.textSecondary
                                 font.pixelSize: Theme.fsLabel
                                 text: qsTr("%1 · %2 masters · %3 · typefaces: %4")
-                                      .arg(root.chosen.size ?? "").arg(root.chosen.masters ?? 0)
+                                      .arg(Math.round(root.deckWidth) + " × " + Math.round(root.deckHeight)).arg(root.chosen.masters ?? 0)
                                       .arg((root.chosen.layouts ?? []).join(", "))
                                       .arg((root.chosen.fonts ?? []).join(", "))
                             }

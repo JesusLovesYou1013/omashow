@@ -121,6 +121,7 @@ class Backend : public QObject {
     Q_PROPERTY(QVariantList outline READ outline NOTIFY documentChanged)
     Q_PROPERTY(QVariantMap findState READ findState NOTIFY findChanged)
     Q_PROPERTY(QVariantMap panelState READ panelState CONSTANT)
+    Q_PROPERTY(QVariantMap startState READ startState CONSTANT)
     Q_PROPERTY(bool reducedMotion READ reducedMotion WRITE setReducedMotion NOTIFY viewPreferencesChanged)
     Q_PROPERTY(bool highContrast READ highContrast WRITE setHighContrast NOTIFY viewPreferencesChanged)
     Q_PROPERTY(QVariantMap slideTransition READ slideTransition NOTIFY selectionChanged)
@@ -224,7 +225,9 @@ public:
     Q_INVOKABLE bool createDeck(int theme, qreal width, qreal height, int layout = 0);
     QVariantList templates() const;
     Q_INVOKABLE void refreshTemplates();
-    Q_INVOKABLE bool createFromTemplate(const QString &id);
+    // A width and height open the template at that size, its content fitted to it; without them it
+    // opens at the size it was kept at.
+    Q_INVOKABLE bool createFromTemplate(const QString &id, qreal width = 0, qreal height = 0);
     Q_INVOKABLE void installTemplateDialog();
     Q_INVOKABLE bool installTemplate(const QUrl &url);
     Q_INVOKABLE bool saveAsTemplate(const QString &name);
@@ -516,6 +519,8 @@ public:
     QVariantMap findState() const;
     QVariantMap panelState() const;
     Q_INVOKABLE void setPanelState(const QString &key, const QVariant &value);
+    QVariantMap startState() const;
+    Q_INVOKABLE void setStartState(const QString &key, const QVariant &value);
     bool reducedMotion() const;
     void setReducedMotion(bool reduced);
     bool highContrast() const;
