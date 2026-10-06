@@ -636,6 +636,19 @@ void Backend::commitTextDocument(const QString &slideId,const QString &id,QQuick
 QRectF Backend::selectionVisualBounds() const {
   return Arrange::visualBounds(Design::resolve(m_document,m_currentSlide),selectedIds());
 }
+QVariantMap Backend::slideExtent(int index) const {
+  const qreal height = m_document.size.height();
+  QVariantMap extent{{"top", 0.0}, {"bottom", height}};
+  if (index < 0 || index >= m_document.slides.size()) return extent;
+  const Slide slide = Design::resolve(m_document, index);
+  QStringList ids;
+  for (const auto &o : slide.objects) ids.append(o.id);
+  const QRectF bounds = Arrange::visualBounds(slide, ids);
+  if (bounds.isNull() || !std::isfinite(bounds.top()) || !std::isfinite(bounds.bottom())) return extent;
+  extent["top"] = qMin(0.0, bounds.top());
+  extent["bottom"] = qMax(height, bounds.bottom());
+  return extent;
+}
 void Backend::rotateSelection(qreal degrees,bool snap) {
   if(!m_gestureActive || !std::isfinite(degrees)) return;
   const auto ids=selectedIds();
