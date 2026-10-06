@@ -28,6 +28,7 @@
 #include <QQmlEngine>
 #include <QTextStream>
 #include <QDir>
+#include <QFile>
 #include <QEventLoop>
 #include <QQuickWindow>
 #include <QQuickItem>
@@ -373,6 +374,10 @@ int main(int argc, char *argv[]) {
         format.setSamples(4);
         QSurfaceFormat::setDefaultFormat(format);
     }
+    // The editing window's frame can be drawn see-through (Theme.frameWindow), so windows get an alpha
+    // channel. With the default, solid frame this changes nothing on screen.
+    if (!headless)
+        QQuickWindow::setDefaultAlphaBuffer(true);
     QGuiApplication app(argc, argv);
     Workers::Session workerSession;
 
@@ -531,6 +536,23 @@ int main(int argc, char *argv[]) {
     QObject::connect(&theme, &OmarchyTheme::textScaleChanged, &app, [&theme, scaleFont] {
         scaleFont(theme.textScale());
     });
+
+    // While the frame is drawn see-through, the compositor must not fade the whole window on top of it
+    // (the slides would fade too). OmaSkins keeps its fade off any app that leaves this marker, named
+    // after the process, in the runtime directory.
+    const auto markOwnTransparency = [&theme] {
+        if (theme.frameOpacity() >= 0.999 && theme.frameOpacityInactive() >= 0.999)
+            return;
+        const QString runtime = qEnvironmentVariable("XDG_RUNTIME_DIR");
+        if (runtime.isEmpty())
+            return;
+        const QString dir = runtime + QStringLiteral("/omaskins-qt");
+        QDir().mkpath(dir);
+        QFile mark(dir + QLatin1Char('/') + QString::number(QCoreApplication::applicationPid()));
+        mark.open(QIODevice::WriteOnly);
+    };
+    markOwnTransparency();
+    QObject::connect(&theme, &OmarchyTheme::frameOpacityChanged, &app, markOwnTransparency);
 
     QQmlApplicationEngine engine;
     engine.addImageProvider(QStringLiteral("slides"), new SlideThumbnailProvider(&backend));
