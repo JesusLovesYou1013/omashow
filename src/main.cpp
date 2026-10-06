@@ -436,6 +436,7 @@ int main(int argc, char *argv[]) {
                                  QStringLiteral("n"), QStringLiteral("0"));
     parser.addOption(atOption);
     parser.addOption(fpsOption);
+    // OMASHOW-PERSONAL: ui-shot harness (private; never for upstream)
     QCommandLineOption uiShotOption(QStringLiteral("ui-shot"),
                                     QStringLiteral("Photograph each workspace to <dir> and exit."),
                                     QStringLiteral("dir"));
