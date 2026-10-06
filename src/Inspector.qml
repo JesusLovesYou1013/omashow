@@ -38,6 +38,16 @@ Rectangle {
                         900: qsTr("Black") }
         return names[w] ?? String(w)
     }
+    // Picker label: plain family for Regular/Bold (B covers bold); otherwise "Family Medium".
+    readonly property string fontPickerFamily: ((range.active || range.caret) ? (range.fontFamily ?? sel.fontFamily) : sel.fontFamily) ?? Theme.fontFamily
+    readonly property int fontPickerWeight: (range.active || range.caret) ? (range.weight ?? sel.fontWeight ?? 400) : (sel.fontWeight ?? 400)
+    readonly property string fontPickerLabel: {
+        const family = fontPickerFamily
+        const w = fontPickerWeight
+        if (w === 400 || w === 700) return family
+        const name = weightName(w)
+        return name ? (family + " " + name) : family
+    }
     readonly property bool isMedia: backend.hasSelection && sel.type === "media"
     readonly property bool isImage: backend.hasSelection && sel.type === "image"
     readonly property bool isText: backend.hasSelection && sel.type === "text"
@@ -440,14 +450,19 @@ Rectangle {
             FieldRow {
                 label: qsTr("Font")
                 ComboBox {
+                    objectName: "textFont"
                     Layout.fillWidth: true
                     editable: true
-                    model: Qt.fontFamilies()
-                    currentIndex: model.indexOf(root.sel.fontFamily ?? "")
-                    displayText: root.sel.fontFamily ?? Theme.fontFamily
-                    onActivated: backend.setSelectedProperty("fontFamily",currentText)
-                    onAccepted: root.range.active ? backend.formatSelection("fontFamily",editText)
-                                                  : backend.setSelectedProperty("fontFamily",editText)
+                    // Cached in the backend: plain family plus real extra weights
+                    // (not Regular / Bold — those are the plain name and the B toggle).
+                    model: backend.fontPickerEntries()
+                    textRole: "label"
+                    displayText: root.fontPickerLabel
+                    onActivated: (index) => {
+                        const entry = model[index]
+                        if (entry) backend.setSelectedFontFace(entry.family, entry.weight)
+                    }
+                    onAccepted: backend.setSelectedFontFace(editText, 400)
                 }
             }
             FieldRow {
@@ -457,20 +472,6 @@ Rectangle {
                     value: (root.range.active ? (root.range.fontSize ?? Theme.fsBase) : (root.sel.fontSize ?? Theme.fsBase)) * root.ptPerUnit
                     onCommitted: (v) => root.range.active ? backend.formatSelection("fontSize", v / root.ptPerUnit)
                                                           : backend.setSelectedProperty("fontSize", v / root.ptPerUnit)
-                }
-                ComboBox {
-                    objectName: "textWeight"
-                    Layout.preferredWidth: Theme.s5 * 5
-                    // Only weights the typeface really has, so each entry looks
-                    // different; the current value stays listed even if odd.
-                    // A face with a single weight has nothing to choose.
-                    model: root.weightChoices.map(w => ({ value: w, text: root.weightName(w) }))
-                    textRole: "text"
-                    valueRole: "value"
-                    visible: root.weightChoices.length > 1
-                    currentIndex: Math.max(0, root.weightChoices.indexOf(root.currentWeight))
-                    onActivated: (index) => root.range.active ? backend.formatSelection("weight", root.weightChoices[index])
-                                                              : backend.setSelectedProperty("fontWeight", root.weightChoices[index])
                 }
             }
             FieldRow {

@@ -5,6 +5,7 @@
 #include <algorithm>
 #include "mediaplayback.h"
 #include "core/design.h"
+#include "core/textruns.h"
 #include "core/review.h"
 #include "io/decklock.h"
 #include "io/exports.h"
@@ -347,6 +348,91 @@ QVariantList Backend::fontWeights(const QString &family) const {
   for (int w : weights) result.append(w);
   m_fontWeights.insert(family, result);
   return result;
+}
+
+QVariantList Backend::fontPickerEntries() const {
+  if (!m_fontPickerEntries.isEmpty()) return m_fontPickerEntries;
+  const auto weightLabel = [](int w) -> QString {
+    switch (w) {
+    case 100: return QObject::tr("Thin");
+    case 200: return QObject::tr("Extra light");
+    case 300: return QObject::tr("Light");
+    case 500: return QObject::tr("Medium");
+    case 600: return QObject::tr("Semibold");
+    case 800: return QObject::tr("Extra bold");
+    case 900: return QObject::tr("Black");
+    default: return w == 400 || w == 700 ? QString() : QString::number(w);
+    }
+  };
+  QVariantList rows;
+  for (const QString &family : QFontDatabase::families()) {
+    // Plain family name covers Regular; Bold is the B toggle.
+    rows.append(QVariantMap{{"label", family},
+                            {"family", family},
+                            {"weight", 400}});
+    const auto weights = fontWeights(family);
+    for (const auto &value : weights) {
+      const int w = value.toInt();
+      if (w == 400 || w == 700) continue;
+      const QString name = weightLabel(w);
+      if (name.isEmpty()) continue;
+      rows.append(QVariantMap{{"label", family + QLatin1Char(' ') + name},
+                              {"family", family},
+                              {"weight", w}});
+    }
+  }
+  m_fontPickerEntries = rows;
+  return rows;
+}
+
+void Backend::setSelectedFontFace(const QString &family, int weight) {
+  const auto trimmed = family.trimmed();
+  if (trimmed.isEmpty() || trimmed.size() > 120) return;
+  const int w = weight == 0 ? 400 : qBound(100, weight, 900);
+  const auto *object = static_cast<const Backend *>(this)->selectedObject();
+  if (!object || object->type != ObjectType::Text) return;
+  if (m_textSelectionEnd > m_textSelectionStart) {
+    // One undo for both looks on the selected stretch.
+    m_history.begin(m_document, tr("Change font"));
+    SceneObject changed = *object;
+    TextRuns::apply(changed, m_textSelectionStart, m_textSelectionEnd,
+                    QStringLiteral("fontFamily"), trimmed);
+    TextRuns::apply(changed, m_textSelectionStart, m_textSelectionEnd,
+                    QStringLiteral("weight"), w);
+    auto *target = selectedObject();
+    target->runs = changed.runs;
+    Design::markOverride(*target, QStringLiteral("runs"));
+    m_history.commit();
+    touch();
+    emit textSelectionChanged();
+    emit textFormattingChanged();
+    return;
+  }
+  if (m_textEditing) {
+    // Caret: family applies to the box for new typing; weight is a typing look.
+    if (object->fontFamily != trimmed) {
+      m_history.begin(m_document, tr("Change font"));
+      auto *target = selectedObject();
+      Design::setProperty(*target, QStringLiteral("fontFamily"), trimmed);
+      Design::markOverride(*target, QStringLiteral("fontFamily"));
+      m_history.commit();
+      touch();
+    }
+    m_typingFormat.insert(QStringLiteral("weight"), w);
+    emit typingFormatChanged();
+    emit textSelectionChanged();
+    return;
+  }
+  m_history.begin(m_document, tr("Change font"));
+  for (const auto &id : selectedIds())
+    if (auto *o = m_document.slides[m_currentSlide].find(id)) {
+      Design::setProperty(*o, QStringLiteral("fontFamily"), trimmed);
+      Design::markOverride(*o, QStringLiteral("fontFamily"));
+      Design::setProperty(*o, QStringLiteral("fontWeight"), w);
+      Design::markOverride(*o, QStringLiteral("fontWeight"));
+    }
+  m_history.commit();
+  touch();
 }
 
 int Backend::substituteFonts(const QVariantMap &replacements) {
