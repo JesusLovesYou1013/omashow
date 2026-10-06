@@ -2,6 +2,7 @@
 
 #include <QFontDatabase>
 #include <QSet>
+#include <QRegularExpression>
 #include <QPair>
 #include <QFontInfo>
 #include <algorithm>
@@ -399,7 +400,16 @@ QVariantList Backend::fontPickerEntries() const {
   QSet<QString> seenLabels;   // case-folded — kills Light Light + cross-family dupes
   QSet<QPair<QString, int>> seenFace;  // (family, weight)
 
-  const auto addRow = [&](const QString &label, const QString &family, int weight) {
+  const auto looksDoubled = [](const QString &label) {
+    // "Family Light Light", "Family Medium Medium", etc.
+    static const QRegularExpression re(
+        QStringLiteral(R"(\b(Thin|Extra light|Light|Medium|Semibold|Extra bold|Black)\s+\1\b)"),
+        QRegularExpression::CaseInsensitiveOption);
+    return re.match(label).hasMatch();
+  };
+  const auto addRow = [&](QString label, const QString &family, int weight) {
+    label = label.simplified();
+    if (looksDoubled(label)) return;
     const QString key = label.toCaseFolded();
     const auto face = qMakePair(family, weight);
     if (seenLabels.contains(key) || seenFace.contains(face)) return;
