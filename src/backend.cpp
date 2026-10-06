@@ -375,10 +375,13 @@ QVariantList Backend::fontPickerEntries() const {
   };
   const auto weightFromTrailingName = [](const QString &family) -> int {
     static const QList<QPair<QString, int>> tails = {
+        // Longer tails first so "Extra light" / "DemiLight" win over "Light".
         {QStringLiteral("Extra light"), 200}, {QStringLiteral("Extra Light"), 200},
         {QStringLiteral("Extra bold"), 800},  {QStringLiteral("Extra Bold"), 800},
         {QStringLiteral("Semibold"), 600},    {QStringLiteral("SemiBold"), 600},
         {QStringLiteral("Semi Bold"), 600},
+        {QStringLiteral("DemiLight"), 350},   {QStringLiteral("Demi Light"), 350},
+        {QStringLiteral("UltraLight"), 200},  {QStringLiteral("Ultra Light"), 200},
         {QStringLiteral("Thin"), 100},        {QStringLiteral("Light"), 300},
         {QStringLiteral("Medium"), 500},      {QStringLiteral("Black"), 900},
         {QStringLiteral("Heavy"), 900},       {QStringLiteral("Bold"), 700},
@@ -405,7 +408,11 @@ QVariantList Backend::fontPickerEntries() const {
     static const QRegularExpression re(
         QStringLiteral(R"(\b(Thin|Extra light|Light|Medium|Semibold|Extra bold|Black)\s+\1\b)"),
         QRegularExpression::CaseInsensitiveOption);
-    return re.match(label).hasMatch();
+    // "DemiLight Light", "UltraLight Light" — weight word glued then repeated.
+    static const QRegularExpression glued(
+        QStringLiteral(R"((?:Demi|Ultra)?Light\s+Light\b)"),
+        QRegularExpression::CaseInsensitiveOption);
+    return re.match(label).hasMatch() || glued.match(label).hasMatch();
   };
   const auto addRow = [&](QString label, const QString &family, int weight) {
     label = label.simplified();
