@@ -111,8 +111,12 @@ OmarchyTheme::OmarchyTheme(QObject *parent) : QObject(parent) {
     reloadFrameOpacity();
 }
 
-// OmaSkins (a look manager for Omarchy) keeps the desktop's transparency step here as
-// "<focused> <unfocused> <blur|noblur>", e.g. "0.75 0.68 blur"; no file means the desktop's default.
+// OMASHOW-PERSONAL: theme transparency-only
+// OmaShow's only OmaSkins input is this transparency step. Other files under omaskins/
+// (qt-palette, rotation, etc.) are ignored. Format: "<focused> <unfocused> [ignored…]",
+// e.g. "0.75 0.68 blur" — only the two opacities are used; blur/noblur and any further
+// tokens are discarded. No file / unreadable file / missing OmaSkins → fully opaque (1, 1),
+// silently (no warning, no error).
 QString OmarchyTheme::frameOpacityPath() {
     QString config = qEnvironmentVariable("XDG_CONFIG_HOME");
     if (config.isEmpty())
@@ -120,7 +124,14 @@ QString OmarchyTheme::frameOpacityPath() {
     return config + QStringLiteral("/omaskins/transparency");
 }
 
+// True when the OmaSkins transparency contract is present: the config file itself.
+// Without it the desktop has no transparency step for us to follow.
+bool OmarchyTheme::omaskinsTransparencyPresent() {
+    return QFileInfo::exists(frameOpacityPath());
+}
+
 QPair<qreal, qreal> OmarchyTheme::frameOpacityFromText(const QString &text) {
+    // Only the first two numeric fields. Everything after (blur, theme names, …) is ignored.
     const QStringList parts = text.simplified().split(QLatin1Char(' '), Qt::SkipEmptyParts);
     if (parts.size() < 2)
         return {1.0, 1.0};
@@ -136,16 +147,21 @@ QPair<qreal, qreal> OmarchyTheme::frameOpacityFromText(const QString &text) {
 void OmarchyTheme::reloadFrameOpacity() {
     const QString path = frameOpacityPath();
     const QString dir = QFileInfo(path).absolutePath();
-    // The file is replaced (and removed at the default step), so the folder is watched too.
+    // Watch the folder so an atomic replace of `transparency` is noticed; we still only open
+    // that one file — never qt-palette.conf or other omaskins siblings.
     if (QDir(dir).exists() && !m_frameWatcher.directories().contains(dir))
         m_frameWatcher.addPath(dir);
     if (QFileInfo::exists(path) && !m_frameWatcher.files().contains(path))
         m_frameWatcher.addPath(path);
 
+    // No OmaSkins transparency file → fully opaque. Stay quiet: no qWarning/qCritical.
     QPair<qreal, qreal> next{1.0, 1.0};
-    QFile file(path);
-    if (file.open(QIODevice::ReadOnly | QIODevice::Text))
-        next = frameOpacityFromText(QString::fromUtf8(file.readLine()));
+    if (omaskinsTransparencyPresent()) {
+        QFile file(path);
+        if (file.open(QIODevice::ReadOnly | QIODevice::Text))
+            next = frameOpacityFromText(QString::fromUtf8(file.readLine()));
+        // open failure or bad parse → next stays {1,1}; no log.
+    }
     if (qFuzzyCompare(next.first, m_frameOpacity) && qFuzzyCompare(next.second, m_frameOpacityInactive))
         return;
     m_frameOpacity = next.first;

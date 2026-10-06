@@ -26,10 +26,11 @@ class OmarchyTheme : public QObject {
     Q_PROPERTY(bool accentFollowed READ accentFollowed NOTIFY colorsChanged)
     Q_PROPERTY(QString accentForeground READ accentForeground NOTIFY colorsChanged)
     Q_PROPERTY(QString selection READ selection NOTIFY colorsChanged)
+    // OMASHOW-PERSONAL: theme transparency-only — OmaSkins input is opacity alone (not palette/fonts).
     // How solid the editing window's frame (bars, panels, the surround of the slide) is drawn, for the
-    // focused and the unfocused window: 1 = solid, the default. A desktop transparency setting can lower
-    // it (OmaSkins publishes one), and only the frame follows: slides and thumbnails stay solid, as they
-    // must for judging the work. Without such a setting nothing changes.
+    // focused and the unfocused window: 1 = solid, the default. OmaSkins' transparency file can lower
+    // it, and only the frame follows: slides and thumbnails stay solid, as they must for judging the
+    // work. No transparency file (OmaSkins absent) → 1 / 1, silently.
     Q_PROPERTY(qreal frameOpacity READ frameOpacity NOTIFY frameOpacityChanged)
     Q_PROPERTY(qreal frameOpacityInactive READ frameOpacityInactive NOTIFY frameOpacityChanged)
 
@@ -46,8 +47,9 @@ public:
     QString accentForeground() const { return foregroundFor(m_accent); }
     qreal frameOpacity() const { return m_frameOpacity; }
     qreal frameOpacityInactive() const { return m_frameOpacityInactive; }
-    // "focused unfocused ..." as OmaSkins writes it; (1, 1) for anything else.
+    // First two fields of OmaSkins' transparency line; anything after is ignored. (1, 1) otherwise.
     static QPair<qreal, qreal> frameOpacityFromText(const QString &text);
+    static bool omaskinsTransparencyPresent();
 
     // key = value pairs from an omarchy colors.toml; empty when there is none.
     static QHash<QString, QString> colorsFromFile(const QString &path);

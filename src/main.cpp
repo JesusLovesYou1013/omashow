@@ -537,19 +537,25 @@ int main(int argc, char *argv[]) {
         scaleFont(theme.textScale());
     });
 
+    // OMASHOW-PERSONAL: theme transparency-only
     // While the frame is drawn see-through, the compositor must not fade the whole window on top of it
     // (the slides would fade too). OmaSkins keeps its fade off any app that leaves this marker, named
-    // after the process, in the runtime directory.
+    // after the process, in the runtime directory. No OmaSkins transparency → opaque frame, so we
+    // write nothing here (no marker, no Hyprland tag request, no log).
     const auto markOwnTransparency = [&theme] {
+        if (!OmarchyTheme::omaskinsTransparencyPresent())
+            return;
         if (theme.frameOpacity() >= 0.999 && theme.frameOpacityInactive() >= 0.999)
             return;
         const QString runtime = qEnvironmentVariable("XDG_RUNTIME_DIR");
         if (runtime.isEmpty())
             return;
         const QString dir = runtime + QStringLiteral("/omaskins-qt");
-        QDir().mkpath(dir);
+        if (!QDir().mkpath(dir))
+            return;
         QFile mark(dir + QLatin1Char('/') + QString::number(QCoreApplication::applicationPid()));
-        mark.open(QIODevice::WriteOnly);
+        if (!mark.open(QIODevice::WriteOnly))
+            return;
     };
     markOwnTransparency();
     QObject::connect(&theme, &OmarchyTheme::frameOpacityChanged, &app, markOwnTransparency);
