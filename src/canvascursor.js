@@ -1,5 +1,5 @@
 .pragma library
-// Edit canvas cursors: pure functions, kept apart so they can be tested offscreen.
+// Edit canvas cursors (OS-011): pure functions, unit-tested offscreen.
 
 // Selection handles are drawn in screen pixels, so this holds at any zoom.
 var MIN_HANDLE_PX = 12
