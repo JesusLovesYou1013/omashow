@@ -30,6 +30,9 @@
 #include <QDir>
 #include <QEventLoop>
 #include <QQuickWindow>
+#include <QQuickItem>
+#include <QWheelEvent>
+#include <functional>
 #include <QSGRendererInterface>
 #include <QSurfaceFormat>
 #include <QTimer>
@@ -131,6 +134,216 @@ int captureInterface(QQmlApplicationEngine &engine, Backend &backend, Presenter 
         save(window, QStringLiteral("edit-selected"));
         backend.setProperty("currentSlide", 0);
     }
+    // The continuous canvas: mouse-wheel notches down until the next slide
+    // snaps in (the frame before is mid-scroll), then back up to the first.
+    // Visual children, not QObject children: views inside layouts are found here.
+    const std::function<QQuickItem *(QQuickItem *, const QString &)> findItem =
+        [&](QQuickItem *item, const QString &name) -> QQuickItem * {
+        if (item->objectName() == name) return item;
+        for (QQuickItem *child : item->childItems())
+            if (QQuickItem *found = findItem(child, name)) return found;
+        return nullptr;
+    };
+    // Pointer events as a mouse sends them; the window's cursor is read back.
+    const auto mouse = [&](QEvent::Type type, const QPointF &at, Qt::MouseButtons held) {
+        QMouseEvent event(type, at, at, window->mapToGlobal(at),
+                          type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton, held, Qt::NoModifier);
+        QCoreApplication::sendEvent(window, &event);
+        settle(30);
+    };
+    int cursorFailures = 0;
+    const auto expectCursor = [&](const QString &what, int want) {
+        const int got = window->cursor().shape();
+        if (got != want) ++cursorFailures;
+        qInfo().noquote() << QStringLiteral("ui-shot cursor: %1 = %2 (want %3) %4")
+                                 .arg(what).arg(got).arg(want).arg(got == want ? "ok" : "FAIL");
+    };
+    QQuickItem *canvas = findItem(window->contentItem(), QStringLiteral("editSlideView"));
+    if (canvas && backend.slideCount() > 1) {
+        backend.select(QString());
+        settle(300);
+        const QPointF at = canvas->mapToScene(QPointF(canvas->width() / 2, canvas->height() / 2));
+        const auto scrollUntilSlideChanges = [&](int notch, const QString &before, const QString &after) {
+            const int from = backend.currentSlide();
+            QImage last = window->grabWindow();
+            int sent = 0;
+            while (backend.currentSlide() == from && sent < 200) {
+                QWheelEvent wheel(at, window->mapToGlobal(at), QPoint(), QPoint(0, notch), Qt::NoButton,
+                                  Qt::NoModifier, Qt::NoScrollPhase, false);
+                QCoreApplication::sendEvent(window, &wheel);
+                ++sent;
+                settle(40);
+                if (backend.currentSlide() == from) {
+                    last = window->grabWindow();
+                    // Over the neighbour slide coming in at the edge (OS-011).
+                    mouse(QEvent::MouseMove, canvas->mapToScene(QPointF(canvas->width() / 2,
+                          notch < 0 ? canvas->height() - 6 : 6)), Qt::NoButton);
+                }
+            }
+            expectCursor(QStringLiteral("over neighbour slide before snap"), Qt::ArrowCursor);
+            last.save(outDir + QLatin1Char('/') + before + QStringLiteral(".png"));
+            save(window, after);
+            qInfo().noquote() << QStringLiteral("ui-shot scroll: slide %1 -> %2 after %3 notches")
+                                     .arg(from + 1).arg(backend.currentSlide() + 1).arg(sent);
+        };
+        scrollUntilSlideChanges(-120, QStringLiteral("edit-scroll-mid"), QStringLiteral("edit-scroll-snapped"));
+        settle(200);
+        scrollUntilSlideChanges(120, QStringLiteral("edit-scroll-back-mid"), QStringLiteral("edit-scroll-back"));
+        backend.setProperty("currentSlide", 0);
+    }
+    // Edit canvas cursors (OS-011): hover, drags, handle sizes at three zooms.
+    if (canvas && !backend.slideObjects().isEmpty()) {
+        backend.setProperty("currentSlide", 0);
+        backend.select(backend.slideObjects().first().toMap().value(QStringLiteral("id")).toString());
+        settle(300);
+        const auto docPoint = [&](qreal x, qreal y) {
+            const QPointF origin = canvas->property("contentOrigin").toPointF();
+            return canvas->mapToScene(origin + QPointF(x, y) * canvas->property("contentScale").toReal());
+        };
+        const auto centre = [](QQuickItem *item) { return item->mapToScene(QPointF(item->width() / 2, item->height() / 2)); };
+        const QVariantMap sel = backend.property("selection").toMap();
+        const QPointF body = docPoint(sel.value("x").toReal() + sel.value("w").toReal() / 2,
+                                      sel.value("y").toReal() + sel.value("h").toReal() / 2);
+        // Below the centred slide, clear of the handles (they reach 12 px out).
+        const QPointF empty = canvas->mapToScene(QPointF(canvas->width() / 2 + 60, canvas->height() - 4));
+        mouse(QEvent::MouseMove, empty, Qt::NoButton);
+        expectCursor(QStringLiteral("empty canvas"), Qt::ArrowCursor);
+        mouse(QEvent::MouseMove, body, Qt::NoButton);
+        expectCursor(QStringLiteral("object body"), Qt::OpenHandCursor);
+        mouse(QEvent::MouseButtonPress, body, Qt::LeftButton);
+        mouse(QEvent::MouseMove, body + QPointF(30, 20), Qt::LeftButton);
+        expectCursor(QStringLiteral("moving object"), Qt::ClosedHandCursor);
+        mouse(QEvent::MouseMove, empty, Qt::LeftButton);
+        expectCursor(QStringLiteral("moving object, pointer over empty canvas"), Qt::ClosedHandCursor);
+        mouse(QEvent::MouseMove, body, Qt::LeftButton);
+        mouse(QEvent::MouseButtonRelease, body, Qt::NoButton);
+        expectCursor(QStringLiteral("after move release (over object)"), Qt::OpenHandCursor);
+        const int wantHandle[] = {Qt::SizeFDiagCursor, Qt::SizeVerCursor, Qt::SizeBDiagCursor, Qt::SizeHorCursor,
+                                  Qt::SizeFDiagCursor, Qt::SizeVerCursor, Qt::SizeBDiagCursor, Qt::SizeHorCursor};
+        for (int i = 0; i < 8; ++i)
+            if (QQuickItem *handle = findItem(window->contentItem(), QStringLiteral("resizeHandle%1").arg(i))) {
+                mouse(QEvent::MouseMove, centre(handle), Qt::NoButton);
+                expectCursor(QStringLiteral("resize handle %1").arg(i), wantHandle[i]);
+            }
+        for (const qreal zoom : {0.25, 1.0, 4.0}) {
+            QMetaObject::invokeMethod(canvas, "zoomAt", Q_ARG(qreal, zoom), Q_ARG(qreal, canvas->width() / 2),
+                                      Q_ARG(qreal, canvas->height() / 2));
+            settle(100);
+            qreal shown = 1e9, hit = 1e9;
+            for (int i = 0; i < 8; ++i)
+                if (QQuickItem *handle = findItem(window->contentItem(), QStringLiteral("resizeHandle%1").arg(i))) {
+                    const QRectF r = handle->mapRectToScene(handle->boundingRect());
+                    shown = qMin(shown, qMin(r.width(), r.height()));
+                    if (QQuickItem *area = handle->childItems().value(0)) {
+                        const QRectF a = area->mapRectToScene(area->boundingRect());
+                        hit = qMin(hit, qMin(a.width(), a.height()));
+                    }
+                }
+            if (shown < 10 || hit < 10) ++cursorFailures;
+            qInfo().noquote() << QStringLiteral("ui-shot cursor: handles at %1%: drawn %2 px, hit %3 px %4")
+                                     .arg(zoom * 100).arg(shown).arg(hit).arg(shown >= 10 && hit >= 10 ? "ok" : "FAIL");
+        }
+        QMetaObject::invokeMethod(canvas, "fit");
+        settle(200);
+        if (QQuickItem *handle = findItem(window->contentItem(), QStringLiteral("resizeHandle3"))) {
+            const QPointF at = centre(handle);
+            mouse(QEvent::MouseButtonPress, at, Qt::LeftButton);
+            mouse(QEvent::MouseMove, at - QPointF(40, 0), Qt::LeftButton);
+            mouse(QEvent::MouseMove, body, Qt::LeftButton);
+            expectCursor(QStringLiteral("resizing, pointer over object body"), Qt::SizeHorCursor);
+            mouse(QEvent::MouseMove, empty, Qt::LeftButton);
+            expectCursor(QStringLiteral("resizing, pointer over empty canvas"), Qt::SizeHorCursor);
+            mouse(QEvent::MouseMove, at, Qt::LeftButton);
+            mouse(QEvent::MouseButtonRelease, at, Qt::NoButton);
+            expectCursor(QStringLiteral("after resize release (over handle)"), Qt::SizeHorCursor);
+            mouse(QEvent::MouseMove, empty, Qt::NoButton);
+            expectCursor(QStringLiteral("after resize, empty canvas"), Qt::ArrowCursor);
+        }
+        if (QQuickItem *rotate = findItem(window->contentItem(), QStringLiteral("rotationHandle"))) {
+            const QPointF at = centre(rotate);
+            mouse(QEvent::MouseMove, at, Qt::NoButton);
+            expectCursor(QStringLiteral("rotation handle"), Qt::CrossCursor);
+            mouse(QEvent::MouseButtonPress, at, Qt::LeftButton);
+            mouse(QEvent::MouseMove, body, Qt::LeftButton);
+            expectCursor(QStringLiteral("rotating, pointer over object body"), Qt::CrossCursor);
+            mouse(QEvent::MouseMove, at, Qt::LeftButton);
+            mouse(QEvent::MouseButtonRelease, at, Qt::NoButton);
+            mouse(QEvent::MouseMove, empty, Qt::NoButton);
+            expectCursor(QStringLiteral("after rotate, empty canvas"), Qt::ArrowCursor);
+        }
+        QQuickItem *editCanvas = findItem(window->contentItem(), QStringLiteral("editCanvas"));
+        for (const QVariant &object : backend.slideObjects()) {
+            backend.select(object.toMap().value(QStringLiteral("id")).toString());
+            const QVariantMap text = backend.property("selection").toMap();
+            if (!editCanvas || text.value("type").toString() != QLatin1String("text")) continue;
+            settle(100);
+            QMetaObject::invokeMethod(editCanvas, "beginTextEdit");
+            settle(200);
+            mouse(QEvent::MouseMove, docPoint(text.value("x").toReal() + text.value("w").toReal() / 2,
+                                              text.value("y").toReal() + text.value("h").toReal() / 2), Qt::NoButton);
+            expectCursor(QStringLiteral("editing text"), Qt::IBeamCursor);
+            QMetaObject::invokeMethod(editCanvas, "commitTextEdit");
+            break;
+        }
+        backend.select(QString());
+        mouse(QEvent::MouseMove, empty, Qt::NoButton);
+        qInfo().noquote() << QStringLiteral("ui-shot cursor: %1 failures").arg(cursorFailures);
+    }
+    // Crop mode (OS-013): the cut-off part of a picture, straight and rotated. Frames before
+    // and after trimming the right and bottom quarters; the log names sample points.
+    if (QQuickItem *editCanvas = findItem(window->contentItem(), QStringLiteral("editCanvas")); canvas && editCanvas) {
+        backend.setProperty("currentSlide", 0);
+        QString picture;
+        for (const QVariant &object : backend.slideObjects()) {
+            backend.select(object.toMap().value(QStringLiteral("id")).toString());
+            if (backend.property("selection").toMap().value("type").toString() == QLatin1String("image")) {
+                picture = backend.selectedId();
+                break;
+            }
+        }
+        const auto centreOf = [](QQuickItem *item) { return item->mapToScene(QPointF(item->width() / 2, item->height() / 2)); };
+        const auto cropShot = [&](const QString &name, qreal rotation) {
+            backend.select(picture);
+            if (!qFuzzyIsNull(rotation)) backend.setSelectedProperty(QStringLiteral("rotation"), rotation);
+            settle(200);
+            QMetaObject::invokeMethod(editCanvas, "startCrop");
+            settle(300);
+            QQuickItem *right = findItem(window->contentItem(), QStringLiteral("cropHandle3"));
+            QQuickItem *left = findItem(window->contentItem(), QStringLiteral("cropHandle7"));
+            QQuickItem *bottom = findItem(window->contentItem(), QStringLiteral("cropHandle5"));
+            QQuickItem *top = findItem(window->contentItem(), QStringLiteral("cropHandle1"));
+            if (!right || !left || !bottom || !top) { qInfo() << "ui-shot crop: no crop handles"; return; }
+            save(window, name + QStringLiteral("-start"));
+            const QPointF r0 = centreOf(right), l0 = centreOf(left);
+            const auto drag = [&](const QPointF &from, const QPointF &to) {
+                mouse(QEvent::MouseButtonPress, from, Qt::LeftButton);
+                for (int step = 1; step <= 4; ++step) mouse(QEvent::MouseMove, from + (to - from) * step / 4.0, Qt::LeftButton);
+                mouse(QEvent::MouseButtonRelease, to, Qt::NoButton);
+            };
+            drag(r0, r0 + (l0 - r0) * 0.25);
+            settle(50);
+            // Trimming the right moved the bottom handle with the bottom edge's middle.
+            const QPointF b1 = centreOf(bottom), t1 = centreOf(top);
+            drag(b1, b1 + (t1 - b1) * 0.25);
+            mouse(QEvent::MouseMove, canvas->mapToScene(QPointF(4, 4)), Qt::NoButton);
+            save(window, name);
+            const QPointF kept = l0 + (r0 - l0) * 0.35;
+            const QPointF cutRight = l0 + (r0 - l0) * 0.9, cutBottom = t1 + (b1 - t1) * 0.9;
+            qInfo().noquote() << QStringLiteral("ui-shot crop: %1 kept %2,%3 cut-right %4,%5 cut-bottom %6,%7")
+                                     .arg(name).arg(kept.x()).arg(kept.y()).arg(cutRight.x()).arg(cutRight.y())
+                                     .arg(cutBottom.x()).arg(cutBottom.y());
+            QMetaObject::invokeMethod(editCanvas, "finishCrop");
+            settle(100);
+            backend.undo(); backend.undo();
+            if (!qFuzzyIsNull(rotation)) backend.undo();
+            settle(200);
+        };
+        if (!picture.isEmpty()) {
+            cropShot(QStringLiteral("edit-crop"), 0);
+            cropShot(QStringLiteral("edit-crop-rotated"), 20);
+        }
+        backend.select(QString());
+    }
     // The presenter console, rehearsing so no display has to exist.
     presenter.start(false, true);
     // Let the first slide's builds finish, so the console shows a settled slide.
@@ -223,6 +436,7 @@ int main(int argc, char *argv[]) {
                                  QStringLiteral("n"), QStringLiteral("0"));
     parser.addOption(atOption);
     parser.addOption(fpsOption);
+    // OMASHOW-PERSONAL: ui-shot harness (private; never for upstream)
     QCommandLineOption uiShotOption(QStringLiteral("ui-shot"),
                                     QStringLiteral("Photograph each workspace to <dir> and exit."),
                                     QStringLiteral("dir"));
