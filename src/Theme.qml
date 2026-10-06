@@ -150,6 +150,8 @@ QtObject {
     readonly property int wNavigatorMin: 180
     readonly property int wInspector: 320
     readonly property int wInspectorMin: 300
+    // OMASHOW-PERSONAL: fixed sidebar option (upstream #15 deferred)
+    readonly property int wInspectorFixed: 360
     readonly property int szHandle: 10
     readonly property int szHandleHit: 6
     readonly property int szIcon: 16
