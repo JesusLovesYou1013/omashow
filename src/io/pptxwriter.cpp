@@ -377,7 +377,9 @@ struct Writer {
         const bool italic = run && run->italic ? run->italic == 1 : o.italic;
         const bool underline = run && run->underline ? run->underline == 1 : o.underline;
         x.attr("b", bold ? "1" : "0").attr("i", italic ? "1" : "0").attr("u", underline ? "sng" : "none");
-        if (run && run->strike == 1) x.attr("strike", "sngStrike");
+        const bool strike = run && run->strike ? run->strike == 1 : o.strike;
+        if (strike) x.attr("strike", "sngStrike");
+        else if (run && run->strike == 2) x.attr("strike", "noStrike");
         if (run && run->baseline) x.attr("baseline", run->baseline == 1 ? 30000 : -25000);
         if (o.uppercase) x.attr("cap", "all");
         if (!qFuzzyIsNull(o.letterSpacing)) x.attr("spc", qRound(o.letterSpacing * e / 12700.0 * 100));

@@ -23,7 +23,7 @@ const TextStyle *Design::textStyle(const Document &d, const QString &id) {
     return nullptr;
 }
 QStringList Design::textStyleKeys() {
-    return {"fontFamily","fontSize","fontWeight","italic","underline","textColor","uppercase",
+    return {"fontFamily","fontSize","fontWeight","italic","underline","strike","textColor","uppercase",
             "letterSpacing","textAlign","verticalAlign","lineHeight","paragraphSpacing",
             "textIndent","listStyle","listStart","textFit","tabStop","columns","columnGap",
             "direction"};
@@ -55,7 +55,7 @@ QVariantMap Design::properties(const SceneObject &o) {
             {"rotation", o.rotation}, {"opacity", o.opacity}, {"cornerRadius", o.cornerRadius},
             {"fill", o.fill.name(QColor::HexArgb)}, {"textColor", o.textColor.name(QColor::HexArgb)},
             {"text", o.text}, {"fontSize", o.fontSize}, {"fontWeight", o.fontWeight},
-            {"italic",o.italic},{"underline",o.underline},{"textAlign",o.textAlign},{"verticalAlign",o.verticalAlign},
+            {"italic",o.italic},{"underline",o.underline},{"strike",o.strike},{"textAlign",o.textAlign},{"verticalAlign",o.verticalAlign},
             {"lineHeight",o.lineHeight},{"paragraphSpacing",o.paragraphSpacing},{"textIndent",o.textIndent},
             {"listStyle",o.listStyle},{"listStart",o.listStart},{"textFit",o.textFit},{"textKind",o.textKind},
             {"tabStop",o.tabStop},{"columns",o.columns},{"columnGap",o.columnGap},{"direction",o.direction},
@@ -172,6 +172,7 @@ bool Design::setProperty(SceneObject &o, const QString &key, const QVariant &v, 
     else if (key == "mediaAudio") o.mediaAudio=v.toBool();
     else if (key == "italic") o.italic = v.toBool();
     else if (key == "underline") o.underline = v.toBool();
+    else if (key == "strike") o.strike = v.toBool();
     else if (key == "textAlign") o.textAlign = qBound(0,v.toInt(),3);
     else if (key == "verticalAlign") o.verticalAlign = qBound(0,v.toInt(),2);
     else if (key == "lineHeight") o.lineHeight = qBound(50.0,n,300.0);
