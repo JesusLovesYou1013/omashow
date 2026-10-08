@@ -66,7 +66,7 @@ QVariantMap Backend::panelState() const {
 
 void Backend::setPanelState(const QString &key, const QVariant &value) {
     static const QStringList known{"navigatorWidth", "inspectorWidth", "navigatorCollapsed",
-                                   "inspectorCollapsed", "notesOpen"};
+                                   "inspectorCollapsed", "inspectorFixed", "notesOpen"};
     if (!known.contains(key)) return;
     QSettings settings(panelSettingsPath(), QSettings::IniFormat);
     if (settings.value(key) == value) return;
