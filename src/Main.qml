@@ -60,8 +60,8 @@ ApplicationWindow {
     property bool navigatorCollapsed: (backend.panelState.navigatorCollapsed ?? "false") === "true"
     property bool inspectorCollapsed: (backend.panelState.inspectorCollapsed ?? "false") === "true"
     // OMASHOW-PERSONAL: fixed sidebar option (upstream #15 deferred) — when true,
-    // the right panel stays at Theme.wInspectorFixed; drag still collapses via the
-    // chevron (feat/sidebar-collapse) but does not change width.
+    // the right panel stays at the width it had when it was locked; the chevron
+    // (feat/sidebar-collapse) still puts it away, but a drag does not change the width.
     property bool inspectorFixed: (backend.panelState.inspectorFixed ?? "false") === "true"
     // Saved when a drag ends, not on every move: each save rewrites the panel
     // settings file.
@@ -73,10 +73,8 @@ ApplicationWindow {
     onInspectorCollapsedChanged: backend.setPanelState("inspectorCollapsed", inspectorCollapsed)
     onInspectorFixedChanged: {
         backend.setPanelState("inspectorFixed", inspectorFixed)
-        if (inspectorFixed) {
-            inspectorWidth = Theme.wInspectorFixed
-            savePanelWidths()
-        }
+        // Locked where it stands: the width is saved so it comes back the same.
+        if (inspectorFixed) savePanelWidths()
     }
     onNotesOpenChanged: backend.setPanelState("notesOpen", notesOpen)
     // A panel dragged to nothing, or a remembered width from a bigger screen,
@@ -84,7 +82,7 @@ ApplicationWindow {
     function panelRoom() { return Math.max(320, win.width - 360) / 2 }
     function clampNavigator(w) { return Math.min(Math.max(Theme.wNavigatorMin, w), panelRoom()) }
     function clampInspector(w) {
-        if (win.inspectorFixed) return Theme.wInspectorFixed
+        if (win.inspectorFixed) return win.inspectorWidth
         return Math.min(Math.max(Theme.wInspectorMin, w), panelRoom())
     }
     function sanePanels() {
