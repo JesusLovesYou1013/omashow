@@ -53,7 +53,15 @@ ApplicationWindow {
     // Panels: dragged wider or narrower, collapsed out of the way, and put back
     // where they were next time.
     property real navigatorWidth: backend.panelState.navigatorWidth ?? Theme.wNavigator
-    property real inspectorWidth: backend.panelState.inspectorWidth ?? Theme.wInspector
+    // The right sidebar opens at its standard width. A width it was dragged to is kept for the next
+    // launch only while the width is locked (see inspectorFixed).
+    property real inspectorWidth: (backend.panelState.inspectorFixed ?? "false") === "true"
+                                  ? (backend.panelState.inspectorWidth ?? Theme.wInspectorFixed) : Theme.wInspectorFixed
+    // The widths asked for. A narrow window squeezes what is shown, never these, so a panel
+    // comes back to its width when there is room again.
+    property real navigatorWanted: backend.panelState.navigatorWidth ?? Theme.wNavigator
+    property real inspectorWanted: (backend.panelState.inspectorFixed ?? "false") === "true"
+                                   ? (backend.panelState.inspectorWidth ?? Theme.wInspectorFixed) : Theme.wInspectorFixed
     property bool navigatorCollapsed: (backend.panelState.navigatorCollapsed ?? "false") === "true"
     property bool inspectorCollapsed: (backend.panelState.inspectorCollapsed ?? "false") === "true"
     // OMASHOW-PERSONAL: fixed sidebar option (upstream #15 deferred) — when true,
@@ -63,15 +71,22 @@ ApplicationWindow {
     // Saved when a drag ends, not on every move: each save rewrites the panel
     // settings file.
     function savePanelWidths() {
-        backend.setPanelState("navigatorWidth", Math.round(navigatorWidth))
-        backend.setPanelState("inspectorWidth", Math.round(inspectorWidth))
+        backend.setPanelState("navigatorWidth", Math.round(navigatorWanted))
+        backend.setPanelState("inspectorWidth", Math.round(inspectorWanted))
+    }
+    function keepNavigatorWidth() { navigatorWanted = navigatorWidth; savePanelWidths() }
+    function keepInspectorWidth() { inspectorWanted = inspectorWidth; savePanelWidths() }
+    function resetPanelWidths() {
+        navigatorWanted = navigatorWidth = Theme.wNavigator
+        inspectorWanted = inspectorWidth = Theme.wInspectorFixed
+        savePanelWidths()
     }
     onNavigatorCollapsedChanged: backend.setPanelState("navigatorCollapsed", navigatorCollapsed)
     onInspectorCollapsedChanged: backend.setPanelState("inspectorCollapsed", inspectorCollapsed)
     onInspectorFixedChanged: {
         backend.setPanelState("inspectorFixed", inspectorFixed)
         // Locked where it stands: the width is saved so it comes back the same.
-        if (inspectorFixed) savePanelWidths()
+        if (inspectorFixed) keepInspectorWidth()
     }
     onNotesOpenChanged: backend.setPanelState("notesOpen", notesOpen)
     // A panel dragged to nothing, or a remembered width from a bigger screen,
@@ -83,11 +98,8 @@ ApplicationWindow {
         return Math.min(Math.max(Theme.wInspectorMin, w), panelRoom())
     }
     function sanePanels() {
-        const nav = clampNavigator(win.navigatorWidth), side = clampInspector(win.inspectorWidth)
-        if (nav === win.navigatorWidth && side === win.inspectorWidth) return
-        win.navigatorWidth = nav
-        win.inspectorWidth = side
-        win.savePanelWidths()
+        win.navigatorWidth = clampNavigator(win.navigatorWanted)
+        win.inspectorWidth = clampInspector(win.inspectorWanted)
     }
     // The width a panel had when its grip was pressed.
     property real panelDragStart: 0
@@ -334,7 +346,7 @@ ApplicationWindow {
             { group: qsTr("View"), name: win.navigatorCollapsed ? qsTr("Show the slide list") : qsTr("Hide the slide list"), also: "navigator panel thumbnails sidebar", run: () => win.navigatorCollapsed = !win.navigatorCollapsed },
             { group: qsTr("View"), name: win.inspectorCollapsed ? qsTr("Show the inspector") : qsTr("Hide the inspector"), also: "panel properties sidebar", run: () => win.inspectorCollapsed = !win.inspectorCollapsed },
             { group: qsTr("View"), name: win.inspectorFixed ? qsTr("Unlock sidebar width") : qsTr("Lock sidebar width"), also: "fixed inspector panel", run: () => win.inspectorFixed = !win.inspectorFixed },
-            { group: qsTr("View"), name: qsTr("Put the panels back"), also: "reset widths restore layout", run: () => { win.navigatorCollapsed = false; win.inspectorCollapsed = false; win.navigatorWidth = Theme.wNavigator; win.inspectorWidth = Theme.wInspector; win.inspectorFixed = false; win.savePanelWidths() } },
+            { group: qsTr("View"), name: qsTr("Put the panels back"), also: "reset widths restore layout", run: () => { win.navigatorCollapsed = false; win.inspectorCollapsed = false; win.inspectorFixed = false; win.resetPanelWidths() } },
             { group: qsTr("View"), name: qsTr("Snap to guides"), also: "align magnet", run: () => backend.snapEnabled = !backend.snapEnabled },
             { group: qsTr("View"), name: backend.reducedMotion ? qsTr("Allow movement again") : qsTr("Less movement"), also: "reduced motion animation accessibility vestibular", run: () => backend.reducedMotion = !backend.reducedMotion },
             { group: qsTr("View"), name: backend.highContrast ? qsTr("Ordinary contrast") : qsTr("Stronger contrast"), also: "high contrast accessibility legible", run: () => backend.highContrast = !backend.highContrast },
@@ -637,7 +649,7 @@ ApplicationWindow {
                                    onTriggered: win.inspectorFixed = !win.inspectorFixed }
                         MenuItem { objectName: "resetPanels"; text: qsTr("Put the panels back")
                                    onTriggered: { win.navigatorCollapsed = false; win.inspectorCollapsed = false
-                                                  win.navigatorWidth = Theme.wNavigator; win.inspectorWidth = Theme.wInspector; win.savePanelWidths() } }
+                                                  win.inspectorFixed = false; win.resetPanelWidths() } }
                         MenuItem { objectName: "commandSearchMenuItem"; text: qsTr("Find a command…"); onTriggered: commandPalette.show() }
                         MenuSeparator {}
                         MenuItem { objectName: "reducedMotionItem"; checkable: true; checked: backend.reducedMotion
@@ -874,7 +886,7 @@ ApplicationWindow {
                 collapsed: win.navigatorCollapsed
                 onResizeStarted: { win.navigatorCollapsed = false; win.panelDragStart = win.navigatorWidth }
                 onResizedBy: total => win.navigatorWidth = Math.round(win.clampNavigator(win.panelDragStart + total))
-                onResizeFinished: win.savePanelWidths()
+                onResizeFinished: win.keepNavigatorWidth()
                 onToggled: win.navigatorCollapsed = !win.navigatorCollapsed
             }
 
@@ -970,7 +982,7 @@ ApplicationWindow {
                 collapsed: win.inspectorCollapsed
                 onResizeStarted: { win.inspectorCollapsed = false; win.panelDragStart = win.inspectorWidth }
                 onResizedBy: total => win.inspectorWidth = Math.round(win.clampInspector(win.panelDragStart + total))
-                onResizeFinished: win.savePanelWidths()
+                onResizeFinished: win.keepInspectorWidth()
                 onToggled: win.inspectorCollapsed = !win.inspectorCollapsed
             }
             Inspector {
