@@ -66,7 +66,9 @@ ApplicationWindow {
     property real inspectorWanted: (backend.panelState.inspectorFixed ?? "false") === "true"
                                    ? (backend.panelState.inspectorWidth ?? Theme.wInspectorFixed) : Theme.wInspectorFixed
     property bool navigatorCollapsed: (backend.panelState.navigatorCollapsed ?? "false") === "true"
-    property bool inspectorCollapsed: (backend.panelState.inspectorCollapsed ?? "false") === "true"
+    // The right sidebar holds the controls a slide is made with, so every launch starts with it
+    // showing, however the last one ended. It can still be put away for the session.
+    property bool inspectorCollapsed: false
     // OMASHOW-PERSONAL: fixed sidebar option (upstream #15 deferred) — when true,
     // the right panel stays at the width it had when it was locked; the chevron
     // (feat/sidebar-collapse) still puts it away, but a drag does not change the width.
