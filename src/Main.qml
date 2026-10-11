@@ -53,7 +53,7 @@ ApplicationWindow {
     // Presenter notes under the Edit canvas, as in the concept; View toggles it.
     // Closed until asked for, as in Keynote: the slide gets the room.
     // OMASHOW-PERSONAL: ribbon-only prototype — which ribbon tab shows (0 Home, 1 Insert, 2 Design, 3 Slide Show, 4 Review, 5 View, 6 Arrange)
-    property int ribbonTab: 0
+    property int ribbonTab: -1   // OMASHOW-PERSONAL: ribbon-only prototype — -1 = no tab row open
     property bool notesOpen: (backend.panelState.notesOpen ?? "false") === "true"
     // Panels: dragged wider or narrower, collapsed out of the way, and put back
     // where they were next time.
@@ -313,6 +313,32 @@ ApplicationWindow {
     function endShow() { presenter.stop() }
     // OMASHOW-PERSONAL: ribbon-only prototype — tab contents, built only while their tab shows.
     function ribbonMark(on) { return on ? "✓ " : "" }
+    // OMASHOW-PERSONAL: ribbon-only prototype — Home's row: what was only in the Edit and Slide menus.
+    Component {
+        id: ribbonHomeTab
+        RowLayout {
+            spacing: Theme.s1
+            ToolAction { objectName: "ribbonCut"; icon.name: "scissors"; text: qsTr("Cut"); enabled: backend.hasSelection; tip: qsTr("Cut  Ctrl+X"); onClicked: backend.copyAsync(true) }
+            ToolAction { objectName: "ribbonCopy"; icon.name: "copy"; text: qsTr("Copy"); enabled: backend.hasSelection; tip: qsTr("Copy  Ctrl+C"); onClicked: backend.copyAsync() }
+            ToolAction { objectName: "ribbonPaste"; icon.name: "clipboard-paste"; text: qsTr("Paste"); enabled: backend.canPaste; tip: qsTr("Paste  Ctrl+V"); onClicked: backend.pasteAsync() }
+            ToolAction { id: pasteSpecialButton; objectName: "ribbonPasteSpecial"; text: qsTr("Paste special"); property bool opensMenu: true; enabled: backend.canPaste; tip: qsTr("Paste keeping or matching formatting, words only, or as a picture"); onClicked: pasteSpecialMenu.popup(pasteSpecialButton, 0, pasteSpecialButton.height) }
+            Menu {
+                id: pasteSpecialMenu
+                MenuItem { objectName: "pasteKeeping"; text: qsTr("Keep its formatting"); enabled: backend.clipboardKinds.objects ?? false; onTriggered: backend.pasteSpecial(0) }
+                MenuItem { objectName: "pasteMatching"; text: qsTr("Match this deck's text style"); enabled: backend.clipboardKinds.objects ?? false; onTriggered: backend.pasteSpecial(1) }
+                MenuItem { objectName: "pasteWords"; text: qsTr("The words only"); enabled: backend.clipboardKinds.text ?? false; onTriggered: backend.pasteSpecial(2) }
+                MenuItem { objectName: "pastePicture"; text: qsTr("As a picture"); enabled: backend.clipboardKinds.objects ?? false; onTriggered: backend.pasteSpecial(3) }
+            }
+            ToolAction { objectName: "ribbonDuplicate"; text: qsTr("Duplicate"); enabled: backend.hasSelection; tip: qsTr("Duplicate  Ctrl+D"); onClicked: backend.duplicateSelected() }
+            ToolAction { objectName: "ribbonDelete"; icon.name: "trash-2"; text: qsTr("Delete"); enabled: backend.hasSelection; tip: qsTr("Delete  Del"); onClicked: backend.deleteSelected() }
+            ToolAction { objectName: "ribbonSelectAll"; text: qsTr("Select all"); tip: qsTr("Select all  Ctrl+A"); onClicked: backend.selectAll() }
+            ToolbarRule {}
+            ToolAction { objectName: "ribbonDuplicateSlides"; icon.name: "copy"; text: qsTr("Duplicate slides"); tip: qsTr("Duplicate the selected slides"); onClicked: backend.duplicateSelectedSlides() }
+            ToolAction { objectName: "ribbonDeleteSlides"; icon.name: "trash-2"; text: qsTr("Delete slides"); enabled: backend.slideSelectionState.canDelete; tip: qsTr("Delete the selected slides"); onClicked: backend.deleteSelectedSlides() }
+            ToolAction { objectName: "ribbonSkipSlides"; icon.name: "eye-off"; text: backend.slideSelectionState.allSkipped ? qsTr("Include in show") : qsTr("Skip in show"); tip: qsTr("Skip or include the selected slides"); onClicked: backend.setSlidesSkipped(!backend.slideSelectionState.allSkipped) }
+            ToolAction { objectName: "ribbonSlideSize"; icon.name: "scan"; text: qsTr("Slide size"); tip: qsTr("Slide size"); onClicked: { win.commitEditors(); slideSizeDialog.show() } }
+        }
+    }
     Component {
         id: ribbonInsertTab
         RowLayout {
@@ -727,7 +753,8 @@ ApplicationWindow {
                         display: AbstractButton.TextOnly
                         checkable: true
                         checked: win.ribbonTab === index
-                        onClicked: { win.ribbonTab = index; checked = Qt.binding(() => win.ribbonTab === index) }
+                        tip: win.ribbonTab === index ? qsTr("Close the %1 row").arg(modelData) : qsTr("Open the %1 row").arg(modelData)
+                        onClicked: { win.ribbonTab = win.ribbonTab === index ? -1 : index; checked = Qt.binding(() => win.ribbonTab === index) }
                         Accessible.role: Accessible.PageTab
                     }
                 }
@@ -788,43 +815,7 @@ ApplicationWindow {
                 spacing: Theme.s1
                 visible: !win.inMode
 
-                // OMASHOW-PERSONAL: ribbon-only prototype — Home holds the old toolbar unchanged plus
-                // Clipboard and Slides (former Edit / Slide menu items).
-                RowLayout {
-                    objectName: "ribbonHome"
-                    visible: win.ribbonTab === 0
-                    spacing: Theme.s1
-                ToolAction { id: clipButton; objectName: "ribbonClipboard"; icon.name: "clipboard-paste"; text: qsTr("Clipboard"); property bool opensMenu: true; tip: qsTr("Cut, copy, paste, paste special, delete"); onClicked: clipMenu.popup(clipButton, 0, clipButton.height) }
-                Menu {
-                    id: clipMenu
-                    MenuItem { text: qsTr("Cut  Ctrl+X"); icon.name: "scissors"; enabled: backend.hasSelection; onTriggered: backend.copyAsync(true) }
-                    MenuItem { text: qsTr("Copy  Ctrl+C"); icon.name: "copy"; enabled: backend.hasSelection; onTriggered: backend.copyAsync() }
-                    MenuItem { text: qsTr("Paste  Ctrl+V"); icon.name: "clipboard-paste"; enabled: backend.canPaste; onTriggered: backend.pasteAsync() }
-                    Menu {
-                        title: qsTr("Paste special")
-                        enabled: backend.canPaste
-                        MenuItem { objectName: "pasteKeeping"; text: qsTr("Keep its formatting"); enabled: backend.clipboardKinds.objects ?? false; onTriggered: backend.pasteSpecial(0) }
-                        MenuItem { objectName: "pasteMatching"; text: qsTr("Match this deck's text style"); enabled: backend.clipboardKinds.objects ?? false; onTriggered: backend.pasteSpecial(1) }
-                        MenuItem { objectName: "pasteWords"; text: qsTr("The words only"); enabled: backend.clipboardKinds.text ?? false; onTriggered: backend.pasteSpecial(2) }
-                        MenuItem { objectName: "pastePicture"; text: qsTr("As a picture"); enabled: backend.clipboardKinds.objects ?? false; onTriggered: backend.pasteSpecial(3) }
-                    }
-                    MenuItem { text: qsTr("Duplicate  Ctrl+D"); enabled: backend.hasSelection; onTriggered: backend.duplicateSelected() }
-                    MenuItem { objectName: "ribbonDelete"; text: qsTr("Delete  Del"); icon.name: "trash-2"; enabled: backend.hasSelection; onTriggered: backend.deleteSelected() }
-                    MenuSeparator {}
-                    MenuItem { text: qsTr("Select all  Ctrl+A"); onTriggered: backend.selectAll() }
-                }
-                ToolbarRule {}
                 ToolAction { objectName: "toolbarNewSlide"; icon.name: "square-plus"; text: qsTr("New Slide"); tip: qsTr("New slide  Ctrl+N"); onClicked: backend.addSlide() }
-                ToolAction { id: slidesButton; objectName: "ribbonSlides"; icon.name: "copy"; text: qsTr("Slides"); property bool opensMenu: true; tip: qsTr("Duplicate, delete, skip, size"); onClicked: slidesMenu.popup(slidesButton, 0, slidesButton.height) }
-                Menu {
-                    id: slidesMenu
-                    MenuItem { text: qsTr("New slide  Ctrl+N"); icon.name: "square-plus"; onTriggered: backend.addSlide() }
-                    MenuItem { objectName: "ribbonDuplicateSlides"; text: qsTr("Duplicate slides"); icon.name: "copy"; onTriggered: backend.duplicateSelectedSlides() }
-                    MenuItem { objectName: "ribbonDeleteSlides"; text: qsTr("Delete slides"); icon.name: "trash-2"; enabled: backend.slideSelectionState.canDelete; onTriggered: backend.deleteSelectedSlides() }
-                    MenuItem { objectName: "ribbonSkipSlides"; text: backend.slideSelectionState.allSkipped ? qsTr("Include in show") : qsTr("Skip in show"); icon.name: "eye-off"; onTriggered: backend.setSlidesSkipped(!backend.slideSelectionState.allSkipped) }
-                    MenuSeparator {}
-                    MenuItem { text: qsTr("Slide size…"); icon.name: "scan"; onTriggered: { win.commitEditors(); slideSizeDialog.show() } }
-                }
                 ToolAction {
                     id: layoutButton
                     icon.name: "layout-template"
@@ -896,14 +887,6 @@ ApplicationWindow {
                     MenuItem { objectName: "slideSizeAction"; text: qsTr("Slide size…"); icon.name: "scan"; onTriggered: { win.commitEditors(); slideSizeDialog.show() } }
                 }
                 ToolAction { objectName: "toolbarReview"; icon.name: "message-square-text"; text: qsTr("Review"); tip: qsTr("Comments, findings and spelling"); onClicked: { win.commitEditors(); win.workspace = 3 } }
-                }
-                Loader {
-                    objectName: "ribbonTabLoader"
-                    active: win.ribbonTab > 0
-                    visible: active
-                    Layout.fillHeight: true
-                    sourceComponent: [null, ribbonInsertTab, ribbonDesignTab, ribbonShowTab, ribbonReviewTab, ribbonViewTab, ribbonArrangeTab][win.ribbonTab] ?? null
-                }
                 Item { Layout.fillWidth: true }
                 ToolAction { icon.name: "undo-2"; text: qsTr("Undo"); display: AbstractButton.IconOnly; enabled: backend.canUndo; tip: qsTr("Undo %1  Ctrl+Z").arg(backend.undoLabel); onClicked: backend.undo() }
                 ToolAction { icon.name: "redo-2"; text: qsTr("Redo"); display: AbstractButton.IconOnly; enabled: backend.canRedo; tip: qsTr("Redo  Ctrl+Shift+Z"); onClicked: backend.redo() }
@@ -924,8 +907,6 @@ ApplicationWindow {
                         objectName: modelData.key
                         icon.name: modelData.icon
                         text: modelData.name
-                        // OMASHOW-PERSONAL: ribbon-only prototype — icons only when the ribbon needs the room
-                        display: win.compactToolbar || win.width < 1800 ? AbstractButton.IconOnly : AbstractButton.TextBesideIcon
                         tip: modelData.name
                         checkable: true
                         checked: win.sidebarChoice === index
@@ -971,6 +952,44 @@ ApplicationWindow {
                     onClicked: win.leaveMode()
                     ToolTip.visible: hovered; ToolTip.delay: Theme.tooltipDelay
                     ToolTip.text: qsTr("Back to the slide  Esc")
+                }
+            }
+            Hairline { anchors.bottom: parent.bottom; width: parent.width }
+        }
+        // OMASHOW-PERSONAL: ribbon-only prototype — the open tab's groups, in a row of
+        // their own under the toolbar, so they never take a toolbar control's place. The
+        // toolbar above is personal's, unchanged, on every tab. Too wide? It scrolls
+        // sideways (wheel or drag) rather than dropping labels.
+        Rectangle {
+            id: ribbonPanel
+            objectName: "ribbonPanel"
+            Layout.fillWidth: true
+            visible: win.ribbonTab >= 0 && !win.inMode
+            implicitHeight: Theme.hToolbar
+            color: Theme.framePanel
+            Flickable {
+                id: ribbonFlick
+                anchors.fill: parent
+                anchors.leftMargin: Theme.s3
+                anchors.rightMargin: Theme.s3
+                contentWidth: ribbonTabLoader.width
+                contentHeight: height
+                clip: true
+                interactive: contentWidth > width
+                flickableDirection: Flickable.HorizontalFlick
+                boundsBehavior: Flickable.StopAtBounds
+                ScrollBar.horizontal: ScrollBar { policy: ribbonFlick.interactive ? ScrollBar.AlwaysOn : ScrollBar.AlwaysOff; height: 4 }
+                WheelHandler {
+                    enabled: ribbonFlick.interactive
+                    onWheel: (e) => ribbonFlick.contentX = Math.max(0, Math.min(ribbonFlick.contentWidth - ribbonFlick.width, ribbonFlick.contentX - e.angleDelta.y - e.angleDelta.x))
+                }
+                Loader {
+                    id: ribbonTabLoader
+                    objectName: "ribbonTabLoader"
+                    height: ribbonFlick.height
+                    width: item ? item.implicitWidth : 0
+                    active: win.ribbonTab >= 0
+                    sourceComponent: [ribbonHomeTab, ribbonInsertTab, ribbonDesignTab, ribbonShowTab, ribbonReviewTab, ribbonViewTab, ribbonArrangeTab][win.ribbonTab] ?? null
                 }
             }
             Hairline { anchors.bottom: parent.bottom; width: parent.width }
