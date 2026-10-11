@@ -52,6 +52,8 @@ ApplicationWindow {
 
     // Presenter notes under the Edit canvas, as in the concept; View toggles it.
     // Closed until asked for, as in Keynote: the slide gets the room.
+    // OMASHOW-PERSONAL: ribbon-only prototype — which ribbon tab shows (0 Home, 1 Insert, 2 Design, 3 Slide Show, 4 Review, 5 View, 6 Arrange)
+    property int ribbonTab: 0
     property bool notesOpen: (backend.panelState.notesOpen ?? "false") === "true"
     // Panels: dragged wider or narrower, collapsed out of the way, and put back
     // where they were next time.
@@ -309,6 +311,124 @@ ApplicationWindow {
 
     function startShow() { win.commitEditors(); presenter.start(false,false) }
     function endShow() { presenter.stop() }
+    // OMASHOW-PERSONAL: ribbon-only prototype — tab contents, built only while their tab shows.
+    function ribbonMark(on) { return on ? "✓ " : "" }
+    Component {
+        id: ribbonInsertTab
+        RowLayout {
+            spacing: Theme.s1
+            ToolAction { objectName: "ribbonInsertText"; icon.name: "type"; text: qsTr("Text"); tip: qsTr("Text box  T"); onClicked: { win.toFormat(); backend.addText() } }
+            ToolAction { objectName: "insertEquation"; icon.name: "sigma"; text: qsTr("Equation"); tip: qsTr("Equation"); onClicked: { win.workspace = 0; win.commitEditors(); backend.addEquation() } }
+            ToolbarRule {}
+            ToolAction { objectName: "ribbonInsertShape"; icon.name: "shapes"; text: qsTr("Shape"); tip: qsTr("Shape gallery"); onClicked: { win.toFormat(); shapeGallery.open() } }
+            ToolAction { objectName: "ribbonInsertPen"; icon.name: "pen-tool"; text: qsTr("Pen"); tip: qsTr("Draw with the pen"); onClicked: { win.toFormat(); editCanvas.startPathTool(1) } }
+            ToolAction { objectName: "ribbonInsertFreehand"; icon.name: "pencil-line"; text: qsTr("Freehand"); tip: qsTr("Draw freehand"); onClicked: { win.toFormat(); editCanvas.startPathTool(2) } }
+            ToolbarRule {}
+            ToolAction { objectName: "ribbonInsertPicture"; icon.name: "image"; text: qsTr("Picture"); tip: qsTr("Insert a picture"); onClicked: { win.toFormat(); backend.insertImageDialog() } }
+            ToolAction { objectName: "ribbonInsertTable"; icon.name: "table"; text: qsTr("Table"); tip: qsTr("Insert a table"); onClicked: { win.toFormat(); if (backend.addTable()) tableEditor.show() } }
+            ToolAction { objectName: "ribbonInsertChart"; icon.name: "chart-column"; text: qsTr("Chart"); tip: qsTr("Insert a chart"); onClicked: { win.toFormat(); backend.addChart() } }
+            ToolAction { objectName: "ribbonInsertDiagram"; icon.name: "workflow"; text: qsTr("Diagram"); tip: qsTr("Insert a diagram"); onClicked: { win.toFormat(); diagramDialog.show() } }
+            ToolbarRule {}
+            ToolAction { objectName: "ribbonInsertMediaEmbed"; icon.name: "clapperboard"; text: qsTr("Embed media"); tip: qsTr("Audio or video, embedded"); onClicked: { win.toFormat(); backend.insertMediaDialog(true) } }
+            ToolAction { objectName: "ribbonInsertMediaLink"; text: qsTr("Link media"); tip: qsTr("Audio or video, linked"); onClicked: { win.toFormat(); backend.insertMediaDialog(false) } }
+            ToolAction { objectName: "ribbonMediaPreflight"; text: qsTr("Preflight"); tip: qsTr("Media preflight"); onClicked: mediaPreflight.open() }
+            ToolbarRule {}
+            ToolAction { objectName: "ribbonInsertLink"; icon.name: "link"; text: qsTr("Link"); enabled: backend.hasSelection; tip: qsTr("Link or action"); onClicked: linkDialog.show() }
+        }
+    }
+    Component {
+        id: ribbonDesignTab
+        RowLayout {
+            spacing: Theme.s1
+            ToolAction { objectName: "ribbonDesignTheme"; icon.name: "palette"; text: qsTr("Theme"); tip: qsTr("Theme and slide size (Document)"); onClicked: win.chooseSidebar(2) }
+            ToolAction { id: designLayout; objectName: "ribbonDesignLayout"; icon.name: "layout-template"; text: qsTr("Layout"); tip: qsTr("Apply a layout to this slide")
+                         onClicked: backend.design.layouts.length ? layoutMenu.popup(designLayout, 0, designLayout.height) : backend.setupDesign() }
+            ToolAction { objectName: "ribbonDesignMasters"; text: qsTr("Masters and layouts"); tip: qsTr("Edit masters and layouts"); onClicked: { win.commitEditors(); win.workspace = 1 } }
+            ToolbarRule {}
+            ToolAction { objectName: "ribbonDesignSlideSize"; icon.name: "scan"; text: qsTr("Slide size"); tip: qsTr("Slide size"); onClicked: { win.commitEditors(); slideSizeDialog.show() } }
+        }
+    }
+    Component {
+        id: ribbonShowTab
+        RowLayout {
+            spacing: Theme.s1
+            ToolAction { objectName: "ribbonShowFromStart"; icon.name: "play"; text: qsTr("From start"); tip: qsTr("Play from the start  F5"); onClicked: win.startShow() }
+            ToolAction { objectName: "ribbonShowFromHere"; text: qsTr("From this slide"); tip: qsTr("Play from this slide"); onClicked: { win.commitEditors(); presenter.start(true, false) } }
+            ToolAction { objectName: "ribbonShowRehearse"; icon.name: "timer"; text: qsTr("Rehearse"); tip: qsTr("Rehearse in a window"); onClicked: { win.commitEditors(); presenter.start(false, true) } }
+            ToolbarRule {}
+            ToolAction { objectName: "ribbonShowSetup"; icon.name: "monitor"; text: qsTr("Presenter setup"); tip: qsTr("Displays, console, timings"); onClicked: { win.commitEditors(); win.workspace = 4 } }
+            ToolAction { objectName: "ribbonShowSkip"; icon.name: "eye-off"; text: backend.slideSelectionState.allSkipped ? qsTr("Include in show") : qsTr("Skip in show"); onClicked: backend.setSlidesSkipped(!backend.slideSelectionState.allSkipped) }
+        }
+    }
+    Component {
+        id: ribbonReviewTab
+        RowLayout {
+            spacing: Theme.s1
+            ToolAction { objectName: "ribbonReviewRoom"; icon.name: "message-square-text"; text: qsTr("Review"); tip: qsTr("Comments, findings, spelling, find and replace"); onClicked: { win.commitEditors(); win.workspace = 3 } }
+            ToolbarRule {}
+            ToolAction { objectName: "smartPunctuationItem"; text: win.ribbonMark(backend.smartPunctuation) + qsTr("Smart punctuation"); tip: qsTr("Curly quotes, dashes, ellipsis"); onClicked: backend.setSmartPunctuation(!backend.smartPunctuation) }
+            ToolAction { id: langButton; objectName: "deckLanguageMenu"; text: qsTr("Language: %1").arg(backend.deckLanguage || qsTr("none")); property bool opensMenu: true; tip: qsTr("The deck is written in"); onClicked: langMenu.popup(langButton, 0, langButton.height) }
+            Menu {
+                id: langMenu
+                Instantiator {
+                    model: backend.spellingLanguages()
+                    delegate: MenuItem {
+                        required property string modelData
+                        text: modelData; checkable: true; checked: backend.deckLanguage === modelData
+                        onTriggered: backend.setDeckLanguage(modelData)
+                    }
+                    onObjectAdded: (index, object) => langMenu.insertItem(index, object)
+                    onObjectRemoved: (index, object) => langMenu.removeItem(object)
+                }
+                MenuItem { objectName: "noDictionaries"; enabled: false; visible: backend.spellingLanguages().length === 0; text: qsTr("No dictionaries are installed") }
+            }
+        }
+    }
+    Component {
+        id: ribbonViewTab
+        RowLayout {
+            spacing: Theme.s1
+            ToolAction { objectName: "lightTableMenuItem"; icon.name: "layout-grid"; text: qsTr("Light table"); onClicked: { win.commitEditors(); win.workspace = 6; slideSorter.focusBrowser() } }
+            ToolAction { objectName: "ribbonViewNotes"; text: win.ribbonMark(win.notesOpen) + qsTr("Notes"); tip: qsTr("Presenter notes"); onClicked: win.notesOpen = !win.notesOpen }
+            ToolbarRule {}
+            ToolAction { objectName: "toggleNavigator"; text: win.ribbonMark(!win.navigatorCollapsed) + qsTr("Slide list"); onClicked: win.navigatorCollapsed = !win.navigatorCollapsed }
+            ToolAction { objectName: "toggleInspector"; text: win.ribbonMark(!win.inspectorCollapsed) + qsTr("Inspector"); onClicked: win.inspectorCollapsed = !win.inspectorCollapsed }
+            ToolAction { objectName: "toggleInspectorFixed"; text: win.ribbonMark(win.inspectorFixed) + qsTr("Lock width"); tip: qsTr("Lock sidebar width"); onClicked: win.inspectorFixed = !win.inspectorFixed }
+            ToolAction { objectName: "resetPanels"; text: qsTr("Reset panels"); tip: qsTr("Put the panels back")
+                         onClicked: { win.navigatorCollapsed = false; win.inspectorCollapsed = false; win.navigatorWidth = Theme.wNavigator; win.inspectorWidth = Theme.wInspector; win.savePanelWidths() } }
+            ToolbarRule {}
+            ToolAction { objectName: "ribbonZoomIn"; icon.name: "zoom-in"; text: qsTr("Zoom in"); display: AbstractButton.IconOnly; enabled: win.editing; tip: qsTr("Zoom in  Ctrl++"); onClicked: editCanvas.zoomBy(1.25) }
+            ToolAction { objectName: "ribbonZoomOut"; icon.name: "zoom-out"; text: qsTr("Zoom out"); display: AbstractButton.IconOnly; enabled: win.editing; tip: qsTr("Zoom out  Ctrl+-"); onClicked: editCanvas.zoomBy(1 / 1.25) }
+            ToolAction { objectName: "ribbonZoomFit"; icon.name: "maximize"; text: qsTr("Fit"); enabled: win.editing; tip: qsTr("Fit slide  Ctrl+0"); onClicked: editCanvas.fit() }
+            ToolAction { objectName: "ribbonZoomActual"; text: qsTr("100%"); enabled: win.editing; tip: qsTr("Actual size  Ctrl+1"); onClicked: editCanvas.actualSize() }
+            ToolAction { objectName: "ribbonSnap"; text: win.ribbonMark(backend.snapEnabled) + qsTr("Snap"); tip: qsTr("Snap to guides"); onClicked: backend.snapEnabled = !backend.snapEnabled }
+            ToolbarRule {}
+            ToolAction { objectName: "reducedMotionItem"; text: win.ribbonMark(backend.reducedMotion) + qsTr("Less movement"); onClicked: backend.reducedMotion = !backend.reducedMotion }
+            ToolAction { objectName: "highContrastItem"; text: win.ribbonMark(backend.highContrast) + qsTr("Contrast"); tip: qsTr("Stronger contrast"); onClicked: backend.highContrast = !backend.highContrast }
+            ToolAction { objectName: "ribbonFindCommand"; text: qsTr("Commands"); tip: qsTr("Find a command  Ctrl+K"); onClicked: commandPalette.show() }
+        }
+    }
+    Component {
+        id: ribbonArrangeTab
+        RowLayout {
+            spacing: Theme.s1
+            ToolAction { objectName: "ribbonGroup"; icon.name: "group"; text: qsTr("Group"); enabled: backend.selectionCount > 1; tip: qsTr("Group  Ctrl+G"); onClicked: backend.groupSelected() }
+            ToolAction { objectName: "ribbonUngroup"; icon.name: "ungroup"; text: qsTr("Ungroup"); enabled: !!backend.selection.groupId; tip: qsTr("Ungroup  Ctrl+Shift+G"); onClicked: backend.ungroupSelected() }
+            ToolbarRule {}
+            ToolAction { objectName: "ribbonForward"; icon.name: "bring-to-front"; text: qsTr("Forward"); enabled: backend.hasSelection; tip: qsTr("Bring forward  Ctrl+Shift+Up"); onClicked: backend.raiseSelected(1) }
+            ToolAction { objectName: "ribbonBackward"; icon.name: "send-to-back"; text: qsTr("Backward"); enabled: backend.hasSelection; tip: qsTr("Send backward  Ctrl+Shift+Down"); onClicked: backend.raiseSelected(-1) }
+            ToolbarRule {}
+            ToolAction { objectName: "ribbonLock"; icon.name: "lock"; text: qsTr("Lock"); enabled: backend.hasSelection; onClicked: backend.setSelectedProperty("locked", true) }
+            ToolAction { objectName: "ribbonUnlockAll"; icon.name: "lock-open"; text: qsTr("Unlock all"); onClicked: backend.unlockAllObjects() }
+            ToolAction { objectName: "ribbonHide"; icon.name: "eye-off"; text: qsTr("Hide"); enabled: backend.hasSelection; onClicked: backend.setSelectedProperty("hidden", true) }
+            ToolAction { objectName: "ribbonShowAll"; icon.name: "eye"; text: qsTr("Show all"); onClicked: backend.showAllObjects() }
+            ToolbarRule {}
+            ToolAction { objectName: "ribbonConnect"; icon.name: "spline"; text: qsTr("Connect"); enabled: backend.selectionCount === 2; onClicked: backend.connectSelected() }
+            ToolAction { objectName: "ribbonCombine"; text: qsTr("Combine"); enabled: backend.selectionCount > 1; tip: qsTr("Combine shapes"); onClicked: { win.commitEditors(); combineShapesDialog.open() } }
+            ToolAction { objectName: "ribbonTextOnShape"; text: qsTr("Text on shape"); enabled: backend.selectionCount === 2; onClicked: { win.commitEditors(); backend.putTextOnShape() } }
+            ToolAction { objectName: "ribbonLink"; icon.name: "link"; text: qsTr("Link"); enabled: backend.hasSelection; onClicked: linkDialog.show() }
+        }
+    }
     SlideSizeDialog { id: slideSizeDialog }
     LayoutApplyDialog { id: layoutApplyDialog }
     // Every command the menus offer, by name and by the words people use for it.
@@ -374,6 +494,35 @@ ApplicationWindow {
             { group: qsTr("View"), name: qsTr("Snap to guides"), also: "align magnet", run: () => backend.snapEnabled = !backend.snapEnabled },
             { group: qsTr("View"), name: backend.reducedMotion ? qsTr("Allow movement again") : qsTr("Less movement"), also: "reduced motion animation accessibility vestibular", run: () => backend.reducedMotion = !backend.reducedMotion },
             { group: qsTr("View"), name: backend.highContrast ? qsTr("Ordinary contrast") : qsTr("Stronger contrast"), also: "high contrast accessibility legible", run: () => backend.highContrast = !backend.highContrast },
+            // OMASHOW-PERSONAL: ribbon-only prototype — ribbon-only: menu commands that had no palette entry
+            { group: qsTr("Edit"), name: qsTr("Cut"), also: "clipboard remove", shortcut: "Ctrl+X", enabled: backend.hasSelection, run: () => backend.copyAsync(true) },
+            { group: qsTr("Edit"), name: qsTr("Copy"), also: "clipboard", shortcut: "Ctrl+C", enabled: backend.hasSelection, run: () => backend.copyAsync() },
+            { group: qsTr("Edit"), name: qsTr("Paste"), also: "clipboard", shortcut: "Ctrl+V", enabled: backend.canPaste, run: () => backend.pasteAsync() },
+            { group: qsTr("Edit"), name: qsTr("Paste keeping its formatting"), also: "paste special source", enabled: backend.clipboardKinds.objects ?? false, run: () => backend.pasteSpecial(0) },
+            { group: qsTr("Edit"), name: qsTr("Paste matching this deck's text style"), also: "paste special destination", enabled: backend.clipboardKinds.objects ?? false, run: () => backend.pasteSpecial(1) },
+            { group: qsTr("Edit"), name: qsTr("Duplicate the selected objects"), also: "copy clone", shortcut: "Ctrl+D", enabled: backend.hasSelection, run: () => backend.duplicateSelected() },
+            { group: qsTr("Edit"), name: qsTr("Delete the selected objects"), also: "remove erase", shortcut: "Del", enabled: backend.hasSelection, run: () => backend.deleteSelected() },
+            { group: qsTr("Edit"), name: qsTr("Select all"), also: "everything", shortcut: "Ctrl+A", run: () => backend.selectAll() },
+            { group: qsTr("Slides"), name: qsTr("Duplicate the selected slides"), also: "copy pages", run: () => backend.duplicateSelectedSlides() },
+            { group: qsTr("Slides"), name: qsTr("Delete the selected slides"), also: "remove pages", enabled: backend.slideSelectionState.canDelete, run: () => backend.deleteSelectedSlides() },
+            { group: qsTr("Slides"), name: backend.slideSelectionState.allSkipped ? qsTr("Include the slides in the show") : qsTr("Skip the selected slides"), also: "hide omit include", run: () => backend.setSlidesSkipped(!backend.slideSelectionState.allSkipped) },
+            { group: qsTr("Format"), name: qsTr("Link or action"), also: "hyperlink url jump", enabled: backend.hasSelection, run: () => linkDialog.show() },
+            { group: qsTr("Format"), name: qsTr("Combine shapes"), also: "union subtract intersect boolean", enabled: backend.selectionCount > 1, run: () => { win.commitEditors(); combineShapesDialog.open() } },
+            { group: qsTr("Format"), name: qsTr("The deck is written in…"), also: "language dictionary spelling", run: () => win.ribbonTab = 4 },
+            { group: qsTr("Arrange"), name: qsTr("Group"), also: "combine objects", shortcut: "Ctrl+G", enabled: backend.selectionCount > 1, run: () => backend.groupSelected() },
+            { group: qsTr("Arrange"), name: qsTr("Ungroup"), also: "split", shortcut: "Ctrl+Shift+G", enabled: !!backend.selection.groupId, run: () => backend.ungroupSelected() },
+            { group: qsTr("Arrange"), name: qsTr("Bring forward"), also: "order raise front", shortcut: "Ctrl+Shift+Up", enabled: backend.hasSelection, run: () => backend.raiseSelected(1) },
+            { group: qsTr("Arrange"), name: qsTr("Send backward"), also: "order lower back", shortcut: "Ctrl+Shift+Down", enabled: backend.hasSelection, run: () => backend.raiseSelected(-1) },
+            { group: qsTr("Arrange"), name: qsTr("Lock the selected objects"), also: "pin fix", enabled: backend.hasSelection, run: () => backend.setSelectedProperty("locked", true) },
+            { group: qsTr("Arrange"), name: qsTr("Unlock all"), also: "unpin", run: () => backend.unlockAllObjects() },
+            { group: qsTr("Arrange"), name: qsTr("Hide the selected objects"), also: "invisible", enabled: backend.hasSelection, run: () => backend.setSelectedProperty("hidden", true) },
+            { group: qsTr("Arrange"), name: qsTr("Show all objects"), also: "unhide visible", run: () => backend.showAllObjects() },
+            { group: qsTr("Arrange"), name: qsTr("Connect objects"), also: "connector line arrow", enabled: backend.selectionCount === 2, run: () => backend.connectSelected() },
+            { group: qsTr("View"), name: qsTr("Zoom in"), also: "bigger magnify", shortcut: "Ctrl++", enabled: win.editing, run: () => editCanvas.zoomBy(1.25) },
+            { group: qsTr("View"), name: qsTr("Zoom out"), also: "smaller", shortcut: "Ctrl+-", enabled: win.editing, run: () => editCanvas.zoomBy(1 / 1.25) },
+            { group: qsTr("View"), name: qsTr("Fit the slide"), also: "zoom whole", shortcut: "Ctrl+0", enabled: win.editing, run: () => editCanvas.fit() },
+            { group: qsTr("View"), name: qsTr("Actual size"), also: "zoom 100", shortcut: "Ctrl+1", enabled: win.editing, run: () => editCanvas.actualSize() },
+            { group: qsTr("File"), name: qsTr("Quit"), also: "exit close", shortcut: "Ctrl+Q", run: () => win.close() },
             { group: qsTr("Help"), name: qsTr("OmaShow guide"), also: "help manual explain how what does sections parts", shortcut: "F1", run: () => helpGuide.open() },
             { group: qsTr("Help"), name: qsTr("Keyboard shortcuts"), also: "keys help", shortcut: "?", run: () => helpSheet.open() }
         ]
@@ -531,176 +680,55 @@ ApplicationWindow {
                     font.weight: Font.Bold
                 }
 
-                MenuBar {
-                    id: appMenus
-                    Layout.fillHeight: true
-                    Menu {
-                        title: qsTr("File")
-                        MenuItem { text: qsTr("Start centre…"); icon.name: "house"; onTriggered: { win.commitEditors(); backend.showStart() } }
-                        MenuItem { text: qsTr("Open…"); icon.name: "folder-open"; onTriggered: win.confirmThenOpen() }
-                        MenuItem { objectName: "newWindowMenuItem"; text: qsTr("New window"); icon.name: "square-plus"
-                                   onTriggered: backend.openInNewWindow() }
-                        MenuItem { objectName: "importDeckMenuItem"; text: qsTr("Import from deck…"); icon.name: "folder-open"
-                                   enabled: !backend.startVisible; onTriggered: { win.commitEditors(); backend.importDeckDialog() } }
-                        MenuSeparator {}
-                        MenuItem { text: qsTr("Save"); icon.name: "save"; onTriggered: { win.commitEditors(); backend.save() } }
-                        MenuItem { text: qsTr("Save as…"); onTriggered: { win.commitEditors(); backend.saveAsDialog() } }
-                        MenuItem { objectName: "keepAsTemplate"; text: qsTr("Keep as template…")
-                                   enabled: !backend.startVisible
-                                   onTriggered: { win.commitEditors(); templateName.open() } }
-                        MenuSeparator {}
-                        MenuItem { text: qsTr("Export PDF…"); icon.name: "file-output"; onTriggered: { win.commitEditors(); backend.exportDialog({ kind: 0 }) } }
-                        MenuItem { objectName: "exportMenuItem"; text: qsTr("Export…"); icon.name: "share"; onTriggered: win.showExport() }
-                        MenuSeparator {}
-                        MenuItem { text: qsTr("Quit"); onTriggered: win.close() }
-                    }
-                    Menu {
-                        title: qsTr("Edit")
-                        MenuItem { text: backend.canUndo ? qsTr("Undo %1").arg(backend.undoLabel) : qsTr("Undo"); icon.name: "undo-2"; enabled: backend.canUndo; onTriggered: backend.undo() }
-                        MenuItem { text: qsTr("Redo"); icon.name: "redo-2"; enabled: backend.canRedo; onTriggered: backend.redo() }
-                        MenuSeparator {}
-                        MenuItem { text: qsTr("Cut"); icon.name: "scissors"; enabled: backend.hasSelection; onTriggered: backend.copyAsync(true) }
-                        MenuItem { text: qsTr("Copy"); icon.name: "copy"; enabled: backend.hasSelection; onTriggered: backend.copyAsync() }
-                        MenuItem { text: qsTr("Paste"); icon.name: "clipboard-paste"; enabled: backend.canPaste; onTriggered: backend.pasteAsync() }
-                        Menu {
-                            title: qsTr("Paste special")
-                            enabled: backend.canPaste
-                            MenuItem { objectName: "pasteKeeping"; text: qsTr("Keep its formatting")
-                                       enabled: backend.clipboardKinds.objects ?? false
-                                       onTriggered: backend.pasteSpecial(0) }
-                            MenuItem { objectName: "pasteMatching"; text: qsTr("Match this deck's text style")
-                                       enabled: backend.clipboardKinds.objects ?? false
-                                       onTriggered: backend.pasteSpecial(1) }
-                            MenuItem { objectName: "pasteWords"; text: qsTr("The words only")
-                                       enabled: backend.clipboardKinds.text ?? false
-                                       onTriggered: backend.pasteSpecial(2) }
-                            MenuItem { objectName: "pastePicture"; text: qsTr("As a picture")
-                                       enabled: backend.clipboardKinds.objects ?? false
-                                       onTriggered: backend.pasteSpecial(3) }
-                        }
-                        MenuItem { text: qsTr("Duplicate"); enabled: backend.hasSelection; onTriggered: backend.duplicateSelected() }
-                        MenuItem { text: qsTr("Delete"); icon.name: "trash-2"; enabled: backend.hasSelection; onTriggered: backend.deleteSelected() }
-                        MenuSeparator {}
-                        MenuItem { text: qsTr("Select all"); onTriggered: backend.selectAll() }
-                    }
-                    Menu {
-                        title: qsTr("Insert")
-                        MenuItem { text: qsTr("Text"); icon.name: "type"; onTriggered: { win.workspace = 0; backend.addText() } }
-                        MenuItem { objectName: "insertEquation"; text: qsTr("Equation"); icon.name: "sigma"; onTriggered: { win.workspace = 0; win.commitEditors(); backend.addEquation() } }
-                        MenuItem { text: qsTr("Shape…"); icon.name: "shapes"; onTriggered: { win.toFormat(); shapeGallery.open() } }
-                        MenuItem { text: qsTr("Pen drawing"); icon.name: "pen-tool"; onTriggered: { win.toFormat(); editCanvas.startPathTool(1) } }
-                        MenuItem { text: qsTr("Freehand drawing"); icon.name: "pencil-line"; onTriggered: { win.toFormat(); editCanvas.startPathTool(2) } }
-                        MenuItem { text: qsTr("Picture…"); icon.name: "image"; onTriggered: { win.workspace = 0; win.commitEditors(); backend.insertImageDialog() } }
-                        MenuSeparator {}
-                        MenuItem { text: qsTr("Table…"); icon.name: "table"; onTriggered: { win.workspace = 0; win.commitEditors(); if (backend.addTable()) tableEditor.show() } }
-                        MenuItem { text: qsTr("Chart"); icon.name: "chart-column"; onTriggered: { win.workspace = 0; win.commitEditors(); backend.addChart() } }
-                        MenuItem { text: qsTr("Diagram…"); icon.name: "workflow"; onTriggered: { win.workspace = 0; win.commitEditors(); diagramDialog.show() } }
-                        MenuSeparator {}
-                        MenuItem { text: qsTr("Audio or video · embed…"); icon.name: "clapperboard"; onTriggered: { win.workspace = 0; win.commitEditors(); backend.insertMediaDialog(true) } }
-                        MenuItem { text: qsTr("Audio or video · link…"); onTriggered: { win.workspace = 0; win.commitEditors(); backend.insertMediaDialog(false) } }
-                    }
-                    Menu {
-                        title: qsTr("Slide")
-                        MenuItem { text: qsTr("New slide"); icon.name: "square-plus"; onTriggered: backend.addSlide() }
-                        MenuItem { text: qsTr("Duplicate slides"); icon.name: "copy"; onTriggered: backend.duplicateSelectedSlides() }
-                        MenuItem { text: qsTr("Delete slides"); icon.name: "trash-2"; enabled: backend.slideSelectionState.canDelete; onTriggered: backend.deleteSelectedSlides() }
-                        MenuItem { text: backend.slideSelectionState.allSkipped ? qsTr("Include in show") : qsTr("Skip in show"); icon.name: "eye-off"; onTriggered: backend.setSlidesSkipped(!backend.slideSelectionState.allSkipped) }
-                        MenuSeparator {}
-                        MenuItem { text: qsTr("Slide size…"); icon.name: "scan"; onTriggered: { win.commitEditors(); slideSizeDialog.show() } }
-                    }
-                    Menu {
-                        title: qsTr("Format")
-                        MenuItem { text: qsTr("Link or action…"); icon.name: "link"; enabled: backend.hasSelection; onTriggered: linkDialog.show() }
-                        MenuItem { text: qsTr("Combine shapes…"); enabled: backend.selectionCount > 1; onTriggered: { win.commitEditors(); combineShapesDialog.open() } }
-                        MenuItem { text: qsTr("Theme and slide size"); icon.name: "palette"; onTriggered: win.chooseSidebar(2) }
-                        MenuItem { text: qsTr("Edit masters and layouts"); onTriggered: { win.commitEditors(); win.workspace = 1 } }
-                        MenuSeparator {}
-                        MenuItem {
-                            objectName: "smartPunctuationItem"
-                            text: qsTr("Smart punctuation")
-                            checkable: true; checked: backend.smartPunctuation
-                            onTriggered: backend.setSmartPunctuation(!backend.smartPunctuation)
-                        }
-                        Menu {
-                            objectName: "deckLanguageMenu"
-                            title: qsTr("The deck is written in")
-                            Repeater {
-                                model: backend.spellingLanguages()
-                                MenuItem {
-                                    required property string modelData
-                                    text: modelData
-                                    checkable: true
-                                    checked: backend.deckLanguage === modelData
-                                    onTriggered: backend.setDeckLanguage(modelData)
-                                }
-                            }
-                            MenuItem {
-                                objectName: "noDictionaries"
-                                enabled: false
-                                visible: backend.spellingLanguages().length === 0
-                                text: qsTr("No dictionaries are installed")
-                            }
-                        }
-                    }
-                    Menu {
-                        title: qsTr("Arrange")
-                        MenuItem { text: qsTr("Group"); icon.name: "group"; enabled: backend.selectionCount > 1; onTriggered: backend.groupSelected() }
-                        MenuItem { text: qsTr("Ungroup"); icon.name: "ungroup"; enabled: !!backend.selection.groupId; onTriggered: backend.ungroupSelected() }
-                        MenuSeparator {}
-                        MenuItem { text: qsTr("Bring forward"); icon.name: "bring-to-front"; enabled: backend.hasSelection; onTriggered: backend.raiseSelected(1) }
-                        MenuItem { text: qsTr("Send backward"); icon.name: "send-to-back"; enabled: backend.hasSelection; onTriggered: backend.raiseSelected(-1) }
-                        MenuSeparator {}
-                        MenuItem { text: qsTr("Lock selected"); icon.name: "lock"; enabled: backend.hasSelection; onTriggered: backend.setSelectedProperty("locked", true) }
-                        MenuItem { text: qsTr("Unlock all"); icon.name: "lock-open"; onTriggered: backend.unlockAllObjects() }
-                        MenuItem { text: qsTr("Hide selected"); icon.name: "eye-off"; enabled: backend.hasSelection; onTriggered: backend.setSelectedProperty("hidden", true) }
-                        MenuItem { text: qsTr("Show all"); icon.name: "eye"; onTriggered: backend.showAllObjects() }
-                        MenuSeparator {}
-                        MenuItem { text: qsTr("Connect objects"); enabled: backend.selectionCount === 2; onTriggered: backend.connectSelected() }
-                    }
-                    Menu {
-                        title: qsTr("View")
-                        MenuItem { text: qsTr("Format"); icon.name: "pencil"; checkable: true; checked: win.sidebarChoice === 0; onTriggered: win.chooseSidebar(0) }
-                        MenuItem { text: qsTr("Animate"); icon.name: "sparkles"; checkable: true; checked: win.sidebarChoice === 1; onTriggered: win.chooseSidebar(1) }
-                        MenuItem { text: qsTr("Document"); icon.name: "file-text"; checkable: true; checked: win.sidebarChoice === 2; onTriggered: win.chooseSidebar(2) }
-                        MenuSeparator {}
-                        MenuItem { objectName: "lightTableMenuItem"; text: qsTr("Light table"); icon.name: "layout-grid"; onTriggered: { win.commitEditors(); win.workspace = 6; slideSorter.focusBrowser() } }
-                        MenuItem { text: qsTr("Review"); icon.name: "message-square-text"; onTriggered: { win.commitEditors(); win.workspace = 3 } }
-                        MenuItem { objectName: "toggleNavigator"; text: win.navigatorCollapsed ? qsTr("Show the slide list") : qsTr("Hide the slide list")
-                                   onTriggered: win.navigatorCollapsed = !win.navigatorCollapsed }
-                        MenuItem { objectName: "toggleInspector"; text: win.inspectorCollapsed ? qsTr("Show the inspector") : qsTr("Hide the inspector")
-                                   onTriggered: win.inspectorCollapsed = !win.inspectorCollapsed }
-                        MenuItem { objectName: "toggleInspectorFixed"; text: win.inspectorFixed ? qsTr("Unlock sidebar width") : qsTr("Lock sidebar width")
-                                   onTriggered: win.inspectorFixed = !win.inspectorFixed }
-                        MenuItem { objectName: "resetPanels"; text: qsTr("Put the panels back")
-                                   onTriggered: { win.navigatorCollapsed = false; win.inspectorCollapsed = false
-                                                  win.navigatorWidth = Theme.wNavigator; win.inspectorWidth = Theme.wInspector; win.savePanelWidths() } }
-                        MenuItem { objectName: "commandSearchMenuItem"; text: qsTr("Find a command…"); onTriggered: commandPalette.show() }
-                        MenuSeparator {}
-                        MenuItem { objectName: "reducedMotionItem"; checkable: true; checked: backend.reducedMotion
-                                   text: qsTr("Less movement"); onTriggered: backend.reducedMotion = checked }
-                        MenuItem { objectName: "highContrastItem"; checkable: true; checked: backend.highContrast
-                                   text: qsTr("Stronger contrast"); onTriggered: backend.highContrast = checked }
-                        MenuSeparator {}
-                        MenuItem { text: qsTr("Zoom in"); icon.name: "zoom-in"; enabled: win.editing; onTriggered: editCanvas.zoomBy(1.25) }
-                        MenuItem { text: qsTr("Zoom out"); icon.name: "zoom-out"; enabled: win.editing; onTriggered: editCanvas.zoomBy(1 / 1.25) }
-                        MenuItem { text: qsTr("Fit slide"); icon.name: "maximize"; enabled: win.editing; onTriggered: editCanvas.fit() }
-                        MenuItem { text: qsTr("Actual size"); enabled: win.editing; onTriggered: editCanvas.actualSize() }
-                        MenuSeparator {}
-                        MenuItem { text: qsTr("Snap to guides"); checkable: true; checked: backend.snapEnabled; onTriggered: backend.snapEnabled = !backend.snapEnabled }
-                        MenuItem { text: qsTr("Presenter notes"); checkable: true; checked: win.notesOpen; onTriggered: win.notesOpen = !win.notesOpen }
-                    }
-                    Menu {
-                        title: qsTr("Present")
-                        MenuItem { text: qsTr("Play from start"); icon.name: "play"; onTriggered: win.startShow() }
-                        MenuItem { text: qsTr("Play from this slide"); onTriggered: { win.commitEditors(); presenter.start(true, false) } }
-                        MenuItem { text: qsTr("Rehearse"); icon.name: "timer"; onTriggered: { win.commitEditors(); presenter.start(false, true) } }
-                        MenuSeparator {}
-                        MenuItem { text: qsTr("Presenter setup…"); icon.name: "monitor"; onTriggered: { win.commitEditors(); win.workspace = 4 } }
-                    }
-                    Menu {
-                        title: qsTr("Help")
-                        MenuItem { objectName: "helpGuideMenuItem"; text: qsTr("OmaShow guide"); icon.name: "info"; onTriggered: { win.commitEditors(); helpGuide.open() } }
-                        MenuItem { text: qsTr("Keyboard shortcuts"); icon.name: "keyboard"; onTriggered: helpSheet.open() }
+                // OMASHOW-PERSONAL: ribbon-only prototype — the MenuBar is gone. File opens a backstage-style
+                // menu; every other menu item lives on a ribbon tab (history/RIBBON-CONSOLIDATION-MAP.md).
+                ToolAction {
+                    id: fileButton
+                    objectName: "ribbonFileButton"
+                    text: qsTr("File")
+                    display: AbstractButton.TextOnly
+                    highlighted: fileMenu.visible
+                    tip: qsTr("New, open, save, export, print and quit")
+                    onClicked: fileMenu.popup(fileButton, 0, fileButton.height)
+                }
+                Menu {
+                    id: fileMenu
+                    objectName: "ribbonFileMenu"
+                    width: Math.max(implicitWidth, 300)
+                    MenuItem { objectName: "fileNewDeck"; text: qsTr("New deck…"); icon.name: "square-plus"; onTriggered: win.confirmThenNew() }
+                    MenuItem { objectName: "fileOpen"; text: qsTr("Open…  Ctrl+O"); icon.name: "folder-open"; onTriggered: win.confirmThenOpen() }
+                    MenuItem { objectName: "fileStartCentre"; text: qsTr("Start centre · recent  Ctrl+Shift+N"); icon.name: "house"; onTriggered: { win.commitEditors(); backend.showStart() } }
+                    MenuItem { objectName: "newWindowMenuItem"; text: qsTr("New window"); icon.name: "square-plus"; onTriggered: backend.openInNewWindow() }
+                    MenuItem { objectName: "importDeckMenuItem"; text: qsTr("Import slides from a deck…"); icon.name: "folder-open"
+                               enabled: !backend.startVisible; onTriggered: { win.commitEditors(); backend.importDeckDialog() } }
+                    MenuSeparator {}
+                    MenuItem { objectName: "fileSave"; text: qsTr("Save  Ctrl+S"); icon.name: "save"; onTriggered: { win.commitEditors(); backend.save() } }
+                    MenuItem { objectName: "fileSaveAs"; text: qsTr("Save as…  Ctrl+Shift+S"); onTriggered: { win.commitEditors(); backend.saveAsDialog() } }
+                    MenuItem { objectName: "keepAsTemplate"; text: qsTr("Keep as template…"); enabled: !backend.startVisible
+                               onTriggered: { win.commitEditors(); templateName.open() } }
+                    MenuItem { objectName: "fileInstallTemplate"; text: qsTr("Install a template…"); onTriggered: backend.installTemplateDialog() }
+                    MenuSeparator {}
+                    MenuItem { objectName: "fileExportPdf"; text: qsTr("Export PDF…  Ctrl+E"); icon.name: "file-output"; onTriggered: { win.commitEditors(); backend.exportDialog({ kind: 0 }) } }
+                    MenuItem { objectName: "exportMenuItem"; text: qsTr("Export pictures or film…"); icon.name: "share"; onTriggered: win.showExport() }
+                    MenuItem { objectName: "filePackage"; text: qsTr("Package the deck…"); onTriggered: win.showExport() }
+                    MenuItem { objectName: "filePrint"; text: qsTr("Print…"); onTriggered: win.showExport() }
+                    MenuSeparator {}
+                    MenuItem { objectName: "fileProperties"; text: qsTr("Properties · theme, size, language"); icon.name: "file-text"; onTriggered: win.chooseSidebar(2) }
+                    MenuItem { objectName: "fileClose"; text: qsTr("Close the deck"); onTriggered: { win.commitEditors(); backend.showStart() } }
+                    MenuItem { objectName: "fileQuit"; text: qsTr("Quit  Ctrl+Q"); onTriggered: win.close() }
+                }
+                Repeater {
+                    model: [qsTr("Home"), qsTr("Insert"), qsTr("Design"), qsTr("Slide Show"), qsTr("Review"), qsTr("View"), qsTr("Arrange")]
+                    ToolAction {
+                        required property string modelData
+                        required property int index
+                        objectName: "ribbonTab" + index
+                        text: modelData
+                        display: AbstractButton.TextOnly
+                        checkable: true
+                        checked: win.ribbonTab === index
+                        onClicked: { win.ribbonTab = index; checked = Qt.binding(() => win.ribbonTab === index) }
+                        Accessible.role: Accessible.PageTab
                     }
                 }
 
@@ -713,6 +741,21 @@ ApplicationWindow {
                     font.pixelSize: Theme.fsLabel
                     elide: Text.ElideRight
                     Layout.maximumWidth: Theme.wInspector
+                }
+                ToolButton {
+                    id: helpButton
+                    objectName: "ribbonHelpButton"
+                    text: "?"
+                    onClicked: helpMenu.popup(helpButton, 0, helpButton.height)
+                    ToolTip.visible: hovered; ToolTip.delay: Theme.tooltipDelay
+                    ToolTip.text: qsTr("Help")
+                    Accessible.name: qsTr("Help")
+                }
+                Menu {
+                    id: helpMenu
+                    MenuItem { objectName: "helpGuideMenuItem"; text: qsTr("OmaShow guide  F1"); icon.name: "info"; onTriggered: { win.commitEditors(); helpGuide.open() } }
+                    MenuItem { text: qsTr("Keyboard shortcuts  ?"); icon.name: "keyboard"; onTriggered: helpSheet.open() }
+                    MenuItem { objectName: "commandSearchMenuItem"; text: qsTr("Find a command…  Ctrl+K"); onTriggered: commandPalette.show() }
                 }
                 ToolButton {
                     icon.name: "keyboard"
@@ -745,7 +788,43 @@ ApplicationWindow {
                 spacing: Theme.s1
                 visible: !win.inMode
 
+                // OMASHOW-PERSONAL: ribbon-only prototype — Home holds the old toolbar unchanged plus
+                // Clipboard and Slides (former Edit / Slide menu items).
+                RowLayout {
+                    objectName: "ribbonHome"
+                    visible: win.ribbonTab === 0
+                    spacing: Theme.s1
+                ToolAction { id: clipButton; objectName: "ribbonClipboard"; icon.name: "clipboard-paste"; text: qsTr("Clipboard"); property bool opensMenu: true; tip: qsTr("Cut, copy, paste, paste special, delete"); onClicked: clipMenu.popup(clipButton, 0, clipButton.height) }
+                Menu {
+                    id: clipMenu
+                    MenuItem { text: qsTr("Cut  Ctrl+X"); icon.name: "scissors"; enabled: backend.hasSelection; onTriggered: backend.copyAsync(true) }
+                    MenuItem { text: qsTr("Copy  Ctrl+C"); icon.name: "copy"; enabled: backend.hasSelection; onTriggered: backend.copyAsync() }
+                    MenuItem { text: qsTr("Paste  Ctrl+V"); icon.name: "clipboard-paste"; enabled: backend.canPaste; onTriggered: backend.pasteAsync() }
+                    Menu {
+                        title: qsTr("Paste special")
+                        enabled: backend.canPaste
+                        MenuItem { objectName: "pasteKeeping"; text: qsTr("Keep its formatting"); enabled: backend.clipboardKinds.objects ?? false; onTriggered: backend.pasteSpecial(0) }
+                        MenuItem { objectName: "pasteMatching"; text: qsTr("Match this deck's text style"); enabled: backend.clipboardKinds.objects ?? false; onTriggered: backend.pasteSpecial(1) }
+                        MenuItem { objectName: "pasteWords"; text: qsTr("The words only"); enabled: backend.clipboardKinds.text ?? false; onTriggered: backend.pasteSpecial(2) }
+                        MenuItem { objectName: "pastePicture"; text: qsTr("As a picture"); enabled: backend.clipboardKinds.objects ?? false; onTriggered: backend.pasteSpecial(3) }
+                    }
+                    MenuItem { text: qsTr("Duplicate  Ctrl+D"); enabled: backend.hasSelection; onTriggered: backend.duplicateSelected() }
+                    MenuItem { objectName: "ribbonDelete"; text: qsTr("Delete  Del"); icon.name: "trash-2"; enabled: backend.hasSelection; onTriggered: backend.deleteSelected() }
+                    MenuSeparator {}
+                    MenuItem { text: qsTr("Select all  Ctrl+A"); onTriggered: backend.selectAll() }
+                }
+                ToolbarRule {}
                 ToolAction { objectName: "toolbarNewSlide"; icon.name: "square-plus"; text: qsTr("New Slide"); tip: qsTr("New slide  Ctrl+N"); onClicked: backend.addSlide() }
+                ToolAction { id: slidesButton; objectName: "ribbonSlides"; icon.name: "copy"; text: qsTr("Slides"); property bool opensMenu: true; tip: qsTr("Duplicate, delete, skip, size"); onClicked: slidesMenu.popup(slidesButton, 0, slidesButton.height) }
+                Menu {
+                    id: slidesMenu
+                    MenuItem { text: qsTr("New slide  Ctrl+N"); icon.name: "square-plus"; onTriggered: backend.addSlide() }
+                    MenuItem { objectName: "ribbonDuplicateSlides"; text: qsTr("Duplicate slides"); icon.name: "copy"; onTriggered: backend.duplicateSelectedSlides() }
+                    MenuItem { objectName: "ribbonDeleteSlides"; text: qsTr("Delete slides"); icon.name: "trash-2"; enabled: backend.slideSelectionState.canDelete; onTriggered: backend.deleteSelectedSlides() }
+                    MenuItem { objectName: "ribbonSkipSlides"; text: backend.slideSelectionState.allSkipped ? qsTr("Include in show") : qsTr("Skip in show"); icon.name: "eye-off"; onTriggered: backend.setSlidesSkipped(!backend.slideSelectionState.allSkipped) }
+                    MenuSeparator {}
+                    MenuItem { text: qsTr("Slide size…"); icon.name: "scan"; onTriggered: { win.commitEditors(); slideSizeDialog.show() } }
+                }
                 ToolAction {
                     id: layoutButton
                     icon.name: "layout-template"
@@ -817,6 +896,14 @@ ApplicationWindow {
                     MenuItem { objectName: "slideSizeAction"; text: qsTr("Slide size…"); icon.name: "scan"; onTriggered: { win.commitEditors(); slideSizeDialog.show() } }
                 }
                 ToolAction { objectName: "toolbarReview"; icon.name: "message-square-text"; text: qsTr("Review"); tip: qsTr("Comments, findings and spelling"); onClicked: { win.commitEditors(); win.workspace = 3 } }
+                }
+                Loader {
+                    objectName: "ribbonTabLoader"
+                    active: win.ribbonTab > 0
+                    visible: active
+                    Layout.fillHeight: true
+                    sourceComponent: [null, ribbonInsertTab, ribbonDesignTab, ribbonShowTab, ribbonReviewTab, ribbonViewTab, ribbonArrangeTab][win.ribbonTab] ?? null
+                }
                 Item { Layout.fillWidth: true }
                 ToolAction { icon.name: "undo-2"; text: qsTr("Undo"); display: AbstractButton.IconOnly; enabled: backend.canUndo; tip: qsTr("Undo %1  Ctrl+Z").arg(backend.undoLabel); onClicked: backend.undo() }
                 ToolAction { icon.name: "redo-2"; text: qsTr("Redo"); display: AbstractButton.IconOnly; enabled: backend.canRedo; tip: qsTr("Redo  Ctrl+Shift+Z"); onClicked: backend.redo() }
@@ -837,6 +924,8 @@ ApplicationWindow {
                         objectName: modelData.key
                         icon.name: modelData.icon
                         text: modelData.name
+                        // OMASHOW-PERSONAL: ribbon-only prototype — icons only when the ribbon needs the room
+                        display: win.compactToolbar || win.width < 1800 ? AbstractButton.IconOnly : AbstractButton.TextBesideIcon
                         tip: modelData.name
                         checkable: true
                         checked: win.sidebarChoice === index
