@@ -97,6 +97,17 @@ void applyBuild(SceneObject &object, const BuildStep &step, qreal t, const Slide
         break;
     }
     case Effect::Path: {
+        if (!step.motionPath.isEmpty()) {
+            // ANIM-INTEROP: PowerPoint's path: from where the object is, in
+            // fractions of the slide; it stays where the path ends.
+            if (t < step.start) break;
+            const QPainterPath path = MotionPath::parse(step.motionPath, slide.stage);
+            if (path.elementCount() < 1) break;
+            const qreal along = qBound(0.0, progress, 1.0);
+            object.rect.translate(path.length() > 0 ? path.pointAtPercent(along) : path.elementAt(0));
+            if (step.orient && path.length() > 0) object.rotation -= path.angleAtPercent(along);
+            break;
+        }
         const auto *guide = slide.find(step.pathId);
         if (!guide || guide->id == object.id) break;
         const auto path = Shape::worldPath(*guide);
@@ -131,7 +142,8 @@ void applyBuild(SceneObject &object, const BuildStep &step, qreal t, const Slide
     }
     case Effect::Float: {
         const qreal seen = step.phase == BuildPhase::Out ? 1.0 - step.linearAt(t) : step.linearAt(t);
-        const qreal d = std::max(160.0, slide.stage.height() * 0.2);
+        // ANIM-INTEROP: as far as PowerPoint's Float In drifts, a tenth of the slide height.
+        const qreal d = slide.stage.height() * 0.1;
         QPointF away = step.direction == 1 ? QPointF(-d, 0) : step.direction == 2 ? QPointF(d, 0)
                      : step.direction == 3 ? QPointF(0, -d) : QPointF(0, d);
         object.opacity *= seen;
@@ -167,6 +179,10 @@ void applyBuild(SceneObject &object, const BuildStep &step, qreal t, const Slide
         if (f <= 0.0) object.opacity = 0.0;
         break;
     }
+    case Effect::Rotate:
+        // ANIM-INTEROP: PowerPoint's Spin emphasis: turns and stays turned.
+        object.rotation += (step.amount != 0 ? step.amount : 360.0) * progress;
+        break;
     case Effect::Grow:
     case Effect::Shrink: {
         const qreal target = step.amount > 0 ? step.amount : step.effect == Effect::Grow ? 1.25 : 0.8;
@@ -175,7 +191,18 @@ void applyBuild(SceneObject &object, const BuildStep &step, qreal t, const Slide
     }
     case Effect::Reveal: {
         if (object.type != ObjectType::Text) break;
-        const auto ends = unitEnds(object.text, qBound(0, step.unit, 2));
+        const auto all = unitEnds(object.text, qBound(0, step.unit, 2));
+        if (step.rangeFrom >= 0) {
+            // ANIM-INTEROP: one paragraph (or a run of them), as PowerPoint builds
+            // text by paragraph: only that part arrives; the rest is left alone.
+            if (step.rangeFrom >= all.size()) break;
+            const int a = step.rangeFrom, b = qBound(a + 1, step.rangeTo, int(all.size()));
+            const int from = a > 0 ? all.at(a - 1) : 0, to = all.at(b - 1);
+            const qreal seen = step.phase == BuildPhase::Out ? 1.0 - step.linearAt(t) : step.linearAt(t);
+            if (seen < 1.0) fadeText(object, from, to, seen);
+            break;
+        }
+        const auto &ends = all;
         if (object.textKind != 0) {
             // Equations and words on a path cannot be coloured by the letter.
             const int shown = int(std::ceil(p * ends.size() - 1e-9));

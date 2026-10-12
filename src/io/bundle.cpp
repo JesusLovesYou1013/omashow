@@ -93,6 +93,7 @@ QString effectToString(Effect effect) {
     case Effect::Wipe: return QStringLiteral("wipe");
     case Effect::Grow: return QStringLiteral("grow");
     case Effect::Shrink: return QStringLiteral("shrink");
+    case Effect::Rotate: return QStringLiteral("rotate");
     case Effect::None: break;
     }
     return QStringLiteral("none");
@@ -116,6 +117,7 @@ Effect effectFromString(const QString &value) {
     if (value == QLatin1String("wipe")) return Effect::Wipe;
     if (value == QLatin1String("grow")) return Effect::Grow;
     if (value == QLatin1String("shrink")) return Effect::Shrink;
+    if (value == QLatin1String("rotate")) return Effect::Rotate;
     return Effect::None;
 }
 
@@ -145,6 +147,17 @@ QJsonObject stepToJson(const BuildStep &step) {
     json["pathId"] = step.pathId;
     json["pathReverse"] = step.pathReverse;
     json["orient"] = step.orient;
+    // ANIM-INTEROP: written only when used, so ordinary decks stay as they were.
+    if (step.repeat != 0) json["repeat"] = step.repeat;
+    if (step.autoReverse) json["autoReverse"] = true;
+    if (step.rewind) json["rewind"] = true;
+    if (!step.motionPath.isEmpty()) json["motionPath"] = step.motionPath;
+    if (step.rangeFrom >= 0) { json["rangeFrom"] = step.rangeFrom; json["rangeTo"] = step.rangeTo; }
+    if (!step.pptxXml.isEmpty()) {
+        json["pptx"] = step.pptxXml; json["pptxSig"] = step.pptxSig; json["pptxDuration"] = step.pptxDuration;
+        if (!step.pptxName.isEmpty()) json["pptxName"] = step.pptxName;
+        if (!step.pptxBuild.isEmpty()) json["pptxBuild"] = step.pptxBuild;
+    }
     return json;
 }
 
@@ -169,6 +182,17 @@ BuildStep stepFromJson(const QJsonObject &json) {
     step.pathId = json.value("pathId").toString();
     step.pathReverse = json.value("pathReverse").toBool();
     step.orient = json.value("orient").toBool();
+    step.repeat = qBound(-1.0, json.value("repeat").toDouble(), 1000.0);
+    step.autoReverse = json.value("autoReverse").toBool();
+    step.rewind = json.value("rewind").toBool();
+    step.motionPath = json.value("motionPath").toString();
+    step.rangeFrom = json.value("rangeFrom").toInt(-1);
+    step.rangeTo = json.value("rangeTo").toInt(-1);
+    step.pptxXml = json.value("pptx").toString();
+    step.pptxSig = json.value("pptxSig").toString();
+    step.pptxName = json.value("pptxName").toString();
+    step.pptxDuration = json.value("pptxDuration").toDouble();
+    step.pptxBuild = json.value("pptxBuild").toString();
     return step;
 }
 
@@ -187,6 +211,10 @@ QByteArray slideToJson(const Slide &slide) {
     json["transitionDirection"] = slide.transitionDirection;
     json["transitionSeconds"] = slide.transitionSeconds;
     json["advanceAfter"] = slide.advanceAfter;
+    // ANIM-INTEROP: PowerPoint triggers (click a shape to play), kept as written.
+    if (!slide.pptxInteractive.isEmpty()) json["pptxInteractive"] = QJsonArray::fromStringList(slide.pptxInteractive);
+    if (!slide.pptxInteractiveTargets.isEmpty()) json["pptxInteractiveTargets"] = QJsonArray::fromStringList(slide.pptxInteractiveTargets);
+    if (!slide.pptxInteractiveBuilds.isEmpty()) json["pptxInteractiveBuilds"] = QJsonArray::fromStringList(slide.pptxInteractiveBuilds);
     QJsonArray reading;
     for (const auto &id : slide.readingOrder) reading.append(id);
     json["readingOrder"] = reading;
@@ -226,6 +254,9 @@ Slide slideFromJson(const QByteArray &raw, bool *ok) {
     slide.transitionDirection = json.value("transitionDirection").toInt(0);
     slide.transitionSeconds = json.value("transitionSeconds").toDouble(-1);
     slide.advanceAfter = json.value("advanceAfter").toDouble(-1);
+    for (const auto &v : json.value("pptxInteractive").toArray()) slide.pptxInteractive.append(v.toString());
+    for (const auto &v : json.value("pptxInteractiveTargets").toArray()) slide.pptxInteractiveTargets.append(v.toString());
+    for (const auto &v : json.value("pptxInteractiveBuilds").toArray()) slide.pptxInteractiveBuilds.append(v.toString());
     if (slide.transition < -1 || slide.transition > Presentation::LastKind ||
         slide.transitionDirection < 0 || slide.transitionDirection > 3 ||
         !std::isfinite(slide.transitionSeconds) || slide.transitionSeconds < -1 ||

@@ -170,6 +170,12 @@ struct Slide {
     // Seconds to hold after the last build before moving on by itself.
     // -1 waits for the speaker.
     qreal advanceAfter = -1;
+    // ANIM-INTEROP: PowerPoint trigger sequences (click a shape to play), kept as
+    // PowerPoint wrote them (object ids in place of shape ids) and written back
+    // unchanged. OmaShow does not play them; the objects they animate are listed.
+    QStringList pptxInteractive;
+    QStringList pptxInteractiveTargets;
+    QStringList pptxInteractiveBuilds;   // "object id|group|attributes" build-list entries they use
     bool backgroundOverride = false;
     bool showMasterObjects = true;
     bool showMasterFields = true;
