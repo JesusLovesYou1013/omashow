@@ -1195,6 +1195,8 @@ struct Writer {
         const auto freeGroup = [&](int sp) { int g = 0; while (taken[sp].contains(g)) ++g; taken[sp].insert(g); return g; };
         QVector<Emit> emits;
         bool timedLater = false, legacyApproximated = false, floatSideways = false, pathless = false;
+        bool keptRangeGone = false, orientLost = false, timedEarly = false;
+        QStringList convertedNames;
         QHash<int, int> kindOf;             // spid -> 0 shape, 1 text box, 2 other
         QSet<QPair<int, int>> paragraphGroups;
         QHash<QPair<int, int>, int> paragraphRun, paragraphRunNext;   // (spid, phase) -> group, next paragraph
@@ -1204,7 +1206,11 @@ struct Writer {
             if (s.effect == Effect::None || s.effect == Effect::Media) continue;
             const int spid = ctx.spidByObject.value(s.targetId, 0);
             if (!spid) continue;
-            const bool raw = !s.pptxXml.isEmpty() && s.pptxSig == s.interopSig() && !placeIds(s.pptxXml, ctx).isEmpty();
+            const bool rangeGone = s.rangeFrom >= 0 && s.rangeTo > paragraphsOf(s.targetId);
+            if (!s.pptxXml.isEmpty() && rangeGone) keptRangeGone = true;
+            const bool raw = !s.pptxXml.isEmpty() && s.pptxSig == s.interopSig() && !rangeGone && !placeIds(s.pptxXml, ctx).isEmpty();
+            if (!raw && !s.pptxWas.isEmpty()) convertedNames << s.pptxWas;
+            if (!raw && s.effect == Effect::Path && s.orient) orientLost = true;
             if (!raw && s.effect == Effect::Path && s.motionPath.isEmpty()) {
                 const auto *guide = slide.find(s.pathId);
                 if (!guide || Shape::worldPath(*guide).isEmpty()) { pathless = true; continue; }
@@ -1224,11 +1230,18 @@ struct Writer {
                 continue;
             }
             if (s.effect == Effect::Reveal && s.unit == 0) paragraphGroups.insert({spid, group});
-            emits.append({&s, spid, s.trigger, s.delay, s.duration, s.rangeFrom, s.rangeTo, raw, group});
+            // A range past the text's last paragraph reveals the whole text instead.
+            emits.append({&s, spid, s.trigger, s.delay, s.duration, rangeGone ? -1 : s.rangeFrom, rangeGone ? -1 : s.rangeTo, raw, group});
         }
         if (floatSideways) warnings.add(QStringLiteral("A float in from the side was written as a float up (PowerPoint floats only up or down)"), number);
         if (legacyApproximated) warnings.add(QStringLiteral("An older move, scale or spin build was written as fly in, zoom or spin"), number);
         if (pathless) warnings.add(QStringLiteral("A build along a path with no path chosen was left out"), number);
+        if (keptRangeGone) warnings.add(QStringLiteral("A PowerPoint text animation whose paragraphs are gone was written as OmaShow's own"), number);
+        if (orientLost) warnings.add(QStringLiteral("Turning with the path has no PowerPoint equivalent; the object keeps its angle there"), number);
+        if (!convertedNames.isEmpty()) {
+            convertedNames.removeDuplicates();
+            warnings.add(QStringLiteral("PowerPoint effects changed here are written as OmaShow's nearest: %1").arg(convertedNames.join(QStringLiteral(", "))), number);
+        }
         QStringList interactive;
         int id = 1;
         if (emits.isEmpty() && slide.pptxInteractive.isEmpty()) return;
@@ -1284,6 +1297,7 @@ struct Writer {
                 runOpen = true; runStart = runAt;
             }
             const qint64 ms = qMax<qint64>(1, qRound64(em.duration * 1000));
+            if (atTime && s.start + em.delay < runStart - 1e-6) timedEarly = true;
             const qreal ownDelay = atTime ? qMax<qreal>(0.0, s.start + em.delay - runStart) : em.delay;
             const qint64 delay = qRound64(ownDelay * 1000);
             const char *nodeType = newClick && !automatic ? "clickEffect" : em.trigger == BuildTrigger::AfterPrevious ? "afterEffect" : "withEffect";
@@ -1305,6 +1319,7 @@ struct Writer {
                     // The curve, only when it was changed here: the reader plays PowerPoint's
                     // own (effect node, else its first eased part); approximations play ours.
                     QEasingCurve::Type was = QEasingCurve::Linear;
+                    int exactA = -1, exactD = -1;   // the file's own amounts, when the curve came from it
                     if (s.effect != Effect::Reveal) {
                         if (!s.pptxName.isEmpty() || s.effect == Effect::Appear) was = Effects::defaultEasing(s.effect);
                         else {
@@ -1318,10 +1333,15 @@ struct Writer {
                             qreal accel = 0, decel = 0;
                             for (auto it = ad.globalMatch(where); it.hasNext();) { const auto m = it.next(); (m.captured(1) == QLatin1String("accel") ? accel : decel) = m.captured(2).toDouble() / 100000.0; }
                             was = Effects::easingFromPpt(accel, decel);
+                            exactA = qRound(accel * 100000); exactD = qRound(decel * 100000);
                         }
                     }
                     int a0 = 0, d0 = 0, a1 = 0, d1 = 0;
                     Effects::pptFromEasing(was, a0, d0); Effects::pptFromEasing(s.easing, a1, d1);
+                    if (exactA >= 0) { a0 = exactA; d0 = exactD; }
+                    if (s.accel >= 0 && s.decel >= 0) { a1 = qRound(s.accel * 100000); d1 = qRound(s.decel * 100000); }
+                    // Unchanged in OmaShow terms (the preset the file's amounts read as): leave the file's own.
+                    else if (exactA >= 0 && s.easing == was) { a1 = a0; d1 = d0; }
                     if (a0 != a1 || d0 != d1)
                     {
                         set.append({QStringLiteral("accel"), a1 ? QString::number(a1) : QString()});
@@ -1361,6 +1381,7 @@ struct Writer {
                 // The step's curve as PowerPoint's Smooth start / Smooth end.
                 int accel = 0, decel = 0;
                 Effects::pptFromEasing(s.easing, accel, decel);
+                if (s.accel >= 0 && s.decel >= 0) { accel = qRound(s.accel * 100000); decel = qRound(s.decel * 100000); }
                 if (accel) x.attr("accel", accel);
                 if (decel) x.attr("decel", decel);
             }
@@ -1502,6 +1523,7 @@ struct Writer {
         }
         if (runOpen) { x.end(); x.end(); x.end(); }
         if (groupOpen) { x.end(); x.end(); x.end(); }
+        if (timedEarly) warnings.add(QStringLiteral("An animation set to start at a time earlier than the one before it ends was written to start with it"), number);
         if (timedLater) warnings.add(QStringLiteral("An animation set to start at a time after a click was written as With previous, timed from that click"), number);
         if (main) {
         x.end(); // childTnLst of mainSeq

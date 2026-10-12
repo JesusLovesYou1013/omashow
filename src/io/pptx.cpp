@@ -1820,7 +1820,15 @@ struct Reader {
                          .replace(QLatin1Char('>'), QStringLiteral("&gt;")).replace(QLatin1Char('"'), QStringLiteral("&quot;"));
         return o;
     }
+    // Sounds on kept effects that were left out (their media is not carried over).
+    static int &droppedSounds() { static int n = 0; return n; }
     static bool xmlOf(const Node &n, const QHash<QString, QString> &spidToObject, QString &out) {
+        // An effect's sound lives in subTnLst and points at a media part through a
+        // relationship that is not carried over: leave the sound out. Any other
+        // reference to another part cannot be kept either (written natively).
+        if (n.name == QLatin1String("subTnLst")) { ++droppedSounds(); return true; }
+        for (auto it = n.attrs.cbegin(); it != n.attrs.cend(); ++it)
+            if (it.key().contains(QLatin1Char(':'))) return false;
         static const QSet<QString> drawing{QStringLiteral("srgbClr"), QStringLiteral("schemeClr"), QStringLiteral("prstClr"), QStringLiteral("sysClr"),
             QStringLiteral("hslClr"), QStringLiteral("scrgbClr"), QStringLiteral("lumMod"), QStringLiteral("lumOff"), QStringLiteral("tint"), QStringLiteral("shade"),
             QStringLiteral("alpha"), QStringLiteral("satMod"), QStringLiteral("satOff"), QStringLiteral("hueMod"), QStringLiteral("hueOff"), QStringLiteral("comp"),
@@ -2035,9 +2043,13 @@ struct Reader {
                     };
                     if (const Node *b = cTn->child(QStringLiteral("childTnLst"))) look(*b);
                 }
-                step.easing = eased ? Effects::easingFromPpt(eased->attr(QStringLiteral("accel")).toDouble() / 100000.0,
-                                                             eased->attr(QStringLiteral("decel")).toDouble() / 100000.0)
-                                    : QEasingCurve::Linear;
+                const qreal a = eased ? eased->attr(QStringLiteral("accel")).toDouble() / 100000.0 : 0.0;
+                const qreal d = eased ? eased->attr(QStringLiteral("decel")).toDouble() / 100000.0 : 0.0;
+                step.easing = Effects::easingFromPpt(a, d);
+                // Amounts other than the four presets are kept exactly.
+                const auto is = [](qreal x, qreal y) { return std::abs(x - y) < 1e-6; };
+                const bool preset = (is(a, 0) && is(d, 0)) || (is(a, 1) && is(d, 0)) || (is(a, 0) && is(d, 1)) || (is(a, 0.5) && is(d, 0.5));
+                if (!preset) { step.accel = a; step.decel = d; }
             }
             if (step.effect == Effect::Appear) step.duration = 0.0;
             else if (step.effect == Effect::Reveal && step.rangeFrom >= 0 && step.duration == 0.0) {}
@@ -2124,6 +2136,7 @@ struct Reader {
             approximations.removeDuplicates();
             warnings.add(QStringLiteral("PowerPoint effects OmaShow plays as the nearest it has (kept for PowerPoint): %1").arg(approximations.join(QStringLiteral(", "))), number);
         }
+        if (droppedSounds()) { warnings.add(QStringLiteral("Sounds on PowerPoint animations were left out"), number); droppedSounds() = 0; }
         if (triggers) warnings.add(QStringLiteral("%1 trigger animation(s) (click a shape to play) kept for PowerPoint; OmaShow does not play triggers").arg(triggers), number);
         if (dropped) warnings.add(QStringLiteral("An animation on a shape OmaShow could not bring across was left out"), number);
         if (diagonals) warnings.add(QStringLiteral("An animation from a corner now comes from the nearest side"), number);

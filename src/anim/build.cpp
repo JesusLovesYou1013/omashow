@@ -63,12 +63,24 @@ qreal BuildStep::linearAt(qreal t) const {
 qreal BuildStep::progressAt(qreal t) const {
     const qreal l = linearAt(t);
     if (l <= 0.0 || l >= 1.0) return l;
+    if (accel >= 0.0 && decel >= 0.0 && accel + decel > 0.0) {
+        // PowerPoint's own curve: speed ramps up over the accel share, holds,
+        // ramps down over the decel share (so position is exact, not a preset).
+        const qreal a = qBound(0.0, accel, 1.0), d = qBound(0.0, decel, 1.0 - a);
+        const qreal v = 1.0 / (1.0 - a / 2.0 - d / 2.0);
+        if (a > 0.0 && l < a) return v * l * l / (2.0 * a);
+        if (d > 0.0 && l > 1.0 - d) return 1.0 - v * (1.0 - l) * (1.0 - l) / (2.0 * d);
+        return v * (a / 2.0 + (l - a));
+    }
     return QEasingCurve(easing).valueForProgress(l);
 }
 
 QString BuildStep::interopSig() const {
     return QStringLiteral("%1|%2|%3|%4|%5|%6|%7|%8|%9").arg(targetId).arg(int(effect)).arg(int(phase)).arg(direction)
-        .arg(amount, 0, 'g', 6).arg(unit).arg(rangeFrom).arg(rangeTo).arg(motionPath + QLatin1Char('|') + pathId);
+        .arg(amount, 0, 'g', 6).arg(unit).arg(rangeFrom).arg(rangeTo)
+        .arg(motionPath + QLatin1Char('|') + pathId
+             // Only when set, so what older decks kept still matches.
+             + (pathReverse ? QStringLiteral("|reversed") : QString()) + (orient ? QStringLiteral("|orient") : QString()));
 }
 
 bool Effects::isEmphasis(Effect e) { return e == Effect::Pulse || e == Effect::Grow || e == Effect::Shrink || e == Effect::Rotate; }

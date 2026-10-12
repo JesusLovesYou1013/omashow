@@ -94,6 +94,13 @@ struct BuildStep {
     // "-" when it had none.
     QString pptxBuild;
     qreal pptxDuration = 0;
+    // A PowerPoint effect OmaShow approximated, edited here so it is now written
+    // as OmaShow's own (for the export warning).
+    QString pptxWas;
+    // PowerPoint's Smooth start / Smooth end as exact shares of the duration
+    // (0..1); -1: use `easing`. Set when a file asks for amounts other than
+    // the four the UI offers (none, all-start, all-end, half and half).
+    qreal accel = -1, decel = -1;
     QString interopSig() const;
 
     qreal cycle() const { return duration * (autoReverse ? 2.0 : 1.0); }

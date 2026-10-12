@@ -140,6 +140,9 @@ QJsonObject stepToJson(const BuildStep &step) {
     json["delay"] = step.delay;
     json[QStringLiteral("duration")] = step.duration;
     json[QStringLiteral("easing")] = int(step.easing);
+    if (step.accel >= 0) json[QStringLiteral("accel")] = step.accel;
+    if (step.decel >= 0) json[QStringLiteral("decel")] = step.decel;
+    if (!step.pptxWas.isEmpty()) json[QStringLiteral("pptxWas")] = step.pptxWas;
     json["amountX"] = step.amountX;
     json["amountY"] = step.amountY;
     json["amount"] = step.amount;
@@ -175,6 +178,9 @@ BuildStep stepFromJson(const QJsonObject &json) {
     step.duration = json.value(QStringLiteral("duration")).toDouble(0.6);
     step.easing = QEasingCurve::Type(json.value(QStringLiteral("easing"))
                                          .toInt(int(QEasingCurve::OutCubic)));
+    step.accel = json.value(QStringLiteral("accel")).toDouble(-1);
+    step.decel = json.value(QStringLiteral("decel")).toDouble(-1);
+    step.pptxWas = json.value(QStringLiteral("pptxWas")).toString();
     step.amountX = json.value("amountX").toDouble();
     step.amountY = json.value("amountY").toDouble();
     step.amount = json.value("amount").toDouble();

@@ -8,7 +8,10 @@
 // ANIM-INTEROP: an edit that changes what the effect is (not just its timing)
 // makes it OmaShow's own: PowerPoint's kept markup and its name no longer apply.
 static void settleInterop(BuildStep &step) {
-  if (!step.pptxXml.isEmpty() && step.pptxSig != step.interopSig()) { step.pptxXml.clear(); step.pptxSig.clear(); step.pptxName.clear(); }
+  if (!step.pptxXml.isEmpty() && step.pptxSig != step.interopSig()) {
+    if (!step.pptxName.isEmpty()) step.pptxWas = step.pptxName;
+    step.pptxXml.clear(); step.pptxSig.clear(); step.pptxName.clear();
+  }
 }
 
 QVariantList Backend::builds() const {
@@ -252,7 +255,7 @@ void Backend::setBuildProperty(int index, const QString &key,
                                number == QEasingCurve::OutCubic || number == QEasingCurve::OutQuad ||
                                number == QEasingCurve::InOutCubic || number == QEasingCurve::InOutQuad ||
                                number == QEasingCurve::InQuad))
-    changed.easing = QEasingCurve::Type(value.toInt());
+  { changed.easing = QEasingCurve::Type(value.toInt()); changed.accel = changed.decel = -1; }
   else
     return;
   settleInterop(changed);
