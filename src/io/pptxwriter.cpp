@@ -1256,7 +1256,7 @@ struct Writer {
         // PowerPoint's structure (and OmaShow's Timeline::resolvedSteps): a click
         // opens a group; within it a run starts with the click and with each
         // After previous; With previous joins the run. Delays are the effect's own.
-        bool groupOpen = false, runOpen = false;
+        bool groupOpen = false, runOpen = false, clicked = false;
         qreal sinceClick = 0, runStart = 0;
         for (int i = 0; i < emits.size(); ++i) {
             const auto &em = emits[i];
@@ -1265,8 +1265,11 @@ struct Writer {
             // A first animation that starts by itself starts with the slide.
             const bool automatic = i == 0 && em.trigger != BuildTrigger::OnClick;
             const bool atTime = em.trigger == BuildTrigger::Absolute;
-            if (i > 0 && atTime) timedLater = true;
-            const bool newClick = i == 0 || em.trigger == BuildTrigger::OnClick || (atTime && i > 0);
+            // At a time = With previous plus a delay (PowerPoint's own form); exact
+            // unless a click came before it.
+            if (atTime && clicked) timedLater = true;
+            const bool newClick = i == 0 || em.trigger == BuildTrigger::OnClick;
+            if (newClick && !automatic) clicked = true;
             if (newClick) {
                 if (runOpen) { x.end(); x.end(); x.end(); runOpen = false; }
                 if (groupOpen) { x.end(); x.end(); x.end(); }
@@ -1274,19 +1277,19 @@ struct Writer {
                 groupOpen = true;
                 sinceClick = runStart = 0;
             }
-            // At a time (only as the slide's first, automatic, group) is a run at that time.
-            const qreal runAt = newClick ? (atTime && i == 0 ? s.start : 0.0) : em.trigger == BuildTrigger::AfterPrevious ? sinceClick : -1;
+            const qreal runAt = newClick ? 0.0 : em.trigger == BuildTrigger::AfterPrevious ? sinceClick : -1;
             if (runAt >= 0) {
                 if (runOpen) { x.end(); x.end(); x.end(); }
                 x.start("p:par"); x.start("p:cTn").attr("id", id++).attr("fill", "hold"); cond(QByteArray::number(qRound64(runAt * 1000)).constData()); x.start("p:childTnLst");
                 runOpen = true; runStart = runAt;
             }
             const qint64 ms = qMax<qint64>(1, qRound64(em.duration * 1000));
-            const qint64 delay = qRound64(em.delay * 1000);
+            const qreal ownDelay = atTime ? qMax<qreal>(0.0, s.start + em.delay - runStart) : em.delay;
+            const qint64 delay = qRound64(ownDelay * 1000);
             const char *nodeType = newClick && !automatic ? "clickEffect" : em.trigger == BuildTrigger::AfterPrevious ? "afterEffect" : "withEffect";
             const QString repeat = s.repeat < 0 ? QStringLiteral("indefinite") : s.repeat > 1 ? QString::number(qRound64(s.repeat * 1000)) : QString();
             const qreal span = em.duration * (s.autoReverse ? 2.0 : 1.0) * (s.repeat > 1 ? s.repeat : 1.0);
-            sinceClick = qMax(sinceClick, runStart + em.delay + span);
+            sinceClick = qMax(sinceClick, runStart + ownDelay + span);
             if (em.raw) {
                 // As PowerPoint wrote it, with today's ids, start, delay, length and repeats.
                 QString xml = renumber(placeIds(s.pptxXml, ctx), id);
@@ -1499,7 +1502,7 @@ struct Writer {
         }
         if (runOpen) { x.end(); x.end(); x.end(); }
         if (groupOpen) { x.end(); x.end(); x.end(); }
-        if (timedLater) warnings.add(QStringLiteral("An animation set to start at a time was written to start on a click"), number);
+        if (timedLater) warnings.add(QStringLiteral("An animation set to start at a time after a click was written as With previous, timed from that click"), number);
         if (main) {
         x.end(); // childTnLst of mainSeq
         x.end(); // cTn mainSeq
