@@ -216,6 +216,7 @@ bool Design::setProperty(SceneObject &o, const QString &key, const QVariant &v, 
 Slide Design::resolve(const Document &d, int index) {
     if (index < 0 || index >= d.slides.size()) return {};
     Slide slide = d.slides.at(index);
+    slide.stage = d.size;
     const auto *definition = layout(d, slide.layoutId);
     const auto *base = definition ? master(d, definition->masterId) : nullptr;
     slide.objects.clear();

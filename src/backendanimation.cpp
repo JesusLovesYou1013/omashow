@@ -10,8 +10,12 @@ QVariantList Backend::builds() const {
   const auto &timeline = m_document.slides.at(m_currentSlide).timeline;
   const auto resolved = timeline.resolvedSteps();
   const auto slide = Design::resolve(m_document, m_currentSlide);
+  int click = 0;
   for (int i = 0; i < resolved.size(); ++i) {
     const auto &step = resolved.at(i);
+    // The number a speaker counts: each On click starts the next one; what
+    // comes before the first plays by itself (0).
+    if (step.trigger == BuildTrigger::OnClick) ++click;
     const auto *o = slide.find(step.targetId);
     const QString label =
         o ? (o->type == ObjectType::Text ? o->text.left(40) : o->type == ObjectType::Image ? tr("Picture") : o->type == ObjectType::Media ? o->mediaName : o->type == ObjectType::Table ? tr("Table") : o->type == ObjectType::Chart ? tr("Chart") : tr("Shape"))
@@ -34,6 +38,9 @@ QVariantList Backend::builds() const {
                             {"pathId", step.pathId},
                             {"pathReverse", step.pathReverse},
                             {"orient", step.orient},
+                            {"direction", step.direction},
+                            {"cls", int(step.effectClass())},
+                            {"click", click},
                             {"text", o && o->type == ObjectType::Text}});
   }
   return list;
@@ -100,7 +107,7 @@ void Backend::previewBuild(int index) {
 int Backend::addBuild(const QString &targetId, int phase, int effect) {
   if (m_currentSlide < 0 || m_currentSlide >= m_document.slides.size() ||
       !m_document.slides.at(m_currentSlide).find(targetId) || phase < 0 ||
-      phase > 1 || effect < 1 || effect == int(Effect::Media) || effect > int(Effect::Path))
+      phase > 1 || effect < 1 || effect == int(Effect::Media) || effect > kLastEffect)
     return -1;
   m_history.begin(m_document, tr("Add build"));
   auto &timeline = m_document.slides[m_currentSlide].timeline;
@@ -108,8 +115,12 @@ int Backend::addBuild(const QString &targetId, int phase, int effect) {
   step.targetId = targetId;
   step.phase = BuildPhase(phase);
   step.effect = Effect(effect);
-  step.trigger = timeline.steps.isEmpty() ? BuildTrigger::Absolute
-                                          : BuildTrigger::AfterPrevious;
+  // ANIM-001: every new animation waits for a click, the first one too, so
+  // "add it, press Next, it happens". Half a second; a fade is not eased (it
+  // would pop), and Appear takes no time at all.
+  step.trigger = BuildTrigger::OnClick;
+  step.duration = step.effect == Effect::Appear ? 0.0 : 0.5;
+  step.easing = Effects::defaultEasing(step.effect);
   timeline.steps.append(step);
   const int index = timeline.steps.size() - 1;
   m_history.commit();
@@ -140,6 +151,7 @@ void Backend::setBuildProperty(int index, const QString &key,
   BuildStep changed =
       m_document.slides.at(m_currentSlide).timeline.steps.at(index);
   if(changed.effect==Effect::Media && (key=="duration" || key=="effect" || key=="phase" || key=="easing")) return;
+  if (changed.effect == Effect::Appear && key == "duration") return;   // instant by definition
   // The guide a path build follows is named, not measured.
   if (key == "pathId" || key == "pathReverse" || key == "orient") {
     if (key == "pathId") {
@@ -176,9 +188,15 @@ void Backend::setBuildProperty(int index, const QString &key,
     changed.trigger = BuildTrigger(value.toInt());
   else if (key == "phase" && number >= 0 && number <= 1)
     changed.phase = BuildPhase(value.toInt());
-  else if (key == "effect" && number >= 1 && number <= int(Effect::Path) &&
-           number != int(Effect::Media))
+  else if (key == "effect" && number >= 1 && number <= kLastEffect &&
+           number != int(Effect::Media)) {
+    const Effect was = changed.effect;
     changed.effect = Effect(value.toInt());
+    if (changed.effect == Effect::Appear) changed.duration = 0.0;
+    else if (was == Effect::Appear && changed.duration <= 0.0) changed.duration = 0.5;
+  }
+  else if (key == "direction" && number >= 0 && number <= 3 && number == std::round(number))
+    changed.direction = value.toInt();
   else if (key == "amountX" && std::abs(number) <= 100000)
     changed.amountX = number;
   else if (key == "amountY" && std::abs(number) <= 100000)
@@ -196,7 +214,7 @@ void Backend::setBuildProperty(int index, const QString &key,
     changed.unit = value.toInt();
   }
   else if (key == "easing" && (number == QEasingCurve::Linear ||
-                               number == QEasingCurve::OutCubic ||
+                               number == QEasingCurve::OutCubic || number == QEasingCurve::OutQuad ||
                                number == QEasingCurve::InOutCubic))
     changed.easing = QEasingCurve::Type(value.toInt());
   else
@@ -228,7 +246,7 @@ void Backend::setSlideNotes(const QString &notes) {
 
 int Backend::addBuildForSelection(int phase, int effect) {
     const auto ids=selectedIds();
-    if(ids.isEmpty() || phase<0 || phase>1 || effect<1 || effect>2)return -1;
+    if(ids.isEmpty() || phase<0 || phase>1 || effect<1 || effect>kLastEffect || effect==int(Effect::Media))return -1;
     m_history.begin(m_document,tr("Animate selected objects"));
     int first=-1;
     for(const auto &id:ids){
@@ -237,6 +255,53 @@ int Backend::addBuildForSelection(int phase, int effect) {
         else setBuildProperty(index,"trigger",int(BuildTrigger::WithPrevious));
     }
     m_history.commit();touch();return first;
+}
+
+int Backend::applyEffect(int cls, int effect) {
+  const auto ids = selectedIds();
+  if (ids.isEmpty() || cls < 0 || cls > 3 || effect < 1 || effect > kLastEffect || effect == int(Effect::Media) ||
+      m_currentSlide < 0 || m_currentSlide >= m_document.slides.size())
+    return -1;
+  const Effect chosen = Effect(effect);
+  // The class has to match the effect: no "Pulse" exit, no "Fly" emphasis.
+  const bool emphasis = Effects::isEmphasis(chosen), motion = chosen == Effect::Path;
+  if ((cls == 1) != emphasis || (cls == 3) != motion) return -1;
+  const BuildPhase phase = cls == 2 ? BuildPhase::Out : BuildPhase::In;
+  const EffectClass wanted = cls == 0 ? EffectClass::Entrance : cls == 1 ? EffectClass::Emphasis
+                           : cls == 2 ? EffectClass::Exit : EffectClass::Motion;
+  m_history.begin(m_document, tr("Animate"));
+  int first = -1, added = 0;
+  for (const auto &id : ids) {
+    if (!m_document.slides.at(m_currentSlide).find(id)) continue;
+    int index = -1;
+    if (wanted == EffectClass::Entrance || wanted == EffectClass::Exit) {
+      const auto &steps = m_document.slides.at(m_currentSlide).timeline.steps;
+      for (int i = 0; i < steps.size() && index < 0; ++i)
+        if (steps.at(i).targetId == id && steps.at(i).effectClass() == wanted) index = i;
+    }
+    if (index >= 0) {
+      setBuildProperty(index, QStringLiteral("effect"), effect);
+      auto &step = m_document.slides[m_currentSlide].timeline.steps[index];
+      step.easing = Effects::defaultEasing(chosen);
+    } else {
+      index = addBuild(id, int(phase), effect);
+      if (index >= 0 && added++ > 0)
+        setBuildProperty(index, QStringLiteral("trigger"), int(BuildTrigger::WithPrevious));
+    }
+    if (first < 0) first = index;
+  }
+  if (first < 0) { m_history.abandon(); return -1; }
+  m_history.commit();
+  touch();
+  return first;
+}
+
+void Backend::setBuildsProperty(const QVariantList &indices, const QString &key, const QVariant &value) {
+  if (indices.isEmpty()) return;
+  m_history.begin(m_document, tr("Edit animations"));
+  for (const auto &i : indices) setBuildProperty(i.toInt(), key, value);
+  m_history.commit();
+  touch();
 }
 
 // Times measured while rehearsing, handed to the slides as their own hold.

@@ -85,6 +85,14 @@ QString effectToString(Effect effect) {
     case Effect::Pulse: return QStringLiteral("pulse");
     case Effect::Reveal: return QStringLiteral("reveal");
     case Effect::Path: return QStringLiteral("path");
+    case Effect::Appear: return QStringLiteral("appear");
+    case Effect::Fly: return QStringLiteral("fly");
+    case Effect::Float: return QStringLiteral("float");
+    case Effect::Zoom: return QStringLiteral("zoom");
+    case Effect::Turn: return QStringLiteral("turn");
+    case Effect::Wipe: return QStringLiteral("wipe");
+    case Effect::Grow: return QStringLiteral("grow");
+    case Effect::Shrink: return QStringLiteral("shrink");
     case Effect::None: break;
     }
     return QStringLiteral("none");
@@ -100,13 +108,30 @@ Effect effectFromString(const QString &value) {
     if (value == QLatin1String("pulse")) return Effect::Pulse;
     if (value == QLatin1String("reveal")) return Effect::Reveal;
     if (value == QLatin1String("path")) return Effect::Path;
+    if (value == QLatin1String("appear")) return Effect::Appear;
+    if (value == QLatin1String("fly")) return Effect::Fly;
+    if (value == QLatin1String("float")) return Effect::Float;
+    if (value == QLatin1String("zoom")) return Effect::Zoom;
+    if (value == QLatin1String("turn")) return Effect::Turn;
+    if (value == QLatin1String("wipe")) return Effect::Wipe;
+    if (value == QLatin1String("grow")) return Effect::Grow;
+    if (value == QLatin1String("shrink")) return Effect::Shrink;
     return Effect::None;
 }
 
 QJsonObject stepToJson(const BuildStep &step) {
     QJsonObject json;
     json[QStringLiteral("target")] = step.targetId;
-    json[QStringLiteral("effect")] = effectToString(step.effect);
+    // ANIM-001: an older OmaShow does not know the newer effects and would read
+    // them as none. It gets the nearest one it knows in "effect"; this build
+    // reads the real one from "look".
+    if (Effects::isNew(step.effect)) {
+        json[QStringLiteral("effect")] = Effects::legacyName(step.effect);
+        json[QStringLiteral("look")] = effectToString(step.effect);
+    } else {
+        json[QStringLiteral("effect")] = effectToString(step.effect);
+    }
+    if (step.direction) json[QStringLiteral("direction")] = step.direction;
     json[QStringLiteral("start")] = step.start;
     json["phase"] = int(step.phase);
     json["trigger"] = int(step.trigger);
@@ -127,6 +152,9 @@ BuildStep stepFromJson(const QJsonObject &json) {
     BuildStep step;
     step.targetId = json.value(QStringLiteral("target")).toString();
     step.effect = effectFromString(json.value(QStringLiteral("effect")).toString());
+    if (const auto look = effectFromString(json.value(QStringLiteral("look")).toString()); look != Effect::None)
+        step.effect = look;
+    step.direction = qBound(0, json.value(QStringLiteral("direction")).toInt(), 3);
     step.start = qMax(0.0, json.value(QStringLiteral("start")).toDouble());
     step.phase = BuildPhase(qBound(0, json.value("phase").toInt(), 1));
     step.trigger = BuildTrigger(qBound(0, json.value("trigger").toInt(), 3));

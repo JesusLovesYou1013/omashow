@@ -1,3 +1,4 @@
+#include <functional>
 #include "io/pptx.h"
 
 #include "anim/build.h"
@@ -1813,62 +1814,112 @@ struct Reader {
     void convertBuilds(const Node *slideRoot, Slide &slide, const QHash<QString, QString> &spidToObject, int number) {
         const Node *timing = slideRoot->child(QStringLiteral("timing"));
         if (!timing) return;
-        QVector<const Node *> nodes;
-        timing->collect(QStringLiteral("cTn"), nodes);
-        QSet<QString> done;
-        int approximated = 0;
-        for (const auto *cTn : nodes) {
+        // ANIM-001: walk the timing tree carrying each effect's offset from its
+        // click (the sum of the delays above it), so With previous and After
+        // previous come back as OmaShow's relative delays instead of growing by
+        // the previous effect's length on every round trip.
+        struct Found { const Node *cTn; qreal offset; int group; };
+        QVector<Found> found;
+        int group = 0;
+        std::function<void(const Node &, qreal)> walk = [&](const Node &node, qreal offset) {
+            for (const auto &kid : node.kids) {
+                if (kid.name != QLatin1String("cTn")) { walk(kid, offset); continue; }
+                qreal own = 0;
+                bool click = false;
+                if (const Node *st = kid.child(QStringLiteral("stCondLst")))
+                    for (const auto *cond : st->all(QStringLiteral("cond"))) {
+                        const auto d = cond->attr(QStringLiteral("delay"));
+                        bool ok = false;
+                        const qreal ms = d.toDouble(&ok);
+                        if (d == QLatin1String("indefinite")) click = true;
+                        else if (ok && ms > own) own = ms;
+                    }
+                if (click) ++group;
+                const qreal at = (click ? 0.0 : offset) + own;
+                if (!kid.attr(QStringLiteral("presetClass")).isEmpty()) { found.append({&kid, at, group}); continue; }
+                walk(kid, at);
+            }
+        };
+        walk(*timing, 0.0);
+
+        const auto direction = [](int subtype) { return subtype & 4 ? 0 : subtype & 1 ? 3 : subtype & 8 ? 1 : subtype & 2 ? 2 : 0; };
+        QSet<QString> paragraphsDone;
+        int approximated = 0, emphasisApproximated = 0, paths = 0, lastGroup = -1;
+        qreal previousStart = 0, previousEnd = 0;
+        for (const auto &f : found) {
+            const Node *cTn = f.cTn;
             const auto cls = cTn->attr(QStringLiteral("presetClass"));
-            if (cls.isEmpty()) continue;
             QVector<const Node *> targets;
             cTn->collect(QStringLiteral("spTgt"), targets);
             if (targets.isEmpty()) continue;
             const auto spid = targets.first()->attr(QStringLiteral("spid"));
             const auto objectId = spidToObject.value(spid);
             if (objectId.isEmpty()) continue;
+            if (cls == QLatin1String("path")) { ++paths; continue; }
             const bool paragraphs = targets.first()->child(QStringLiteral("txEl")) != nullptr;
-            const QString key = objectId + QLatin1Char('/') + cls;
-            if (done.contains(key)) continue;
-            done.insert(key);
+            // A paragraph build is one effect per paragraph; OmaShow reads it
+            // as one Reveal. Any other second effect on an object is its own.
+            if (paragraphs) {
+                const QString key = objectId + QLatin1Char('/') + cls;
+                if (paragraphsDone.contains(key)) continue;
+                paragraphsDone.insert(key);
+            }
             BuildStep step;
             step.targetId = objectId;
             const int preset = cTn->attr(QStringLiteral("presetID")).toInt();
+            const int subtype = cTn->attr(QStringLiteral("presetSubtype")).toInt();
+            QVector<const Node *> scales;
+            cTn->collect(QStringLiteral("animScale"), scales);
+            QVector<const Node *> inner;
+            cTn->collect(QStringLiteral("cTn"), inner);
+            bool reverses = false;
+            for (const auto *n : inner) if (n->attr(QStringLiteral("autoRev")) == QLatin1String("1")) reverses = true;
             if (cls == QLatin1String("entr") || cls == QLatin1String("exit")) {
                 step.phase = cls == QLatin1String("entr") ? BuildPhase::In : BuildPhase::Out;
                 if (paragraphs && step.phase == BuildPhase::In) { step.effect = Effect::Reveal; step.unit = 0; }
-                else if (preset == 1) { step.effect = Effect::Fade; step.duration = 0.05; }
-                else if (preset == 10) step.effect = Effect::Fade;
-                else if (preset == 2 || preset == 4 || preset == 12 || preset == 13 || preset == 22 || preset == 3 || preset == 42 || preset == 47 || preset == 52) step.effect = Effect::Rise;
-                else if (preset == 23 || preset == 53 || preset == 24 || preset == 15) step.effect = Effect::Scale;
-                else if (preset == 49 || preset == 21) step.effect = Effect::Spin;
-                else { step.effect = Effect::Fade; ++approximated; }
+                else if (preset == 1) step.effect = Effect::Appear;
+                else if (preset == 10) { step.effect = Effect::Fade; step.easing = QEasingCurve::Linear; }
+                else if (preset == 2) { step.effect = Effect::Fly; step.direction = direction(subtype); }
+                else if (preset == 42 || preset == 47) { step.effect = Effect::Float; step.direction = preset == 47 ? 3 : 0; }
+                else if (preset == 22) { step.effect = Effect::Wipe; step.direction = direction(subtype); }
+                else if (preset == 53 || preset == 23) step.effect = Effect::Zoom;
+                else if (preset == 49 || preset == 31) step.effect = Effect::Turn;
+                else { step.effect = Effect::Fade; step.easing = QEasingCurve::Linear; ++approximated; }
             } else if (cls == QLatin1String("emph")) {
-                step.effect = Effect::Pulse;
+                // Grow/Shrink (6) that settles back is OmaShow's pulse; one that
+                // holds its new size is Grow or Shrink.
+                qreal by = 0;
+                if (!scales.isEmpty())
+                    if (const Node *b = scales.first()->child(QStringLiteral("by"))) by = b->attr(QStringLiteral("x")).toDouble() / 100000.0;
+                if (preset == 6 && !reverses && by > 0) { step.effect = by >= 1 ? Effect::Grow : Effect::Shrink; step.amount = by; }
+                else { step.effect = Effect::Pulse; if (preset == 6 && by > 1) step.amount = by - 1; else ++emphasisApproximated; }
             } else continue;
             const auto trigger = cTn->attr(QStringLiteral("nodeType"));
             step.trigger = trigger == QLatin1String("withEffect") ? BuildTrigger::WithPrevious
                          : trigger == QLatin1String("afterEffect") ? BuildTrigger::AfterPrevious
                          : BuildTrigger::OnClick;
             qreal longest = 0;
-            QVector<const Node *> inner;
-            cTn->collect(QStringLiteral("cTn"), inner);
             for (const auto *n : inner) {
                 bool ok = false;
                 const qreal ms = n->attr(QStringLiteral("dur")).toDouble(&ok);
-                if (ok) longest = qMax(longest, ms);
+                if (ok) longest = qMax(longest, ms * (n->attr(QStringLiteral("autoRev")) == QLatin1String("1") ? 2.0 : 1.0));
             }
-            if (longest > 0 && step.effect != Effect::Fade) step.duration = qBound(0.1, longest / 1000.0, 10.0);
-            else if (longest > 0 && step.duration > 0.05) step.duration = qBound(0.1, longest / 1000.0, 10.0);
-            QVector<const Node *> conditions;
-            if (const Node *st = cTn->child(QStringLiteral("stCondLst"))) st->collect(QStringLiteral("cond"), conditions);
-            for (const auto *cond : conditions) {
-                bool ok = false;
-                const qreal delay = cond->attr(QStringLiteral("delay")).toDouble(&ok);
-                if (ok && delay > 0) step.delay = delay / 1000.0;
-            }
+            if (step.effect != Effect::Reveal) step.easing = Effects::defaultEasing(step.effect);
+            if (step.effect == Effect::Appear) step.duration = 0.0;
+            else if (longest > 0) step.duration = qBound(0.05, longest / 1000.0, 60.0);
+            if (f.group != lastGroup) { lastGroup = f.group; previousStart = previousEnd = 0; }
+            const qreal offset = f.offset / 1000.0;
+            const qreal base = step.trigger == BuildTrigger::AfterPrevious ? previousEnd
+                             : step.trigger == BuildTrigger::WithPrevious ? previousStart : 0.0;
+            step.delay = qMax(0.0, offset - base);
+            if (step.delay < 0.0005) step.delay = 0;
+            previousStart = base + step.delay;
+            previousEnd = previousStart + step.duration;
             slide.timeline.steps.append(step);
         }
         if (approximated) warnings.add(QStringLiteral("An animation effect OmaShow does not have was shown as a fade"), number);
+        if (emphasisApproximated) warnings.add(QStringLiteral("An emphasis OmaShow does not have was shown as a pulse"), number);
+        if (paths) warnings.add(QStringLiteral("A motion path was left out"), number);
     }
 
     // ---- slides

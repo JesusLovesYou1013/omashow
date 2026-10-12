@@ -1115,7 +1115,7 @@ struct Writer {
     void writeBuilds(Xml &x, int number, const Slide &slide, const SlideCtx &ctx) {
         struct Step { const BuildStep *step; int spid; };
         QVector<Step> steps;
-        bool emphasisDropped = false, revealDropped = false;
+        bool emphasisDropped = false, revealDropped = false, legacyApproximated = false, timedLater = false;
         for (const auto &s : slide.timeline.steps) {
             if (s.effect == Effect::None || s.effect == Effect::Media || s.effect == Effect::Path) {
                 if (s.effect == Effect::Path) warnings.add(QStringLiteral("A build along a path was left out"), number);
@@ -1125,8 +1125,10 @@ struct Writer {
             if (!spid) continue;
             if (s.effect == Effect::Reveal) revealDropped = true;
             if (s.effect == Effect::Pulse) emphasisDropped = true;
+            if (s.effect == Effect::Move || s.effect == Effect::Scale || s.effect == Effect::Spin) legacyApproximated = true;
             steps.append({&s, spid});
         }
+        if (legacyApproximated) warnings.add(QStringLiteral("An older move, scale or spin build was written as fly in, zoom or spin"), number);
         if (revealDropped) warnings.add(QStringLiteral("A text reveal was written as a fade of the whole box"), number);
         if (emphasisDropped) warnings.add(QStringLiteral("An emphasis build was written as a grow and shrink"), number);
         if (steps.isEmpty()) return;
@@ -1139,7 +1141,7 @@ struct Writer {
         x.start("p:cTn").attr("id", id++).attr("dur", "indefinite").attr("nodeType", "mainSeq");
         x.start("p:childTnLst");
         bool clickOpen = false;
-        qreal previousEnd = 0;
+        qreal previousEnd = 0, previousStart = 0;
         const auto cond = [&](const char *delay) { x.start("p:stCondLst"); x.start("p:cond").attr("delay", delay).end(); x.end(); };
         // A first step that starts by itself: the group waits for the slide,
         // not for a click.
@@ -1153,26 +1155,45 @@ struct Writer {
         for (int i = 0; i < steps.size(); ++i) {
             const auto &s = *steps[i].step;
             const int spid = steps[i].spid;
-            const bool automatic = i == 0 && (s.trigger == BuildTrigger::WithPrevious || s.trigger == BuildTrigger::AfterPrevious);
+            // ANIM-001: a first animation set to a time starts with the slide,
+            // as it does in OmaShow. Later ones at a time become clicks (warned).
+            const bool automatic = i == 0 && s.trigger != BuildTrigger::OnClick;
             const bool click = i == 0 || s.trigger == BuildTrigger::OnClick || s.trigger == BuildTrigger::Absolute;
+            if (i > 0 && s.trigger == BuildTrigger::Absolute) timedLater = true;
             if (click) {
                 if (clickOpen) { x.end(); x.end(); x.end(); x.end(); x.end(); x.end(); }
                 x.start("p:par"); x.start("p:cTn").attr("id", id++).attr("fill", "hold"); groupCond(automatic); x.start("p:childTnLst");
                 x.start("p:par"); x.start("p:cTn").attr("id", id++).attr("fill", "hold"); cond("0"); x.start("p:childTnLst");
                 clickOpen = true;
-                previousEnd = 0;
+                previousEnd = previousStart = 0;
             }
             const qint64 ms = qMax<qint64>(1, qRound64(s.duration * 1000));
-            const qint64 delay = qRound64(s.delay * 1000) + (s.trigger == BuildTrigger::AfterPrevious ? qRound64(previousEnd * 1000) : 0);
+            // Offsets from the click: With previous counts from the previous
+            // effect's start, After previous from its end (ANIM-001).
+            const qreal base = s.trigger == BuildTrigger::AfterPrevious && !click ? previousEnd
+                             : s.trigger == BuildTrigger::WithPrevious && !click ? previousStart
+                             : s.trigger == BuildTrigger::Absolute ? s.start : 0.0;
+            const qint64 delay = qRound64((base + s.delay) * 1000);
             const bool out = s.phase == BuildPhase::Out;
-            const char *presetClass = s.effect == Effect::Pulse ? "emph" : out ? "exit" : "entr";
-            const int presetId = s.effect == Effect::Pulse ? 6 : s.effect == Effect::Rise ? 2 : s.effect == Effect::Scale ? 53 : s.effect == Effect::Spin ? 49 : 10;
+            const bool emphasis = Effects::isEmphasis(s.effect);
+            const char *presetClass = emphasis ? "emph" : out ? "exit" : "entr";
+            const int presetId = emphasis ? 6 : s.effect == Effect::Appear ? 1 : s.effect == Effect::Fly || s.effect == Effect::Move ? 2
+                               : s.effect == Effect::Rise || s.effect == Effect::Float ? (s.effect == Effect::Float && s.direction == 3 ? 47 : 42)
+                               : s.effect == Effect::Wipe ? 22 : s.effect == Effect::Scale || s.effect == Effect::Zoom ? 53
+                               : s.effect == Effect::Spin || s.effect == Effect::Turn ? 49 : 10;
+            static const int subtypes[4] = {4, 8, 2, 1};   // from bottom, left, right, top
+            const int subtype = s.effect == Effect::Fly || s.effect == Effect::Wipe ? subtypes[qBound(0, s.direction, 3)] : 0;
             x.start("p:par");
-            x.start("p:cTn").attr("id", id++).attr("presetID", presetId).attr("presetClass", presetClass).attr("presetSubtype", s.effect == Effect::Rise ? 4 : 0).attr("fill", "hold")
+            x.start("p:cTn").attr("id", id++).attr("presetID", presetId).attr("presetClass", presetClass).attr("presetSubtype", subtype).attr("fill", "hold")
                 .attr("nodeType", click && !automatic ? "clickEffect" : s.trigger == BuildTrigger::AfterPrevious ? "afterEffect" : "withEffect");
             cond(QByteArray::number(delay).constData());
             x.start("p:childTnLst");
-            if (s.effect == Effect::Pulse) {
+            if (s.effect == Effect::Grow || s.effect == Effect::Shrink) {
+                const qreal by = s.amount > 0 ? s.amount : s.effect == Effect::Grow ? 1.25 : 0.8;
+                x.start("p:animScale"); x.start("p:cBhvr"); x.start("p:cTn").attr("id", id++).attr("dur", ms).attr("fill", "hold").end(); target(spid); x.end();
+                x.start("p:by").attr("x", qRound(by * 100000)).attr("y", qRound(by * 100000)).end();
+                x.end();
+            } else if (s.effect == Effect::Pulse) {
                 x.start("p:animScale"); x.start("p:cBhvr"); x.start("p:cTn").attr("id", id++).attr("dur", ms / 2).attr("autoRev", "1").attr("fill", "hold").end(); target(spid); x.end();
                 x.start("p:by").attr("x", qRound(100000 + qMax(0.05, s.amount > 0 ? s.amount : 0.2) * 100000)).attr("y", qRound(100000 + qMax(0.05, s.amount > 0 ? s.amount : 0.2) * 100000)).end();
                 x.end();
@@ -1182,9 +1203,48 @@ struct Writer {
                     x.start("p:attrNameLst"); x.start("p:attrName").text(QStringLiteral("style.visibility")).end(); x.end(); x.end();
                     x.start("p:to"); x.start("p:strVal").attr("val", "visible").end(); x.end(); x.end();
                 }
-                x.start("p:animEffect").attr("transition", out ? "out" : "in").attr("filter", "fade");
-                x.start("p:cBhvr"); x.start("p:cTn").attr("id", id++).attr("dur", ms).end(); target(spid); x.end(); x.end();
-                if (s.effect == Effect::Rise || s.effect == Effect::Move) {
+                // Fly travels without fading and Appear has no transition at all.
+                static const char *wipes[4] = {"wipe(up)", "wipe(right)", "wipe(left)", "wipe(down)"};
+                const char *filter = s.effect == Effect::Wipe ? wipes[qBound(0, s.direction, 3)]
+                                   : s.effect == Effect::Fly || s.effect == Effect::Appear ? nullptr : "fade";
+                if (filter) {
+                    x.start("p:animEffect").attr("transition", out ? "out" : "in").attr("filter", filter);
+                    x.start("p:cBhvr"); x.start("p:cTn").attr("id", id++).attr("dur", ms).end(); target(spid); x.end(); x.end();
+                }
+                const auto keyframes = [&](const char *axis, const QString &away) {
+                    const QString rest = QStringLiteral("#") + QString::fromLatin1(axis);
+                    x.start("p:anim").attr("calcmode", "lin").attr("valueType", "num");
+                    x.start("p:cBhvr").attr("additive", "base"); x.start("p:cTn").attr("id", id++).attr("dur", ms).attr("fill", "hold").end(); target(spid);
+                    x.start("p:attrNameLst"); x.start("p:attrName").text(QString::fromLatin1(axis)).end(); x.end(); x.end();
+                    x.start("p:tavLst");
+                    x.start("p:tav").attr("tm", 0); x.start("p:val"); x.start("p:strVal").attr("val", out ? rest : away).end(); x.end(); x.end();
+                    x.start("p:tav").attr("tm", 100000); x.start("p:val"); x.start("p:strVal").attr("val", out ? away : rest).end(); x.end(); x.end();
+                    x.end(); x.end();
+                };
+                if (s.effect == Effect::Fly) {
+                    // Just beyond the slide edge, in the slide's own units.
+                    const int d = qBound(0, s.direction, 3);
+                    if (d == 0) keyframes("ppt_y", QStringLiteral("1+#ppt_h/2"));
+                    else if (d == 3) keyframes("ppt_y", QStringLiteral("0-#ppt_h/2"));
+                    else if (d == 1) keyframes("ppt_x", QStringLiteral("0-#ppt_w/2"));
+                    else keyframes("ppt_x", QStringLiteral("1+#ppt_w/2"));
+                } else if (s.effect == Effect::Float) {
+                    const qreal dist = qMax(160.0, doc.size.height() * 0.2);
+                    const int d = qBound(0, s.direction, 3);
+                    const bool xAxis = d == 1 || d == 2;
+                    const qreal rel = (d == 1 || d == 3 ? -dist : dist) / (xAxis ? doc.size.width() : doc.size.height());
+                    keyframes(xAxis ? "ppt_x" : "ppt_y", QStringLiteral("#") + (xAxis ? "ppt_x" : "ppt_y") + QStringLiteral("+") + QString::number(rel, 'f', 4));
+                } else if (s.effect == Effect::Zoom) {
+                    const int from = qRound((s.amount > 0 && s.amount < 1 ? s.amount : 0.3) * 100000);
+                    x.start("p:animScale"); x.start("p:cBhvr"); x.start("p:cTn").attr("id", id++).attr("dur", ms).attr("fill", "hold").end(); target(spid); x.end();
+                    x.start("p:from").attr("x", out ? 100000 : from).attr("y", out ? 100000 : from).end();
+                    x.start("p:to").attr("x", out ? from : 100000).attr("y", out ? from : 100000).end();
+                    x.end();
+                } else if (s.effect == Effect::Turn) {
+                    x.start("p:animRot").attr("by", qRound64((s.amount != 0 ? s.amount : 360) * 60000));
+                    x.start("p:cBhvr"); x.start("p:cTn").attr("id", id++).attr("dur", ms).attr("fill", "hold").end(); target(spid);
+                    x.start("p:attrNameLst"); x.start("p:attrName").text(QStringLiteral("r")).end(); x.end(); x.end(); x.end();
+                } else if (s.effect == Effect::Rise || s.effect == Effect::Move) {
                     // Arrives from below (or from where the move says), settling in place.
                     const qreal fromX = s.effect == Effect::Move ? s.amountX : 0, fromY = s.effect == Effect::Move ? s.amountY : doc.size.height() * 0.1;
                     for (const auto *axis : {"ppt_x", "ppt_y"}) {
@@ -1220,9 +1280,11 @@ struct Writer {
             x.end(); // childTnLst
             x.end(); // cTn
             x.end(); // par (effect)
-            previousEnd = (delay + ms) / 1000.0;
+            previousStart = delay / 1000.0;
+            previousEnd = (delay + (s.effect == Effect::Appear ? 0 : ms)) / 1000.0;
         }
         if (clickOpen) { x.end(); x.end(); x.end(); x.end(); x.end(); x.end(); }
+        if (timedLater) warnings.add(QStringLiteral("An animation set to start at a time was written to start on a click"), number);
         x.end(); // childTnLst of mainSeq
         x.end(); // cTn mainSeq
         x.start("p:prevCondLst"); x.start("p:cond").attr("evt", "onPrev").attr("delay", "0"); x.start("p:tgtEl"); x.empty("p:sldTgt"); x.end(); x.end(); x.end();

@@ -58,6 +58,9 @@ struct SceneObject {
     // rather than the font keeps text from growing in whole-pixel steps and
     // from re-wrapping half-way through.
     qreal paintScale = 1.0;
+    // ANIM-001: the part of rect that is drawn, as fractions of it (Wipe).
+    // Null means all of it. Like paintScale, only set by an animation.
+    QRectF paintClip;
     QColor fill = QColor(255, 255, 255);
     qreal cornerRadius = 0.0;
 
@@ -171,6 +174,9 @@ struct Slide {
     bool showMasterObjects = true;
     bool showMasterFields = true;
     bool skipped = false;
+    // ANIM-001: the deck's size, stamped by Design::resolve so a Fly can start
+    // beyond the slide edge. Never saved.
+    QSizeF stage = QSizeF(1920, 1080);
 
     const SceneObject *find(const QString &id) const;
     SceneObject *find(const QString &id);

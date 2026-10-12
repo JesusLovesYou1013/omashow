@@ -468,6 +468,14 @@ public:
     Q_INVOKABLE void previewBuild(int index);
     Q_INVOKABLE int addBuild(const QString &targetId, int phase = 0, int effect = 1);
     Q_INVOKABLE int addBuildForSelection(int phase = 0, int effect = 1);
+    // ANIM-001: what the Animate tab's galleries do. cls 0 entrance, 1
+    // emphasis, 2 exit, 3 motion. An entrance or exit replaces the object's
+    // own (one each); emphasis and motion add. Several objects: the first On
+    // click, the rest With previous. One undo step. Returns the first index.
+    Q_INVOKABLE int applyEffect(int cls, int effect);
+    // Set one property on several builds as one undo step (the tab's Timing
+    // and Effect options act on the pane's rows or the selection's builds).
+    Q_INVOKABLE void setBuildsProperty(const QVariantList &indices, const QString &key, const QVariant &value);
     Q_INVOKABLE void removeBuild(int index);
     Q_INVOKABLE void moveBuild(int from, int to);
     Q_INVOKABLE void setBuildProperty(int index, const QString &key, const QVariant &value);
