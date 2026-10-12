@@ -20,6 +20,7 @@
 #include <QMap>
 #include <QPainterPath>
 #include <QSet>
+#include <QRegularExpression>
 #include <QStandardPaths>
 #include <QTemporaryFile>
 #include <QTransform>
@@ -1811,19 +1812,66 @@ struct Reader {
         if (transition->has(QStringLiteral("advTm"))) slide.advanceAfter = transition->attr(QStringLiteral("advTm")).toDouble() / 1000.0;
     }
 
+    // ANIM-INTEROP: a timing subtree as XML again, shape ids replaced by
+    // "@{object id}" so the writer can put the new ids back. Empty when a shape
+    // it names did not come across (it could not be written back faithfully).
+    static QString escapeXml(const QString &s) {
+        QString o = s; o.replace(QLatin1Char('&'), QStringLiteral("&amp;")).replace(QLatin1Char('<'), QStringLiteral("&lt;"))
+                         .replace(QLatin1Char('>'), QStringLiteral("&gt;")).replace(QLatin1Char('"'), QStringLiteral("&quot;"));
+        return o;
+    }
+    static bool xmlOf(const Node &n, const QHash<QString, QString> &spidToObject, QString &out) {
+        static const QSet<QString> drawing{QStringLiteral("srgbClr"), QStringLiteral("schemeClr"), QStringLiteral("prstClr"), QStringLiteral("sysClr"),
+            QStringLiteral("hslClr"), QStringLiteral("scrgbClr"), QStringLiteral("lumMod"), QStringLiteral("lumOff"), QStringLiteral("tint"), QStringLiteral("shade"),
+            QStringLiteral("alpha"), QStringLiteral("satMod"), QStringLiteral("satOff"), QStringLiteral("hueMod"), QStringLiteral("hueOff"), QStringLiteral("comp"),
+            QStringLiteral("inv"), QStringLiteral("gray"), QStringLiteral("alphaMod"), QStringLiteral("alphaOff"), QStringLiteral("gamma"), QStringLiteral("invGamma")};
+        const QString tag = (drawing.contains(n.name) ? QStringLiteral("a:") : QStringLiteral("p:")) + n.name;
+        out += QLatin1Char('<') + tag;
+        QStringList keys = n.attrs.keys(); keys.sort();
+        for (const auto &k : keys) {
+            QString v = n.attrs.value(k);
+            if (k == QLatin1String("spid")) { const auto id = spidToObject.value(v); if (id.isEmpty()) return false; v = QStringLiteral("@{") + id + QLatin1Char('}'); }
+            out += QLatin1Char(' ') + k + QStringLiteral("=\"") + escapeXml(v) + QLatin1Char('"');
+        }
+        if (n.kids.isEmpty() && n.text.isEmpty()) { out += QStringLiteral("/>"); return true; }
+        out += QLatin1Char('>') + escapeXml(n.text);
+        for (const auto &k : n.kids) if (!xmlOf(k, spidToObject, out)) return false;
+        out += QStringLiteral("</") + tag + QLatin1Char('>');
+        return true;
+    }
+    // What PowerPoint calls its effects (presetClass/presetID), for the ones
+    // OmaShow plays as an approximation.
+    static QString pptName(const QString &cls, int preset) {
+        static const QHash<int, const char *> entr{{3, "Blinds"}, {4, "Box"}, {5, "Checkerboard"}, {6, "Shape"}, {7, "Crawl"}, {8, "Diamond"}, {9, "Dissolve"},
+            {11, "Flash Once"}, {12, "Peek"}, {13, "Plus"}, {14, "Random Bars"}, {15, "Spiral"}, {16, "Split"}, {17, "Stretch"}, {18, "Strips"}, {19, "Swivel"},
+            {20, "Wedge"}, {21, "Wheel"}, {23, "Basic Zoom"}, {24, "Random Effects"}, {25, "Boomerang"}, {26, "Bounce"}, {27, "Color Typewriter"}, {28, "Credits"},
+            {29, "Ease In"}, {30, "Float"}, {31, "Grow & Turn"}, {34, "Light Speed"}, {35, "Pinwheel"}, {37, "Rise Up"}, {38, "Swish"}, {39, "Thin Line"},
+            {40, "Unfold"}, {41, "Whip"}, {43, "Center Revolve"}, {45, "Fade Swivel"}, {50, "Compress"}, {51, "Basic Swivel"}, {52, "Sling"}, {54, "Stretchy"},
+            {55, "Expand"}, {56, "Zip"}, {1, "Appear"}, {2, "Fly In"}, {10, "Fade"}, {22, "Wipe"}, {42, "Float In"}, {47, "Float Down"}, {49, "Spin"}, {53, "Zoom"}};
+        static const QHash<int, const char *> emph{{1, "Fill Color"}, {2, "Font Color"}, {3, "Font Size"}, {4, "Font Style"}, {5, "Font"}, {7, "Line Color"},
+            {9, "Transparency"}, {10, "Bold Flash"}, {14, "Blast"}, {15, "Bold Reveal"}, {16, "Brush Color"}, {18, "Underline"}, {19, "Color Blend"},
+            {20, "Color Pulse"}, {21, "Complementary Color"}, {22, "Complementary Color 2"}, {23, "Contrasting Color"}, {24, "Darken"}, {25, "Desaturate"},
+            {27, "Flicker"}, {28, "Grow With Color"}, {30, "Lighten"}, {31, "Style Emphasis"}, {32, "Teeter"}, {33, "Vertical Grow"}, {34, "Wave"}, {35, "Blink"},
+            {36, "Shimmer"}, {6, "Grow/Shrink"}, {8, "Spin"}, {26, "Pulse"}};
+        const auto &table = cls == QLatin1String("emph") ? emph : entr;
+        if (const char *n = table.value(preset)) return QString::fromLatin1(n);
+        return QStringLiteral("PowerPoint effect %1").arg(preset);
+    }
+
     void convertBuilds(const Node *slideRoot, Slide &slide, const QHash<QString, QString> &spidToObject, int number) {
         const Node *timing = slideRoot->child(QStringLiteral("timing"));
         if (!timing) return;
-        // ANIM-001: walk the timing tree carrying each effect's offset from its
-        // click (the sum of the delays above it), so With previous and After
-        // previous come back as OmaShow's relative delays instead of growing by
-        // the previous effect's length on every round trip.
-        struct Found { const Node *cTn; qreal offset; int group; };
+        // ANIM-001 / ANIM-INTEROP: walk the main sequence carrying each effect's
+        // offset from its click (the sum of the delays above it). Trigger
+        // sequences (click a shape) are kept whole for PowerPoint.
+        struct Found { const Node *cTn; const Node *par; qreal offset; int group; };
         QVector<Found> found;
+        QVector<const Node *> interactive;
         int group = 0;
         std::function<void(const Node &, qreal)> walk = [&](const Node &node, qreal offset) {
             for (const auto &kid : node.kids) {
                 if (kid.name != QLatin1String("cTn")) { walk(kid, offset); continue; }
+                if (kid.attr(QStringLiteral("nodeType")) == QLatin1String("interactiveSeq")) { interactive.append(&node); continue; }
                 qreal own = 0;
                 bool click = false;
                 if (const Node *st = kid.child(QStringLiteral("stCondLst")))
@@ -1836,19 +1884,33 @@ struct Reader {
                     }
                 if (click) ++group;
                 const qreal at = (click ? 0.0 : offset) + own;
-                if (!kid.attr(QStringLiteral("presetClass")).isEmpty()) { found.append({&kid, at, group}); continue; }
+                if (!kid.attr(QStringLiteral("presetClass")).isEmpty()) { found.append({&kid, &node, at, group}); continue; }
                 walk(kid, at);
             }
         };
         walk(*timing, 0.0);
+        // The build list: what PowerPoint says about each (shape, group).
+        QHash<QString, QString> buildAttrs;
+        if (const Node *list = timing->child(QStringLiteral("bldLst")))
+            for (const auto &b : list->kids) {
+                if (b.name != QLatin1String("bldP")) continue;
+                QStringList keys = b.attrs.keys(); keys.sort(); QStringList parts;
+                for (const auto &k : keys) if (k != QLatin1String("spid") && k != QLatin1String("grpId")) parts << QStringLiteral("%1=\"%2\"").arg(k, escapeXml(b.attrs.value(k)));
+                buildAttrs.insert(b.attr(QStringLiteral("spid")) + QLatin1Char('/') + b.attr(QStringLiteral("grpId")), parts.join(QLatin1Char(' ')));
+            }
+        const auto buildOf = [&](const QString &spid, const Node *effect) {
+            if (!effect->has(QStringLiteral("grpId"))) return QString();
+            const auto key = spid + QLatin1Char('/') + effect->attr(QStringLiteral("grpId"));
+            return buildAttrs.contains(key) ? buildAttrs.value(key) : QStringLiteral("-"); };
 
         int diagonals = 0;
         const auto direction = [&](int subtype) {
             if (subtype == 3 || subtype == 6 || subtype == 9 || subtype == 12) ++diagonals;   // corners: OmaShow has four sides
             return subtype & 4 ? 0 : subtype & 1 ? 3 : subtype & 8 ? 1 : subtype & 2 ? 2 : 0; };
-        QSet<QString> paragraphsDone;
-        int approximated = 0, emphasisApproximated = 0, paths = 0, lastGroup = -1;
-        qreal previousStart = 0, previousEnd = 0;
+        QStringList approximations;
+        int lastGroup = -1, dropped = 0;
+        qreal runStart = 0, sinceClick = 0;
+        const auto textOf = [&](const QString &id) { for (const auto &o : slide.objects) if (o.id == id) return o.text; return QString(); };
         for (const auto &f : found) {
             const Node *cTn = f.cTn;
             const auto cls = cTn->attr(QStringLiteral("presetClass"));
@@ -1857,72 +1919,213 @@ struct Reader {
             if (targets.isEmpty()) continue;
             const auto spid = targets.first()->attr(QStringLiteral("spid"));
             const auto objectId = spidToObject.value(spid);
-            if (objectId.isEmpty()) continue;
-            if (cls == QLatin1String("path")) { ++paths; continue; }
-            const bool paragraphs = targets.first()->child(QStringLiteral("txEl")) != nullptr;
-            // A paragraph build is one effect per paragraph; OmaShow reads it
-            // as one Reveal. Any other second effect on an object is its own.
-            if (paragraphs) {
-                const QString key = objectId + QLatin1Char('/') + cls;
-                if (paragraphsDone.contains(key)) continue;
-                paragraphsDone.insert(key);
-            }
+            if (objectId.isEmpty()) { ++dropped; continue; }
+            const Node *range = targets.first()->path({"txEl", "pRg"});
+            const Node *iterate = cTn->path({"iterate"});
+            if (!iterate) { QVector<const Node *> it; cTn->collect(QStringLiteral("iterate"), it); if (!it.isEmpty()) iterate = it.first(); }
             BuildStep step;
             step.targetId = objectId;
             const int preset = cTn->attr(QStringLiteral("presetID")).toInt();
             const int subtype = cTn->attr(QStringLiteral("presetSubtype")).toInt();
-            QVector<const Node *> scales;
+            QVector<const Node *> scales, rots, motions;
             cTn->collect(QStringLiteral("animScale"), scales);
+            cTn->collect(QStringLiteral("animRot"), rots);
+            cTn->collect(QStringLiteral("animMotion"), motions);
             QVector<const Node *> inner;
             cTn->collect(QStringLiteral("cTn"), inner);
-            bool reverses = false;
-            for (const auto *n : inner) if (n->attr(QStringLiteral("autoRev")) == QLatin1String("1")) reverses = true;
-            if (cls == QLatin1String("entr") || cls == QLatin1String("exit")) {
+            bool innerReverses = false;
+            for (const auto *n : inner) if (n->attr(QStringLiteral("autoRev")) == QLatin1String("1")) innerReverses = true;
+            // PowerPoint's own timing options on the effect.
+            const auto repeat = cTn->attr(QStringLiteral("repeatCount"));
+            if (repeat == QLatin1String("indefinite")) step.repeat = -1;
+            else if (!repeat.isEmpty()) step.repeat = qBound(0.0, repeat.toDouble() / 1000.0, 1000.0);
+            if (step.repeat == 1.0) step.repeat = 0;
+            step.autoReverse = cTn->attr(QStringLiteral("autoRev")) == QLatin1String("1");
+            step.rewind = cTn->attr(QStringLiteral("fill")) == QLatin1String("remove");
+            QString approx;   // what PowerPoint calls it, when OmaShow plays something close
+            if (cls == QLatin1String("path")) {
+                step.effect = Effect::Path;
+                step.phase = BuildPhase::In;
+                if (!motions.isEmpty()) step.motionPath = motions.first()->attr(QStringLiteral("path"));
+                if (step.motionPath.isEmpty()) approx = QStringLiteral("Motion path");
+            } else if (cls == QLatin1String("entr") || cls == QLatin1String("exit")) {
                 step.phase = cls == QLatin1String("entr") ? BuildPhase::In : BuildPhase::Out;
-                if (paragraphs && step.phase == BuildPhase::In) { step.effect = Effect::Reveal; step.unit = 0; }
-                else if (preset == 1) step.effect = Effect::Appear;
-                else if (preset == 10) { step.effect = Effect::Fade; step.easing = QEasingCurve::Linear; }
+                if (preset == 1) step.effect = Effect::Appear;
+                else if (preset == 10) step.effect = Effect::Fade;
                 else if (preset == 2) { step.effect = Effect::Fly; step.direction = direction(subtype); }
                 else if (preset == 42 || preset == 47) { step.effect = Effect::Float; step.direction = preset == 47 ? 3 : 0; }
                 else if (preset == 22) { step.effect = Effect::Wipe; step.direction = direction(subtype); }
-                else if (preset == 53 || preset == 23) step.effect = Effect::Zoom;
-                else if (preset == 49 || preset == 31) step.effect = Effect::Turn;
-                else { step.effect = Effect::Fade; step.easing = QEasingCurve::Linear; ++approximated; }
+                else if (preset == 53) step.effect = Effect::Zoom;
+                else if (preset == 49) step.effect = Effect::Turn;
+                else {
+                    // Nearest OmaShow effect; the original goes back to PowerPoint.
+                    approx = pptName(cls, preset);
+                    switch (preset) {
+                    case 3: case 16: case 18: case 20: case 21: step.effect = Effect::Wipe; step.direction = direction(subtype); break;
+                    case 5: step.effect = Effect::Wipe; step.direction = 1; break;
+                    case 12: step.effect = Effect::Wipe; step.direction = direction(subtype); break;
+                    case 4: case 6: case 8: case 13: case 17: case 23: case 55: step.effect = Effect::Zoom; break;
+                    case 7: case 26: step.effect = Effect::Fly; step.direction = preset == 26 ? 3 : 0; break;
+                    case 19: case 31: case 43: case 45: case 51: step.effect = Effect::Turn; break;
+                    case 30: case 37: step.effect = Effect::Float; break;
+                    default: step.effect = Effect::Fade; break;
+                    }
+                }
             } else if (cls == QLatin1String("emph")) {
-                // Grow/Shrink (6) that settles back is OmaShow's pulse; one that
-                // holds its new size is Grow or Shrink.
+                step.phase = BuildPhase::In;
                 qreal by = 0;
                 if (!scales.isEmpty())
                     if (const Node *b = scales.first()->child(QStringLiteral("by"))) by = b->attr(QStringLiteral("x")).toDouble() / 100000.0;
-                if (preset == 6 && !reverses && by > 0) { step.effect = by >= 1 ? Effect::Grow : Effect::Shrink; step.amount = by; }
-                else { step.effect = Effect::Pulse; if (preset == 6 && by > 1) step.amount = by - 1; else ++emphasisApproximated; }
+                if (preset == 6 && by > 0 && innerReverses && !step.autoReverse && by > 1) { step.effect = Effect::Pulse; step.amount = by - 1; }   // OmaShow's older pulse
+                else if (preset == 6 && by > 0) { step.effect = by >= 1 ? Effect::Grow : Effect::Shrink; step.amount = by; }
+                else if (preset == 8 && !rots.isEmpty()) { step.effect = Effect::Rotate; step.amount = rots.first()->attr(QStringLiteral("by")).toDouble() / 60000.0; }
+                else if (preset == 26) { step.effect = Effect::Pulse; if (by > 1) step.amount = by - 1; }
+                else { step.effect = Effect::Pulse; step.amount = 0.05; approx = pptName(cls, preset); }
             } else continue;
+            // Text: one effect per paragraph is OmaShow's Reveal of that paragraph;
+            // by word or letter is a Reveal by word or letter.
+            const bool wasEmphasis = Effects::isEmphasis(step.effect);
+            if (range && !wasEmphasis && step.effect != Effect::Path) {
+                if (step.effect != Effect::Fade && step.effect != Effect::Appear && approx.isEmpty()) approx = pptName(cls, preset);
+                if (!approx.isEmpty()) approx += QStringLiteral(" by paragraph");
+                const bool instant = step.effect == Effect::Appear;
+                step.effect = Effect::Reveal; step.unit = 0;
+                step.rangeFrom = range->attr(QStringLiteral("st")).toInt();
+                step.rangeTo = range->attr(QStringLiteral("end")).toInt() + 1;
+                if (instant) step.duration = 0;
+            } else if (range && wasEmphasis && approx.isEmpty()) approx = QStringLiteral("%1 by paragraph").arg(pptName(cls, preset));
             const auto trigger = cTn->attr(QStringLiteral("nodeType"));
             step.trigger = trigger == QLatin1String("withEffect") ? BuildTrigger::WithPrevious
                          : trigger == QLatin1String("afterEffect") ? BuildTrigger::AfterPrevious
                          : BuildTrigger::OnClick;
-            qreal longest = 0;
-            for (const auto *n : inner) {
-                bool ok = false;
-                const qreal ms = n->attr(QStringLiteral("dur")).toDouble(&ok);
-                if (ok) longest = qMax(longest, ms * (n->attr(QStringLiteral("autoRev")) == QLatin1String("1") ? 2.0 : 1.0));
-            }
+            // How long PowerPoint plays it: the end of its last part, each part
+            // at its own delay, reversed and repeated as it says (ANIM-INTEROP).
+            std::function<qreal(const Node &, qreal)> endOf = [&](const Node &n, qreal at) -> qreal {
+                qreal best = at;
+                for (const auto &k : n.kids) {
+                    if (k.name != QLatin1String("cTn")) { best = qMax(best, endOf(k, at)); continue; }
+                    qreal d = 0;
+                    if (const Node *st = k.child(QStringLiteral("stCondLst")))
+                        for (const auto *c : st->all(QStringLiteral("cond"))) { bool ok = false; const qreal v = c->attr(QStringLiteral("delay")).toDouble(&ok); if (ok) d = qMax(d, v); }
+                    bool ok = false;
+                    const qreal dur = k.attr(QStringLiteral("dur")).toDouble(&ok);
+                    bool rok = false;
+                    const qreal reps = k.attr(QStringLiteral("repeatCount")).toDouble(&rok) / 1000.0;
+                    const qreal len = ok ? dur * (k.attr(QStringLiteral("autoRev")) == QLatin1String("1") ? 2.0 : 1.0) * (rok && reps > 0 ? reps : 1.0) : 0.0;
+                    best = qMax(best, qMax(at + d + len, endOf(k, at + d)));
+                }
+                return best;
+            };
+            const Node *body = cTn->child(QStringLiteral("childTnLst"));
+            const qreal longest = body ? endOf(*body, 0.0) : 0.0;
             if (step.effect != Effect::Reveal) step.easing = Effects::defaultEasing(step.effect);
+            else step.easing = QEasingCurve::Linear;
+            if (approx.isEmpty() && step.effect != Effect::Reveal && step.effect != Effect::Appear) {
+                // Play it on PowerPoint's own curve: Smooth start / end on the effect,
+                // else on its first eased part, else linear (PowerPoint's default).
+                const Node *eased = cTn;
+                if (cTn->attr(QStringLiteral("accel")).isEmpty() && cTn->attr(QStringLiteral("decel")).isEmpty()) {
+                    eased = nullptr;
+                    std::function<void(const Node &)> look = [&](const Node &n) {
+                        for (const auto &k : n.kids) {
+                            if (eased) return;
+                            if (k.name == QLatin1String("cTn") && (!k.attr(QStringLiteral("accel")).isEmpty() || !k.attr(QStringLiteral("decel")).isEmpty())) { eased = &k; return; }
+                            look(k);
+                        }
+                    };
+                    if (const Node *b = cTn->child(QStringLiteral("childTnLst"))) look(*b);
+                }
+                step.easing = eased ? Effects::easingFromPpt(eased->attr(QStringLiteral("accel")).toDouble() / 100000.0,
+                                                             eased->attr(QStringLiteral("decel")).toDouble() / 100000.0)
+                                    : QEasingCurve::Linear;
+            }
             if (step.effect == Effect::Appear) step.duration = 0.0;
+            else if (step.effect == Effect::Reveal && step.rangeFrom >= 0 && step.duration == 0.0) {}
             else if (longest > 0) step.duration = qBound(0.05, longest / 1000.0, 60.0);
-            if (f.group != lastGroup) { lastGroup = f.group; previousStart = previousEnd = 0; }
+            if (iterate && step.effect != Effect::Path && !wasEmphasis) {
+                // By word / by letter: n units, each `d` long, the next after `s`.
+                const QString type = iterate->attr(QStringLiteral("type"), QStringLiteral("el"));
+                const QString text = textOf(objectId);
+                const int unit = type == QLatin1String("lt") ? 2 : 1;
+                const int n = unit == 2 ? int(text.size()) : int(text.split(QRegularExpression(QStringLiteral("\\s+")), Qt::SkipEmptyParts).size());
+                const qreal d = step.effect == Effect::Appear ? 0.0 : step.duration;
+                qreal s = d;
+                if (const Node *abs = iterate->child(QStringLiteral("tmAbs"))) s = abs->attr(QStringLiteral("val")).toDouble() / 1000.0;
+                else if (const Node *pct = iterate->child(QStringLiteral("tmPct"))) s = pct->attr(QStringLiteral("val")).toDouble() / 100000.0 * d;
+                const bool native = (step.effect == Effect::Fade || step.effect == Effect::Appear) && approx.isEmpty() && (step.effect == Effect::Appear || std::abs(s - d) < 0.002);
+                if (!native) approx = (approx.isEmpty() ? pptName(cls, preset) : approx) + (unit == 2 ? QStringLiteral(" by letter") : QStringLiteral(" by word"));
+                step.effect = Effect::Reveal; step.unit = unit; step.easing = QEasingCurve::Linear;
+                step.duration = qBound(0.05, (n > 0 ? (n - 1) * s : 0.0) + qMax(d, s), 600.0);
+            }
+            // Timing in PowerPoint's model (Timeline::resolvedSteps): With previous
+            // counts from the run's start, After previous from the end of
+            // everything since the click.
+            if (f.group != lastGroup) { lastGroup = f.group; runStart = sinceClick = 0; }
             const qreal offset = f.offset / 1000.0;
-            const qreal base = step.trigger == BuildTrigger::AfterPrevious ? previousEnd
-                             : step.trigger == BuildTrigger::WithPrevious ? previousStart : 0.0;
-            step.delay = qMax(0.0, offset - base);
+            if (step.trigger == BuildTrigger::OnClick) runStart = sinceClick = 0;
+            else if (step.trigger == BuildTrigger::AfterPrevious) runStart = sinceClick;
+            step.delay = qMax(0.0, offset - runStart);
             if (step.delay < 0.0005) step.delay = 0;
-            previousStart = base + step.delay;
-            previousEnd = previousStart + step.duration;
+            step.start = 0;
+            sinceClick = qMax(sinceClick, runStart + step.delay + step.span());
+            step.pptxName = approx;
+            if (!approx.isEmpty()) approximations << approx;
+            // Kept exactly as PowerPoint wrote it, for writing back.
+            QString raw;
+            if (xmlOf(*f.par, spidToObject, raw)) { step.pptxXml = raw; step.pptxSig = step.interopSig(); step.pptxDuration = step.duration; step.pptxBuild = buildOf(spid, cTn); }
             slide.timeline.steps.append(step);
         }
-        if (approximated) warnings.add(QStringLiteral("An animation effect OmaShow does not have was shown as a fade"), number);
-        if (emphasisApproximated) warnings.add(QStringLiteral("An emphasis OmaShow does not have was shown as a pulse"), number);
-        if (paths) warnings.add(QStringLiteral("A motion path was left out"), number);
+        // A text built paragraph after paragraph, each straight after the last,
+        // with the same plain fade or appear, is one Reveal by paragraph.
+        auto &steps = slide.timeline.steps;
+        for (int i = 0; i < steps.size(); ++i) {
+            auto &head = steps[i];
+            if (head.effect != Effect::Reveal || head.rangeFrom != 0 || !head.pptxName.isEmpty()) continue;
+            int j = i + 1, next = head.rangeTo;
+            qreal total = head.duration;
+            while (j < steps.size() && steps[j].effect == Effect::Reveal && steps[j].targetId == head.targetId && steps[j].phase == head.phase &&
+                   steps[j].rangeFrom == next && steps[j].trigger == BuildTrigger::AfterPrevious && steps[j].delay == 0 && steps[j].pptxName.isEmpty() &&
+                   std::abs(steps[j].duration - head.duration) < 0.002 && steps[j].repeat == 0 && !steps[j].rewind && !steps[j].autoReverse) {
+                next = steps[j].rangeTo; total += steps[j].duration; ++j;
+            }
+            const QString text = textOf(head.targetId);
+            const int paragraphs = int(text.split(QLatin1Char('\n')).size());
+            if (j == i + 1 || next < paragraphs || head.repeat != 0 || head.rewind || head.autoReverse) continue;
+            head.rangeFrom = head.rangeTo = -1; head.duration = total;
+            head.pptxXml.clear(); head.pptxSig.clear();
+            steps.remove(i + 1, j - i - 1);
+        }
+        // Trigger sequences: kept for PowerPoint, listed so the pane can say so.
+        int triggers = 0;
+        for (const Node *seq : interactive) {
+            QString raw;
+            if (!xmlOf(*seq, spidToObject, raw)) { ++dropped; continue; }
+            slide.pptxInteractive << raw;
+            QVector<const Node *> effects;
+            std::function<void(const Node &)> collectEffects = [&](const Node &n) {
+                for (const auto &k : n.kids) {
+                    if (k.name == QLatin1String("cTn") && !k.attr(QStringLiteral("presetClass")).isEmpty()) {
+                        ++triggers;
+                        QVector<const Node *> tg; k.collect(QStringLiteral("spTgt"), tg);
+                        if (!tg.isEmpty()) {
+                            const auto sp = tg.first()->attr(QStringLiteral("spid"));
+                            const auto id = spidToObject.value(sp);
+                            if (!id.isEmpty() && !slide.pptxInteractiveTargets.contains(id)) slide.pptxInteractiveTargets << id;
+                            const auto b = buildOf(sp, &k);
+                            if (!id.isEmpty() && !b.isNull()) slide.pptxInteractiveBuilds << QStringLiteral("%1|%2|%3").arg(id, k.attr(QStringLiteral("grpId")), b);
+                        }
+                    }
+                    collectEffects(k);
+                }
+            };
+            collectEffects(*seq);
+        }
+        if (!approximations.isEmpty()) {
+            approximations.removeDuplicates();
+            warnings.add(QStringLiteral("PowerPoint effects OmaShow plays as the nearest it has (kept for PowerPoint): %1").arg(approximations.join(QStringLiteral(", "))), number);
+        }
+        if (triggers) warnings.add(QStringLiteral("%1 trigger animation(s) (click a shape to play) kept for PowerPoint; OmaShow does not play triggers").arg(triggers), number);
+        if (dropped) warnings.add(QStringLiteral("An animation on a shape OmaShow could not bring across was left out"), number);
         if (diagonals) warnings.add(QStringLiteral("An animation from a corner now comes from the nearest side"), number);
     }
 
