@@ -856,7 +856,7 @@ ApplicationWindow {
                                 topPadding: 6
                                 leftPadding: 0; rightPadding: 0; bottomPadding: 0
                                 policy: ScrollBar.AlwaysOn
-                                visible: tabFlick.overflows && rowHover.hovered
+                                visible: tabFlick.overflows && (rowHover.hovered || pressed)
                                 contentItem: Rectangle { implicitHeight: 3; radius: 1.5; color: Theme.textMuted }
                                 background: Item {}
                             }
