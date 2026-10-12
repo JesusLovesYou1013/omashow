@@ -473,6 +473,8 @@ public:
     // own (one each); emphasis and motion add. Several objects: the first On
     // click, the rest With previous. One undo step. Returns the first index.
     Q_INVOKABLE int applyEffect(int cls, int effect);
+    // ANIM-001: one animation becomes another of the same class (one undo step).
+    Q_INVOKABLE int replaceEffect(int index, int effect);
     // Set one property on several builds as one undo step (the tab's Timing
     // and Effect options act on the pane's rows or the selection's builds).
     Q_INVOKABLE void setBuildsProperty(const QVariantList &indices, const QString &key, const QVariant &value);

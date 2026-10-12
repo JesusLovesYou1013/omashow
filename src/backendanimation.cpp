@@ -5,6 +5,12 @@
 #include <algorithm>
 #include <functional>
 
+// ANIM-INTEROP: an edit that changes what the effect is (not just its timing)
+// makes it OmaShow's own: PowerPoint's kept markup and its name no longer apply.
+static void settleInterop(BuildStep &step) {
+  if (!step.pptxXml.isEmpty() && step.pptxSig != step.interopSig()) { step.pptxXml.clear(); step.pptxSig.clear(); step.pptxName.clear(); }
+}
+
 QVariantList Backend::builds() const {
   QVariantList list;
   if (m_currentSlide < 0 || m_currentSlide >= m_document.slides.size())
@@ -41,6 +47,14 @@ QVariantList Backend::builds() const {
                             {"pathReverse", step.pathReverse},
                             {"orient", step.orient},
                             {"direction", step.direction},
+                            {"repeat", step.repeat},
+                            {"rewind", step.rewind},
+                            {"autoReverse", step.autoReverse},
+                            {"motionPath", !step.motionPath.isEmpty()},
+                            {"rangeFrom", step.rangeFrom},
+                            {"rangeTo", step.rangeTo},
+                            {"pptxName", step.pptxName},
+                            {"keptForPowerPoint", !step.pptxXml.isEmpty() && step.pptxSig == step.interopSig()},
                             {"cls", int(step.effectClass())},
                             {"click", click},
                             {"text", o && o->type == ObjectType::Text}});
@@ -181,6 +195,7 @@ void Backend::setBuildProperty(int index, const QString &key,
       if (flag == value.toBool()) return;
       flag = value.toBool();
     }
+    settleInterop(changed);
     m_history.begin(m_document, tr("Edit build"));
     m_document.slides[m_currentSlide].timeline.steps[index] = changed;
     m_history.commit();
@@ -209,6 +224,12 @@ void Backend::setBuildProperty(int index, const QString &key,
     if (changed.effect == Effect::Appear) changed.duration = 0.0;
     else if (was == Effect::Appear && changed.duration <= 0.0) changed.duration = 0.5;
   }
+  else if (key == "repeat" && (number == -1 || (number >= 0 && number <= 1000)))
+    changed.repeat = number == 1 ? 0 : number;
+  else if (key == "rewind")
+    changed.rewind = number != 0;
+  else if (key == "autoReverse")
+    changed.autoReverse = number != 0;
   else if (key == "direction" && number >= 0 && number <= 3 && number == std::round(number))
     changed.direction = value.toInt();
   else if (key == "amountX" && std::abs(number) <= 100000)
@@ -229,10 +250,12 @@ void Backend::setBuildProperty(int index, const QString &key,
   }
   else if (key == "easing" && (number == QEasingCurve::Linear ||
                                number == QEasingCurve::OutCubic || number == QEasingCurve::OutQuad ||
-                               number == QEasingCurve::InOutCubic))
+                               number == QEasingCurve::InOutCubic || number == QEasingCurve::InOutQuad ||
+                               number == QEasingCurve::InQuad))
     changed.easing = QEasingCurve::Type(value.toInt());
   else
     return;
+  settleInterop(changed);
   m_history.begin(m_document, tr("Edit build"));
   m_document.slides[m_currentSlide].timeline.steps[index] = changed;
   m_history.commit();
@@ -294,19 +317,20 @@ int Backend::applyEffect(int cls, int effect) {
         if (steps.at(i).targetId == id && steps.at(i).effectClass() == wanted) index = i;
     }
     if (index >= 0) {
-      const Effect was = m_document.slides.at(m_currentSlide).timeline.steps.at(index).effect;
-      setBuildProperty(index, QStringLiteral("effect"), effect);
-      auto &step = m_document.slides[m_currentSlide].timeline.steps[index];
-      step.easing = Effects::defaultEasing(chosen);
-      // A replaced effect starts fresh: the old one's amounts mean something
-      // else to the new one (a zoom's 0.3 is not a spin's degrees). Timing stays.
-      step.amount = 0; step.amountX = 0; step.amountY = 0;
-      if (chosen == Effect::Appear) step.duration = 0.0;
-      else if (was == Effect::Appear && step.duration <= 0.0) step.duration = 0.5;
+      replaceEffect(index, effect);
     } else {
       index = addBuild(id, int(phase), effect);
       if (index >= 0 && added++ > 0)
         setBuildProperty(index, QStringLiteral("trigger"), int(BuildTrigger::WithPrevious));
+      // A new entrance on an object that already leaves goes before its exit:
+      // in, then out, as PowerPoint would play it.
+      if (index >= 0 && wanted == EffectClass::Entrance) {
+        const auto &steps = m_document.slides.at(m_currentSlide).timeline.steps;
+        int exitAt = -1;
+        for (int i = 0; i < index && exitAt < 0; ++i)
+          if (steps.at(i).targetId == id && steps.at(i).effectClass() == EffectClass::Exit) exitAt = i;
+        if (exitAt >= 0) { moveBuild(index, exitAt); index = exitAt; }
+      }
     }
     if (first < 0) first = index;
   }
@@ -314,6 +338,33 @@ int Backend::applyEffect(int cls, int effect) {
   m_history.commit();
   touch();
   return first;
+}
+
+int Backend::replaceEffect(int index, int effect) {
+  if (m_currentSlide < 0 || m_currentSlide >= m_document.slides.size() || index < 0 ||
+      index >= m_document.slides.at(m_currentSlide).timeline.steps.size() ||
+      effect < 1 || effect > kLastEffect || effect == int(Effect::Media))
+    return -1;
+  const BuildStep old = m_document.slides.at(m_currentSlide).timeline.steps.at(index);
+  BuildStep probe = old; probe.effect = Effect(effect);
+  if (Effects::isEmphasis(probe.effect)) probe.phase = BuildPhase::In;
+  // Same class only: an emphasis stays an emphasis, an entrance an entrance.
+  if (old.effect == Effect::Media || probe.effectClass() != old.effectClass()) return -1;
+  if (old.effect == probe.effect) return index;
+  m_history.begin(m_document, tr("Change animation"));
+  auto &step = m_document.slides[m_currentSlide].timeline.steps[index];
+  step.effect = probe.effect;
+  step.easing = Effects::defaultEasing(step.effect);
+  // A replaced effect starts fresh: the old one's amounts mean something else to
+  // the new one (a zoom's 0.3 is not a spin's degrees). Timing and start stay.
+  step.amount = 0; step.amountX = 0; step.amountY = 0;
+  if (step.effect == Effect::Appear) step.duration = 0.0;
+  else if (old.effect == Effect::Appear && step.duration <= 0.0) step.duration = 0.5;
+  // A new effect is OmaShow's own: what PowerPoint wrote for the old one goes.
+  step.pptxXml.clear(); step.pptxSig.clear(); step.pptxName.clear();
+  m_history.commit();
+  touch();
+  return index;
 }
 
 void Backend::setBuildsProperty(const QVariantList &indices, const QString &key, const QVariant &value) {

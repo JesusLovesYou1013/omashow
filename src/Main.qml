@@ -79,20 +79,27 @@ ApplicationWindow {
     }
     readonly property var animEffectNames: ({ 1: qsTr("Fade"), 2: qsTr("Rise"), 3: qsTr("Media"), 4: qsTr("Move (older)"), 5: qsTr("Scale (older)"),
         6: qsTr("Spin (older)"), 7: qsTr("Pulse"), 8: qsTr("Reveal text"), 9: qsTr("Along a path"), 10: qsTr("Appear"), 11: qsTr("Fly"),
-        12: qsTr("Float"), 13: qsTr("Zoom"), 14: qsTr("Spin"), 15: qsTr("Wipe"), 16: qsTr("Grow"), 17: qsTr("Shrink") })
+        12: qsTr("Float"), 13: qsTr("Zoom"), 14: qsTr("Spin"), 15: qsTr("Wipe"), 16: qsTr("Grow"), 17: qsTr("Shrink"), 18: qsTr("Spin") })
     function animName(b) {
         if (!b || b.effect === undefined) return ""
         if (b.effect === 3) return qsTr("Media")
-        if (b.effect === 9 && !b.pathId) return qsTr("Along a path (no path chosen)")
-        if (b.effect === 10) return b.phase === 1 ? qsTr("Disappear") : qsTr("Appear")
-        const name = win.animEffectNames[b.effect] ?? qsTr("Effect")
-        return b.cls === 0 ? qsTr("%1 in").arg(name) : b.cls === 2 ? qsTr("%1 out").arg(name) : name
+        if (b.effect === 9 && !b.pathId && !b.motionPath) return qsTr("Along a path (no path chosen)")
+        const base = b.effect === 10 ? (b.phase === 1 ? qsTr("Disappear") : qsTr("Appear")) : (() => {
+            const name = win.animEffectNames[b.effect] ?? qsTr("Effect")
+            return b.cls === 0 ? qsTr("%1 in").arg(name) : b.cls === 2 ? qsTr("%1 out").arg(name) : name })()
+        // ANIM-INTEROP: a PowerPoint effect OmaShow does not have says so, and what it plays instead.
+        if (b.pptxName) return qsTr("⚠ %1 (PowerPoint, plays here as %2)").arg(b.pptxName).arg(base)
+        const part = b.effect === 8 && b.rangeFrom >= 0 ? (b.rangeTo - b.rangeFrom > 1 ? qsTr(", paragraphs %1–%2").arg(b.rangeFrom + 1).arg(b.rangeTo) : qsTr(", paragraph %1").arg(b.rangeFrom + 1)) : ""
+        const more = (b.repeat > 1 ? qsTr(" ×%1").arg(b.repeat) : b.repeat < 0 ? qsTr(" (repeats)") : "") + (b.autoReverse ? qsTr(", there and back") : "") + (b.rewind ? qsTr(", rewinds") : "")
+        return base + part + more
     }
     function applyAnim(cls, effect) {
         win.commitEditors()
-        const index = backend.applyEffect(cls, effect)
+        // An emphasis row chosen in the pane: another emphasis replaces it.
+        const row = win.animRow >= 0 ? backend.builds[win.animRow] : null
+        const index = cls === 1 && row && row.cls === 1 ? backend.replaceEffect(win.animRow, effect) : backend.applyEffect(cls, effect)
         if (index < 0) return
-        win.animRow = -1
+        win.animRow = cls === 1 && row && row.cls === 1 ? index : -1
         // A motion with nowhere to go does nothing: ask for its path at once.
         if (effect === 9 && !backend.builds[index].pathId) { win.openRibbonMenu("animOptions"); return }
         if (win.animAutoPreview) win.previewAnim(index)
@@ -423,6 +430,7 @@ ApplicationWindow {
           on: () => backend.slideObjects.some(o => o.text && backend.selectedIds.indexOf(o.id) >= 0), checked: () => win.animCurrent(0) === 8, run: () => win.applyAnim(0, 8) },
         { id: "animEmphasis", tab: "animate", group: "effect", kind: "menu", on: () => backend.selectionCount > 0, label: qsTr("Emphasis"), icon: "sparkles", tip: qsTr("Draw attention to the selected objects while they stay. Adds one each time.") },
         { id: "animEmphasisPulse", parent: "animEmphasis", label: qsTr("Pulse"), also: "emphasis swell throb", on: () => backend.selectionCount > 0, run: () => win.applyAnim(1, 7) },
+        { id: "animEmphasisSpin", parent: "animEmphasis", label: qsTr("Spin"), also: "emphasis rotate turn", on: () => backend.selectionCount > 0, run: () => win.applyAnim(1, 18) },
         { id: "animEmphasisGrow", parent: "animEmphasis", label: qsTr("Grow"), also: "emphasis bigger enlarge", on: () => backend.selectionCount > 0, run: () => win.applyAnim(1, 16) },
         { id: "animEmphasisShrink", parent: "animEmphasis", label: qsTr("Shrink"), also: "emphasis smaller", on: () => backend.selectionCount > 0, run: () => win.applyAnim(1, 17) },
         { id: "animExit", tab: "animate", group: "effect", kind: "menu", on: () => backend.selectionCount > 0, label: qsTr("Exit"), icon: "eye-off", tip: qsTr("How the selected objects leave. Choosing another replaces it.") },
@@ -447,10 +455,16 @@ ApplicationWindow {
           on: () => win.animAny(b => b.effect === 9) },
         { id: "buildPathReverse", parent: "animOptions", label: qsTr("Travel the other way"), also: "path reverse direction", on: () => win.animAny(b => b.effect === 9), checked: () => win.animCommon("pathReverse") === true, run: () => win.setAnim("pathReverse", win.animCommon("pathReverse") !== true) },
         { id: "buildPathOrient", parent: "animOptions", label: qsTr("Turn with the path"), also: "path orient rotate", on: () => win.animAny(b => b.effect === 9), checked: () => win.animCommon("orient") === true, run: () => win.setAnim("orient", win.animCommon("orient") !== true) },
+        { id: "animRepeatOnce", parent: "animOptions", sep: true, label: qsTr("Play once"), also: "repeat count times", on: () => win.animAny(b => b.effect !== 3 && b.effect !== 10), checked: () => win.animCommon("repeat") === 0, run: () => win.setAnim("repeat", 0) },
+        { id: "animRepeat2", parent: "animOptions", label: qsTr("Repeat 2 times"), also: "repeat count twice", on: () => win.animAny(b => b.effect !== 3 && b.effect !== 10), checked: () => win.animCommon("repeat") === 2, run: () => win.setAnim("repeat", 2) },
+        { id: "animRepeat3", parent: "animOptions", label: qsTr("Repeat 3 times"), also: "repeat count", on: () => win.animAny(b => b.effect !== 3 && b.effect !== 10), checked: () => win.animCommon("repeat") === 3, run: () => win.setAnim("repeat", 3) },
+        { id: "animRepeatSlide", parent: "animOptions", label: qsTr("Repeat until the next slide"), also: "repeat loop forever until next click", on: () => win.animAny(b => b.effect !== 3 && b.effect !== 10), checked: () => win.animCommon("repeat") === -1, run: () => win.setAnim("repeat", -1) },
+        { id: "animAutoReverse", parent: "animOptions", label: qsTr("Play forwards, then back"), also: "auto reverse there and back", on: () => win.animAny(b => b.effect !== 3 && b.effect !== 10), checked: () => win.animCommon("autoReverse") === true, run: () => win.setAnim("autoReverse", win.animCommon("autoReverse") !== true) },
+        { id: "animRewind", parent: "animOptions", label: qsTr("Rewind when done"), also: "rewind reset after playing", on: () => win.animAny(b => b.effect !== 3), checked: () => win.animCommon("rewind") === true, run: () => win.setAnim("rewind", win.animCommon("rewind") !== true) },
         { id: "animEaseLinear", parent: "animOptions", sep: true, label: qsTr("Even speed"), also: "easing linear pace", on: () => win.animAny(b => b.effect !== 3 && b.effect !== 10), checked: () => win.animCommon("easing") === Easing.Linear, run: () => win.setAnim("easing", Easing.Linear) },
-        { id: "animEaseOut", parent: "animOptions", label: qsTr("Slow down at the end"), also: "easing ease out decelerate", on: () => win.animAny(b => b.effect !== 3 && b.effect !== 10), checked: () => win.animCommon("easing") === Easing.OutCubic, run: () => win.setAnim("easing", Easing.OutCubic) },
-        { id: "animEaseGentle", parent: "animOptions", label: qsTr("Gentle stop"), also: "easing soft", on: () => win.animAny(b => b.effect !== 3 && b.effect !== 10), checked: () => win.animCommon("easing") === Easing.OutQuad, run: () => win.setAnim("easing", Easing.OutQuad) },
-        { id: "animEaseInOut", parent: "animOptions", label: qsTr("Smooth start and stop"), also: "easing ease in and out", on: () => win.animAny(b => b.effect !== 3 && b.effect !== 10), checked: () => win.animCommon("easing") === Easing.InOutCubic, run: () => win.setAnim("easing", Easing.InOutCubic) },
+        { id: "animEaseOut", parent: "animOptions", label: qsTr("Slow down at the end"), also: "easing ease out decelerate smooth end gentle stop", on: () => win.animAny(b => b.effect !== 3 && b.effect !== 10), checked: () => [Easing.OutQuad, Easing.OutCubic].includes(win.animCommon("easing")), run: () => win.setAnim("easing", Easing.OutQuad) },
+        { id: "animEaseIn", parent: "animOptions", label: qsTr("Speed up from the start"), also: "easing ease in accelerate smooth start gentle", on: () => win.animAny(b => b.effect !== 3 && b.effect !== 10), checked: () => [Easing.InQuad, Easing.InCubic].includes(win.animCommon("easing")), run: () => win.setAnim("easing", Easing.InQuad) },
+        { id: "animEaseInOut", parent: "animOptions", label: qsTr("Smooth start and stop"), also: "easing ease in and out", on: () => win.animAny(b => b.effect !== 3 && b.effect !== 10), checked: () => [Easing.InOutQuad, Easing.InOutCubic].includes(win.animCommon("easing")), run: () => win.setAnim("easing", Easing.InOutQuad) },
         { id: "animStart", tab: "animate", group: "timing", kind: "menu", label: qsTr("Start"), icon: "mouse-pointer-2", on: () => win.animOn(), sizeText: qsTr("After previous"),
           text: () => { const v = win.animCommon("trigger"); return v === undefined ? qsTr("Start") : [qsTr("At a time"), qsTr("On click"), qsTr("With previous"), qsTr("After previous")][v] },
           tip: qsTr("When the chosen animations start") },
