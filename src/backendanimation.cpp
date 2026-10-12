@@ -2,6 +2,8 @@
 #include "backend.h"
 #include "core/design.h"
 #include <cmath>
+#include <algorithm>
+#include <functional>
 
 QVariantList Backend::builds() const {
   QVariantList list;
@@ -115,6 +117,7 @@ int Backend::addBuild(const QString &targetId, int phase, int effect) {
   step.targetId = targetId;
   step.phase = BuildPhase(phase);
   step.effect = Effect(effect);
+  if (Effects::isEmphasis(step.effect)) step.phase = BuildPhase::In;   // an emphasis has no out
   // ANIM-001: every new animation waits for a click, the first one too, so
   // "add it, press Next, it happens". Half a second; a fade is not eased (it
   // would pop), and Appear takes no time at all.
@@ -132,6 +135,16 @@ void Backend::removeBuild(int index) {
     return;
   m_history.begin(m_document, tr("Remove build"));
   m_document.slides[m_currentSlide].timeline.steps.removeAt(index);
+  m_history.commit();
+  touch();
+}
+void Backend::removeBuilds(const QVariantList &indices) {
+  QList<int> rows;
+  for (const auto &i : indices) if (i.toInt() >= 0 && i.toInt() < builds().size() && !rows.contains(i.toInt())) rows.append(i.toInt());
+  if (rows.isEmpty()) return;
+  std::sort(rows.begin(), rows.end(), std::greater<int>());
+  m_history.begin(m_document, rows.size() > 1 ? tr("Remove animations") : tr("Remove build"));
+  for (int i : rows) m_document.slides[m_currentSlide].timeline.steps.removeAt(i);
   m_history.commit();
   touch();
 }

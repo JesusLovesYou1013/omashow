@@ -477,6 +477,7 @@ public:
     // and Effect options act on the pane's rows or the selection's builds).
     Q_INVOKABLE void setBuildsProperty(const QVariantList &indices, const QString &key, const QVariant &value);
     Q_INVOKABLE void removeBuild(int index);
+    Q_INVOKABLE void removeBuilds(const QVariantList &indices);   // ANIM-001: one undo step
     Q_INVOKABLE void moveBuild(int from, int to);
     Q_INVOKABLE void setBuildProperty(int index, const QString &key, const QVariant &value);
     QVariantMap design() const;

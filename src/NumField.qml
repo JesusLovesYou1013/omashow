@@ -11,6 +11,8 @@ Item {
     property real step: 1
     property string suffix: ""
     signal committed(real value)
+    // ANIM-001: a field on the ribbon joins the Tab chain (inspector fields keep their behaviour).
+    property alias tabStop: input.activeFocusOnTab
 
     // Places shown; past whole numbers, trailing zeros are dropped ("55.5", "24").
     property int decimals: root.step < 1 ? 2 : 0
