@@ -56,6 +56,7 @@ QVariantList Backend::slideObjects() const {
     if (m_document.slides.at(m_currentSlide).find(o.id))
       list.append(
           QVariantMap{{"id", o.id},
+                      {"text", o.type == ObjectType::Text && !o.text.trimmed().isEmpty()},
                       {"name", o.type == ObjectType::Text ? o.text.left(40)
                                                           : o.type == ObjectType::Image ? tr("Picture") : o.type == ObjectType::Media ? o.mediaName : o.type == ObjectType::Table ? tr("Table") : o.type == ObjectType::Chart ? tr("Chart") : tr("Shape")}});
   return list;
@@ -293,9 +294,15 @@ int Backend::applyEffect(int cls, int effect) {
         if (steps.at(i).targetId == id && steps.at(i).effectClass() == wanted) index = i;
     }
     if (index >= 0) {
+      const Effect was = m_document.slides.at(m_currentSlide).timeline.steps.at(index).effect;
       setBuildProperty(index, QStringLiteral("effect"), effect);
       auto &step = m_document.slides[m_currentSlide].timeline.steps[index];
       step.easing = Effects::defaultEasing(chosen);
+      // A replaced effect starts fresh: the old one's amounts mean something
+      // else to the new one (a zoom's 0.3 is not a spin's degrees). Timing stays.
+      step.amount = 0; step.amountX = 0; step.amountY = 0;
+      if (chosen == Effect::Appear) step.duration = 0.0;
+      else if (was == Effect::Appear && step.duration <= 0.0) step.duration = 0.5;
     } else {
       index = addBuild(id, int(phase), effect);
       if (index >= 0 && added++ > 0)
@@ -312,6 +319,18 @@ int Backend::applyEffect(int cls, int effect) {
 void Backend::setBuildsProperty(const QVariantList &indices, const QString &key, const QVariant &value) {
   if (indices.isEmpty()) return;
   m_history.begin(m_document, tr("Edit animations"));
+  // Start > At a time keeps each animation where it plays now, not at 0.
+  if (key == QLatin1String("trigger") && value.toInt() == int(BuildTrigger::Absolute) &&
+      m_currentSlide >= 0 && m_currentSlide < m_document.slides.size()) {
+    const auto resolved = m_document.slides.at(m_currentSlide).timeline.resolvedSteps();
+    for (const auto &i : indices) {
+      const int row = i.toInt();
+      if (row < 0 || row >= resolved.size()) continue;
+      const auto &step = m_document.slides.at(m_currentSlide).timeline.steps.at(row);
+      if (step.trigger == BuildTrigger::Absolute) continue;
+      setBuildProperty(row, QStringLiteral("start"), qMax(0.0, resolved.at(row).start - step.delay));
+    }
+  }
   for (const auto &i : indices) setBuildProperty(i.toInt(), key, value);
   m_history.commit();
   touch();

@@ -16,7 +16,10 @@ Item {
 
     // Places shown; past whole numbers, trailing zeros are dropped ("55.5", "24").
     property int decimals: root.step < 1 ? 2 : 0
+    // ANIM-001: several values that differ show as an empty field.
+    property bool mixed: false
     function shown() {
+        if (root.mixed) return ""
         const t = root.value.toFixed(root.decimals)
         return root.decimals > 0 ? String(Number(t)) : t
     }

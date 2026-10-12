@@ -1842,7 +1842,10 @@ struct Reader {
         };
         walk(*timing, 0.0);
 
-        const auto direction = [](int subtype) { return subtype & 4 ? 0 : subtype & 1 ? 3 : subtype & 8 ? 1 : subtype & 2 ? 2 : 0; };
+        int diagonals = 0;
+        const auto direction = [&](int subtype) {
+            if (subtype == 3 || subtype == 6 || subtype == 9 || subtype == 12) ++diagonals;   // corners: OmaShow has four sides
+            return subtype & 4 ? 0 : subtype & 1 ? 3 : subtype & 8 ? 1 : subtype & 2 ? 2 : 0; };
         QSet<QString> paragraphsDone;
         int approximated = 0, emphasisApproximated = 0, paths = 0, lastGroup = -1;
         qreal previousStart = 0, previousEnd = 0;
@@ -1920,6 +1923,7 @@ struct Reader {
         if (approximated) warnings.add(QStringLiteral("An animation effect OmaShow does not have was shown as a fade"), number);
         if (emphasisApproximated) warnings.add(QStringLiteral("An emphasis OmaShow does not have was shown as a pulse"), number);
         if (paths) warnings.add(QStringLiteral("A motion path was left out"), number);
+        if (diagonals) warnings.add(QStringLiteral("An animation from a corner now comes from the nearest side"), number);
     }
 
     // ---- slides

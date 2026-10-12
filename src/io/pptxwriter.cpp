@@ -1115,7 +1115,7 @@ struct Writer {
     void writeBuilds(Xml &x, int number, const Slide &slide, const SlideCtx &ctx) {
         struct Step { const BuildStep *step; int spid; };
         QVector<Step> steps;
-        bool emphasisDropped = false, revealDropped = false, legacyApproximated = false, timedLater = false;
+        bool emphasisDropped = false, revealDropped = false, legacyApproximated = false, timedLater = false, floatSideways = false;
         for (const auto &s : slide.timeline.steps) {
             if (s.effect == Effect::None || s.effect == Effect::Media || s.effect == Effect::Path) {
                 if (s.effect == Effect::Path) warnings.add(QStringLiteral("A build along a path was left out"), number);
@@ -1126,8 +1126,10 @@ struct Writer {
             if (s.effect == Effect::Reveal) revealDropped = true;
             if (s.effect == Effect::Pulse) emphasisDropped = true;
             if (s.effect == Effect::Move || s.effect == Effect::Scale || s.effect == Effect::Spin) legacyApproximated = true;
+            if (s.effect == Effect::Float && (s.direction == 1 || s.direction == 2)) floatSideways = true;
             steps.append({&s, spid});
         }
+        if (floatSideways) warnings.add(QStringLiteral("A float in from the side was written as a float up (PowerPoint floats only up or down)"), number);
         if (legacyApproximated) warnings.add(QStringLiteral("An older move, scale or spin build was written as fly in, zoom or spin"), number);
         if (revealDropped) warnings.add(QStringLiteral("A text reveal was written as a fade of the whole box"), number);
         if (emphasisDropped) warnings.add(QStringLiteral("An emphasis build was written as a grow and shrink"), number);
@@ -1195,7 +1197,7 @@ struct Writer {
                 x.end();
             } else if (s.effect == Effect::Pulse) {
                 x.start("p:animScale"); x.start("p:cBhvr"); x.start("p:cTn").attr("id", id++).attr("dur", ms / 2).attr("autoRev", "1").attr("fill", "hold").end(); target(spid); x.end();
-                x.start("p:by").attr("x", qRound(100000 + qMax(0.05, s.amount > 0 ? s.amount : 0.2) * 100000)).attr("y", qRound(100000 + qMax(0.05, s.amount > 0 ? s.amount : 0.2) * 100000)).end();
+                x.start("p:by").attr("x", qRound(100000 + qMax(0.05, s.amount > 0 ? s.amount : 0.15) * 100000)).attr("y", qRound(100000 + qMax(0.05, s.amount > 0 ? s.amount : 0.15) * 100000)).end();
                 x.end();
             } else {
                 if (!out) {

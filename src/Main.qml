@@ -36,8 +36,23 @@ ApplicationWindow {
     // ── Object animation (ANIM-001) ─────────────────────────────────────────
     // The pane's (or the timeline's) chosen row; -1 means "the selection's".
     property int animRow: -1
+    // The chosen row is followed by what it is, not where it was: after Undo,
+    // Redo or any other change to the list it is found again or let go.
+    property string animRowKey: ""
+    property bool animEditing: false
+    function animKey(b) { return b ? [b.targetId, b.effect, b.phase, b.trigger, b.start, b.duration, b.delay, b.direction].join("|") : "" }
+    onAnimRowChanged: animRowKey = animRow >= 0 ? animKey(backend.builds[animRow]) : ""
     property bool animAutoPreview: true
     property bool animPreviewing: false
+    property bool animPreviewWanted: false
+    // Ribbon buttons by id, so a command can open a neighbour's drop-down.
+    property var ribbonButtonById: ({})
+    function openRibbonMenu(id) {
+        const at = win.ribbonTabs.findIndex(k => k.key === (win.cmd[id] ? win.cmd[id].tab : ""))
+        if (at >= 0) win.ribbonTab = at
+        const b = win.ribbonButtonById[id]
+        if (b) Qt.callLater(() => b.clicked())
+    }
     // What the Animate tab's Effect, Timing and Order controls act on: the
     // chosen row, else every animation of the selected objects.
     function animTargets() {
@@ -68,6 +83,7 @@ ApplicationWindow {
     function animName(b) {
         if (!b || b.effect === undefined) return ""
         if (b.effect === 3) return qsTr("Media")
+        if (b.effect === 9 && !b.pathId) return qsTr("Along a path (no path chosen)")
         if (b.effect === 10) return b.phase === 1 ? qsTr("Disappear") : qsTr("Appear")
         const name = win.animEffectNames[b.effect] ?? qsTr("Effect")
         return b.cls === 0 ? qsTr("%1 in").arg(name) : b.cls === 2 ? qsTr("%1 out").arg(name) : name
@@ -77,26 +93,49 @@ ApplicationWindow {
         const index = backend.applyEffect(cls, effect)
         if (index < 0) return
         win.animRow = -1
+        // A motion with nowhere to go does nothing: ask for its path at once.
+        if (effect === 9 && !backend.builds[index].pathId) { win.openRibbonMenu("animOptions"); return }
         if (win.animAutoPreview) win.previewAnim(index)
     }
     function setAnim(key, value) {
         const rows = win.animTargets()
-        if (rows.length) backend.setBuildsProperty(rows, key, value)
+        if (!rows.length) return
+        win.animEditing = true
+        backend.setBuildsProperty(rows, key, value)
+        win.animEditing = false
+        if (win.animRow >= 0) win.animRowKey = win.animKey(backend.builds[win.animRow])
+    }
+    function moveAnim(by) {
+        const i = win.animTargets()[0]
+        win.animEditing = true
+        backend.moveBuild(i, i + by)
+        win.animEditing = false
+        win.animRow = i + by
+        win.animRowKey = win.animKey(backend.builds[win.animRow])
     }
     // Plays one animation (or the slide) where the slide is edited, then goes away.
     function previewAnim(index) {
         if (backend.reducedMotion) return
-        if (win.workspace === 0) win.animPreviewing = true
+        // The overlay comes up when playing really starts (nothing to play, no overlay).
+        win.animPreviewWanted = win.workspace === 0
         if (index >= 0) backend.previewBuild(index); else backend.previewSlide()
+        if (!backend.playing) win.animPreviewWanted = false
     }
     Connections {
         target: backend
         function onSelectionChanged() {
+            if (win.animEditing || win.animRow < 0) return
             const list = backend.builds
-            if (win.animRow >= list.length || (win.animRow >= 0 && backend.selectedIds.indexOf(list[win.animRow].targetId) < 0)) win.animRow = -1
+            let row = win.animKey(list[win.animRow]) === win.animRowKey ? win.animRow : list.findIndex(b => win.animKey(b) === win.animRowKey)
+            if (row >= 0 && backend.selectedIds.indexOf(list[row].targetId) < 0) row = -1
+            if (row !== win.animRow) win.animRow = row
         }
         function onCurrentSlideChanged() { win.animRow = -1 }
-        function onPlayingChanged() { if (!backend.playing) win.animPreviewing = false }
+        function onPlayingChanged() {
+            if (backend.playing && win.animPreviewWanted) win.animPreviewing = true
+            if (!backend.playing) win.animPreviewing = false
+            win.animPreviewWanted = false
+        }
     }
     // Adding something to the slide brings the slide and its Format sidebar back.
     function toFormat() { win.commitEditors(); win.workspace = 0; win.sidebar = 0 }
@@ -367,6 +406,11 @@ ApplicationWindow {
           run: () => { win.commitEditors(); if (backend.playing) { backend.pause(); return } const r = win.animTargets(); win.previewAnim(r.length ? r[0] : -1) } },
         { id: "animAutoPreview", tab: "animate", group: "preview", kind: "toggle", label: qsTr("Auto preview"), also: "play when applied",
           tip: qsTr("Play an effect once when you choose it"), checked: () => win.animAutoPreview, run: () => win.animAutoPreview = !win.animAutoPreview },
+        { id: "animPane", tab: "animate", group: "show", kind: "toggle", label: qsTr("Animation pane"), icon: "list", also: "list order sequence builds sidebar",
+          checked: () => win.sidebarChoice === 3, run: () => win.chooseSidebar(win.sidebarChoice === 3 ? 0 : 3) },
+        { id: "animTimeline", tab: "animate", group: "show", kind: "toggle", label: qsTr("Timeline"), icon: "timer", also: "animate view tracks scrub transition seconds",
+          tip: qsTr("The slide with its animations laid out in time, and the slide transition"), checked: () => win.workspace === 2,
+          run: () => { win.commitEditors(); win.workspace = win.workspace === 2 ? 0 : 2 } },
         { id: "animEntrance", tab: "animate", group: "effect", kind: "menu", on: () => backend.selectionCount > 0, label: qsTr("Entrance"), icon: "eye", tip: qsTr("How the selected objects arrive. Choosing another replaces it.") },
         { id: "animEntranceAppear", parent: "animEntrance", label: qsTr("Appear"), also: "entrance build in show", on: () => backend.selectionCount > 0, checked: () => win.animCurrent(0) === 10, run: () => win.applyAnim(0, 10) },
         { id: "animEntranceFade", parent: "animEntrance", label: qsTr("Fade in"), also: "entrance build in dissolve", on: () => backend.selectionCount > 0, checked: () => win.animCurrent(0) === 1, run: () => win.applyAnim(0, 1) },
@@ -375,7 +419,8 @@ ApplicationWindow {
         { id: "animEntranceZoom", parent: "animEntrance", label: qsTr("Zoom in"), also: "entrance build in grow scale", on: () => backend.selectionCount > 0, checked: () => win.animCurrent(0) === 13, run: () => win.applyAnim(0, 13) },
         { id: "animEntranceSpin", parent: "animEntrance", label: qsTr("Spin in"), also: "entrance build in turn rotate", on: () => backend.selectionCount > 0, checked: () => win.animCurrent(0) === 14, run: () => win.applyAnim(0, 14) },
         { id: "animEntranceWipe", parent: "animEntrance", label: qsTr("Wipe in"), also: "entrance build in reveal edge", on: () => backend.selectionCount > 0, checked: () => win.animCurrent(0) === 15, run: () => win.applyAnim(0, 15) },
-        { id: "animEntranceReveal", parent: "animEntrance", sep: true, label: qsTr("Reveal text"), also: "entrance by paragraph word letter typewriter", on: () => backend.selectionCount > 0, checked: () => win.animCurrent(0) === 8, run: () => win.applyAnim(0, 8) },
+        { id: "animEntranceReveal", parent: "animEntrance", sep: true, label: qsTr("Reveal text"), also: "entrance by paragraph word letter typewriter",
+          on: () => backend.slideObjects.some(o => o.text && backend.selectedIds.indexOf(o.id) >= 0), checked: () => win.animCurrent(0) === 8, run: () => win.applyAnim(0, 8) },
         { id: "animEmphasis", tab: "animate", group: "effect", kind: "menu", on: () => backend.selectionCount > 0, label: qsTr("Emphasis"), icon: "sparkles", tip: qsTr("Draw attention to the selected objects while they stay. Adds one each time.") },
         { id: "animEmphasisPulse", parent: "animEmphasis", label: qsTr("Pulse"), also: "emphasis swell throb", on: () => backend.selectionCount > 0, run: () => win.applyAnim(1, 7) },
         { id: "animEmphasisGrow", parent: "animEmphasis", label: qsTr("Grow"), also: "emphasis bigger enlarge", on: () => backend.selectionCount > 0, run: () => win.applyAnim(1, 16) },
@@ -390,8 +435,6 @@ ApplicationWindow {
         { id: "animExitWipe", parent: "animExit", label: qsTr("Wipe out"), also: "exit build out edge", on: () => backend.selectionCount > 0, checked: () => win.animCurrent(2) === 15, run: () => win.applyAnim(2, 15) },
         { id: "animMotion", tab: "animate", group: "effect", kind: "menu", on: () => backend.selectionCount > 0, label: qsTr("Motion"), icon: "route", tip: qsTr("Move the selected objects along a route") },
         { id: "animMotionPath", parent: "animMotion", label: qsTr("Along a path"), also: "motion path route follow travel", on: () => backend.selectionCount > 0, run: () => win.applyAnim(3, 9) },
-        { id: "buildPath", tab: "animate", group: "effect", kind: "paths", label: qsTr("Path guide"), icon: "spline",
-          tip: qsTr("The shape or drawn path a motion follows. Draw one with the pen and hide it; the object still follows it."), on: () => win.animAny(b => b.effect === 9) },
         { id: "animOptions", tab: "animate", group: "effect", kind: "menu", label: qsTr("Effect options"), icon: "settings", tip: qsTr("Direction, text steps, path and pace of the chosen animations"), on: () => win.animOn() },
         { id: "animFromBottom", parent: "animOptions", label: qsTr("From the bottom"), also: "direction effect options", on: () => win.animAny(b => b.effect === 11 || b.effect === 12 || b.effect === 15), checked: () => win.animCommon("direction") === 0, run: () => win.setAnim("direction", 0) },
         { id: "animFromLeft", parent: "animOptions", label: qsTr("From the left"), also: "direction effect options", on: () => win.animAny(b => b.effect === 11 || b.effect === 12 || b.effect === 15), checked: () => win.animCommon("direction") === 1, run: () => win.setAnim("direction", 1) },
@@ -400,13 +443,15 @@ ApplicationWindow {
         { id: "animByParagraph", parent: "animOptions", sep: true, label: qsTr("By paragraph"), also: "reveal text one step is", on: () => win.animAny(b => b.effect === 8), checked: () => win.animCommon("unit") === 0, run: () => win.setAnim("unit", 0) },
         { id: "animByWord", parent: "animOptions", label: qsTr("By word"), also: "reveal text one step is", on: () => win.animAny(b => b.effect === 8), checked: () => win.animCommon("unit") === 1, run: () => win.setAnim("unit", 1) },
         { id: "animByLetter", parent: "animOptions", label: qsTr("By letter"), also: "reveal text character typewriter", on: () => win.animAny(b => b.effect === 8), checked: () => win.animCommon("unit") === 2, run: () => win.setAnim("unit", 2) },
-        { id: "buildPathReverse", parent: "animOptions", sep: true, label: qsTr("Travel the other way"), also: "path reverse direction", on: () => win.animAny(b => b.effect === 9), checked: () => win.animCommon("pathReverse") === true, run: () => win.setAnim("pathReverse", win.animCommon("pathReverse") !== true) },
+        { id: "buildPath", parent: "animOptions", sep: true, kind: "paths", label: qsTr("Path guide"), also: "motion path route follow shape",
+          on: () => win.animAny(b => b.effect === 9) },
+        { id: "buildPathReverse", parent: "animOptions", label: qsTr("Travel the other way"), also: "path reverse direction", on: () => win.animAny(b => b.effect === 9), checked: () => win.animCommon("pathReverse") === true, run: () => win.setAnim("pathReverse", win.animCommon("pathReverse") !== true) },
         { id: "buildPathOrient", parent: "animOptions", label: qsTr("Turn with the path"), also: "path orient rotate", on: () => win.animAny(b => b.effect === 9), checked: () => win.animCommon("orient") === true, run: () => win.setAnim("orient", win.animCommon("orient") !== true) },
         { id: "animEaseLinear", parent: "animOptions", sep: true, label: qsTr("Even speed"), also: "easing linear pace", on: () => win.animAny(b => b.effect !== 3 && b.effect !== 10), checked: () => win.animCommon("easing") === Easing.Linear, run: () => win.setAnim("easing", Easing.Linear) },
         { id: "animEaseOut", parent: "animOptions", label: qsTr("Slow down at the end"), also: "easing ease out decelerate", on: () => win.animAny(b => b.effect !== 3 && b.effect !== 10), checked: () => win.animCommon("easing") === Easing.OutCubic, run: () => win.setAnim("easing", Easing.OutCubic) },
         { id: "animEaseGentle", parent: "animOptions", label: qsTr("Gentle stop"), also: "easing soft", on: () => win.animAny(b => b.effect !== 3 && b.effect !== 10), checked: () => win.animCommon("easing") === Easing.OutQuad, run: () => win.setAnim("easing", Easing.OutQuad) },
         { id: "animEaseInOut", parent: "animOptions", label: qsTr("Smooth start and stop"), also: "easing ease in and out", on: () => win.animAny(b => b.effect !== 3 && b.effect !== 10), checked: () => win.animCommon("easing") === Easing.InOutCubic, run: () => win.setAnim("easing", Easing.InOutCubic) },
-        { id: "animStart", tab: "animate", group: "timing", kind: "menu", label: qsTr("Start"), icon: "mouse-pointer-2", on: () => win.animOn(),
+        { id: "animStart", tab: "animate", group: "timing", kind: "menu", label: qsTr("Start"), icon: "mouse-pointer-2", on: () => win.animOn(), sizeText: qsTr("After previous"),
           text: () => { const v = win.animCommon("trigger"); return v === undefined ? qsTr("Start") : [qsTr("At a time"), qsTr("On click"), qsTr("With previous"), qsTr("After previous")][v] },
           tip: qsTr("When the chosen animations start") },
         { id: "animStartClick", parent: "animStart", label: qsTr("On click"), also: "start trigger next", on: () => win.animOn(), checked: () => win.animCommon("trigger") === 1, run: () => win.setAnim("trigger", 1) },
@@ -418,16 +463,11 @@ ApplicationWindow {
         { id: "buildDelay", tab: "animate", group: "timing", kind: "number", label: qsTr("Delay"), suffix: " s", step: 0.1, tip: qsTr("How long the chosen animations wait after their start"),
           on: () => win.animOn(), value: () => win.animCommon("delay"), set: v => win.setAnim("delay", v) },
         { id: "animEarlier", tab: "animate", group: "order", label: qsTr("Earlier"), icon: "arrow-up", tip: qsTr("Play the chosen animation one place earlier"), also: "move earlier reorder animation sooner up",
-          on: () => { const r = win.animTargets(); return r.length === 1 && r[0] > 0 }, run: () => { const i = win.animTargets()[0]; backend.moveBuild(i, i - 1); win.animRow = i - 1 } },
+          on: () => { const r = win.animTargets(); return r.length === 1 && r[0] > 0 }, run: () => win.moveAnim(-1) },
         { id: "animLater", tab: "animate", group: "order", label: qsTr("Later"), icon: "arrow-down", tip: qsTr("Play the chosen animation one place later"), also: "move later reorder animation down",
-          on: () => { const r = win.animTargets(); return r.length === 1 && r[0] < backend.builds.length - 1 }, run: () => { const i = win.animTargets()[0]; backend.moveBuild(i, i + 1); win.animRow = i + 1 } },
+          on: () => { const r = win.animTargets(); return r.length === 1 && r[0] < backend.builds.length - 1 }, run: () => win.moveAnim(1) },
         { id: "animRemove", tab: "animate", group: "order", label: qsTr("Remove"), icon: "trash-2", also: "delete animation build none",
           tip: qsTr("Remove the chosen animations (the objects stay)"), on: () => win.animOn(), run: () => { backend.removeBuilds(win.animTargets()); win.animRow = -1 } },
-        { id: "animPane", tab: "animate", group: "show", kind: "toggle", label: qsTr("Animation pane"), icon: "list", also: "list order sequence builds sidebar",
-          checked: () => win.sidebarChoice === 3, run: () => win.chooseSidebar(win.sidebarChoice === 3 ? 0 : 3) },
-        { id: "animTimeline", tab: "animate", group: "show", kind: "toggle", label: qsTr("Timeline"), icon: "timer", also: "animate view tracks scrub transition seconds",
-          tip: qsTr("The slide with its animations laid out in time, and the slide transition"), checked: () => win.workspace === 2,
-          run: () => { win.commitEditors(); win.workspace = win.workspace === 2 ? 0 : 2 } },
         // ── The always-visible cluster on the title line ──
         { id: "commandSearchMenuItem", tab: "cluster", pal: qsTr("Help"), label: qsTr("Find a command"), icon: "search", keys: "Ctrl+K", also: "search palette", run: () => { win.commitEditors(); commandPalette.show() } },
         { id: "toolbarUndo", tab: "cluster", pal: qsTr("Edit"), label: qsTr("Undo"), icon: "undo-2", keys: "Ctrl+Z", also: "back mistake", on: () => backend.canUndo, run: () => backend.undo() },
@@ -492,14 +532,19 @@ ApplicationWindow {
         // Icon-only (the cluster below 1440 px) is a square, so ~820 px still fits.
         implicitWidth: display === AbstractButton.IconOnly ? implicitHeight
                        : Math.max(implicitBackgroundWidth + leftInset + rightInset, implicitContentWidth + leftPadding + rightPadding)
+                         + (c && c.sizeText ? Math.max(0, Math.ceil(rbLong.advanceWidth - rbNow.advanceWidth)) : 0)
         enabled: win.cmdOn(c)
         // Toggles: the binding owns `checked`; a click runs the command, which flips the source.
         checkable: false
         checked: c.kind === "toggle" && !!c.checked()
-        readonly property bool opensMenu: c.kind === "menu" || c.kind === "layouts" || c.kind === "languages" || c.kind === "paths"
+        readonly property bool opensMenu: c.kind === "menu" || c.kind === "layouts" || c.kind === "languages"
         tip: (c.tip ?? c.label) + (c.keys && !c.tip ? "  " + c.keys : "")
         focusPolicy: Qt.StrongFocus
         onActiveFocusChanged: if (activeFocus) win.revealInRow(rb)
+        Component.onCompleted: if (c && c.id) win.ribbonButtonById[c.id] = rb
+        // A button whose text changes (Start) keeps the width of its longest text.
+        TextMetrics { id: rbNow; font: rb.font; text: rb.text }
+        TextMetrics { id: rbLong; font: rb.font; text: rb.c ? (rb.c.sizeText ?? "") : "" }
         Accessible.role: c.kind === "toggle" ? Accessible.CheckBox : opensMenu ? Accessible.ButtonMenu : Accessible.Button
         Accessible.checkable: c.kind === "toggle"
         Accessible.checked: checked
@@ -508,7 +553,6 @@ ApplicationWindow {
             if (c.kind === "menu") menuLoader.item.popup(rb, 0, rb.height)
             else if (c.kind === "layouts") backend.design.layouts.length ? layoutsLoader.item.popup(rb, 0, rb.height) : backend.setupDesign()
             else if (c.kind === "languages") languagesLoader.item.popup(rb, 0, rb.height)
-            else if (c.kind === "paths") pathsLoader.item.popup(rb, 0, rb.height)
             else c.run()
         }
         // Only the drop-down a button's kind needs is created.
@@ -530,28 +574,6 @@ ApplicationWindow {
                         }
                         onObjectAdded: (index, object) => rbLayouts.insertItem(index, object)
                         onObjectRemoved: (index, object) => rbLayouts.removeItem(object)
-                    }
-                }
-            }
-        }
-        // ANIM-001: the guide a motion follows, any other object on the slide.
-        Loader {
-            id: pathsLoader
-            active: rb.c.kind === "paths"
-            sourceComponent: Component {
-                Menu {
-                    id: rbPaths
-                    Instantiator {
-                        model: backend.slideObjects.filter(o => !win.animAny(b => b.effect === 9 && b.targetId === o.id))
-                        delegate: MenuItem {
-                            required property var modelData
-                            text: String(modelData.name).replace(/\s+/g, " ")
-                            checkable: true
-                            checked: win.animCommon("pathId") === modelData.id
-                            onTriggered: { win.setAnim("pathId", modelData.id); checked = Qt.binding(() => win.animCommon("pathId") === modelData.id) }
-                        }
-                        onObjectAdded: (index, object) => rbPaths.insertItem(index, object)
-                        onObjectRemoved: (index, object) => rbPaths.removeItem(object)
                     }
                 }
             }
@@ -604,7 +626,7 @@ ApplicationWindow {
         Accessible.role: Accessible.Grouping
         Accessible.name: c.label
         readonly property var shared: c.value()
-        Label { text: rn.shared === undefined && rn.enabled ? qsTr("%1 (mixed)").arg(rn.c.label) : rn.c.label; color: rn.enabled ? Theme.textSecondary : Theme.textMuted }
+        Label { text: rn.c.label; color: rn.enabled ? Theme.textSecondary : Theme.textMuted }
         NumField {
             objectName: rn.c.id
             Layout.preferredWidth: Theme.s5 * 4
@@ -612,6 +634,7 @@ ApplicationWindow {
             suffix: rn.c.suffix ?? ""
             value: rn.shared ?? (win.animTargets().length ? backend.builds[win.animTargets()[0]][rn.c.id === "buildDuration" ? "duration" : "delay"] : 0)
             tabStop: true
+            mixed: rn.shared === undefined && rn.enabled
             onCommitted: v => rn.c.set(v)
             HoverHandler { id: rnHover }
             ToolTip.visible: rnHover.hovered && (rn.c.tip ?? "") !== ""; ToolTip.delay: Theme.tooltipDelay; ToolTip.text: rn.c.tip ?? ""
@@ -620,6 +643,29 @@ ApplicationWindow {
     }
     Component { id: ribbonMenuItemComp; RibbonMenuItem {} }
     Component { id: ribbonButtonComp; RibbonButton { c: parent.modelData } }
+    // ANIM-001: Effect options > Path guide: any other object on the slide is the route.
+    Component {
+        id: ribbonPathsMenuComp
+        Menu {
+            id: rbPaths
+            property var c
+            objectName: c.id
+            title: c.label
+            enabled: win.cmdOn(c)
+            Instantiator {
+                model: backend.slideObjects.filter(o => !win.animAny(b => b.effect === 9 && b.targetId === o.id))
+                delegate: MenuItem {
+                    required property var modelData
+                    text: String(modelData.name).replace(/\s+/g, " ")
+                    checkable: true
+                    checked: win.animCommon("pathId") === modelData.id
+                    onTriggered: { win.setAnim("pathId", modelData.id); checked = Qt.binding(() => win.animCommon("pathId") === modelData.id) }
+                }
+                onObjectAdded: (index, object) => rbPaths.insertItem(index, object)
+                onObjectRemoved: (index, object) => rbPaths.removeItem(object)
+            }
+        }
+    }
     Component { id: ribbonNumberComp; RibbonNumber { c: parent.modelData } }
     Component { id: ribbonMenuSepComp; MenuSeparator {} }
     // A drop-down filled from the table: every entry whose parent is `owner`, in order.
@@ -634,7 +680,8 @@ ApplicationWindow {
             filled = true
             for (const k of win.childrenOf(owner)) {
                 if (k.sep && rm.count > 0) rm.addItem(ribbonMenuSepComp.createObject(win.contentItem))
-                rm.addItem(ribbonMenuItemComp.createObject(win.contentItem, { c: k }))
+                if (k.kind === "paths") rm.addMenu(ribbonPathsMenuComp.createObject(win.contentItem, { c: k }))
+                else rm.addItem(ribbonMenuItemComp.createObject(win.contentItem, { c: k }))
             }
         }
     }
@@ -1076,11 +1123,12 @@ ApplicationWindow {
                 }
 
                 // In a room: its name and the way back, pinned right; the tabs stay usable.
-                ToolbarRule { visible: win.inMode }
+                ToolbarRule { visible: win.inMode || win.workspace === 2 }
                 Label {
                     objectName: "modeTitle"
-                    visible: win.inMode
-                    text: win.workspace === 1 ? qsTr("Masters and layouts")
+                    visible: win.inMode || win.workspace === 2
+                    text: win.workspace === 2 ? qsTr("Timeline")
+                        : win.workspace === 1 ? qsTr("Masters and layouts")
                         : win.workspace === 3 ? qsTr("Review")
                         : win.workspace === 4 ? qsTr("Presenter setup")
                         : qsTr("Light table")
@@ -1090,11 +1138,12 @@ ApplicationWindow {
                 }
                 Button {
                     objectName: "modeDone"
-                    visible: win.inMode
+                    visible: win.inMode || win.workspace === 2
                     text: qsTr("Done")
                     highlighted: true
                     onClicked: win.leaveMode()
-                    readonly property string about: win.workspace === 1 ? qsTr("Changes here reach every slide that uses the master or layout.")
+                    readonly property string about: win.workspace === 2 ? qsTr("The slide's animations laid out in time, and its transition.")
+                        : win.workspace === 1 ? qsTr("Changes here reach every slide that uses the master or layout.")
                         : win.workspace === 3 ? qsTr("Comments, findings, search and spelling across the whole deck.")
                         : win.workspace === 4 ? qsTr("Choose the displays and rehearse. The console opens when the show starts.")
                         : qsTr("Every slide at once. Drag to reorder; double-click one to edit it.")

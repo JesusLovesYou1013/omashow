@@ -201,7 +201,11 @@ RowLayout {
                                         onReleased: {
                                             const index = track.index, start = Math.round(track.draftStart * 100)/100
                                             track.moving = false
-                                            if (start !== track.modelData.start) backend.setBuildProperty(index,"start",start)
+                                            // ANIM-001: a drag moves an animation in time without changing how
+                                            // it starts: an On click / With / After one changes its delay.
+                                            if (start === track.modelData.start) return
+                                            if (track.modelData.trigger === 0) backend.setBuildProperty(index,"start",start)
+                                            else backend.setBuildProperty(index,"delay",Math.max(0, Math.round(((track.modelData.delay ?? 0) + start - track.modelData.start) * 100) / 100))
                                         }
                                         onCanceled: track.moving = false
                                     }
