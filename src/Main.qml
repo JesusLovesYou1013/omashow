@@ -231,33 +231,34 @@ ApplicationWindow {
         { id: "pastePicture", parent: "ribbonPasteSpecial", label: qsTr("As a picture"), also: "paste as a picture flatten image", on: () => backend.canPaste && (backend.clipboardKinds.objects ?? false), run: () => backend.pasteSpecial(3) },
         { id: "ribbonCut", tab: "home", group: "clipboard", label: qsTr("Cut"), icon: "scissors", keys: "Ctrl+X", on: () => backend.hasSelection, run: () => backend.copyAsync(true) },
         { id: "ribbonCopy", tab: "home", group: "clipboard", label: qsTr("Copy"), icon: "copy", keys: "Ctrl+C", on: () => backend.hasSelection, run: () => backend.copyAsync() },
-        { id: "ribbonDuplicate", tab: "home", group: "clipboard", label: qsTr("Duplicate"), keys: "Ctrl+D", also: "duplicate the selected objects", on: () => backend.hasSelection, run: () => backend.duplicateSelected() },
-        { id: "ribbonDelete", tab: "home", group: "clipboard", label: qsTr("Delete"), icon: "trash-2", keys: "Del", also: "delete the selected objects remove", on: () => backend.hasSelection, run: () => backend.deleteSelected() },
         { id: "toolbarNewSlide", tab: "home", group: "slides", label: qsTr("New Slide"), icon: "square-plus", keys: "Ctrl+N", also: "add a slide new page", on: () => !backend.startVisible, run: () => backend.addSlide() },
         { id: "ribbonLayout", tab: "home", group: "slides", kind: "layouts", label: qsTr("Layout"), icon: "layout-template", tip: qsTr("Apply a layout to this slide"), also: "apply a layout master placeholder", on: () => !backend.startVisible,
           run: () => { win.commitEditors(); win.workspace = 1; layoutApplyDialog.show(backend.slideDesign.layoutId ?? "") } },
-        { id: "ribbonDuplicateSlides", tab: "home", group: "slides", label: qsTr("Duplicate slides"), icon: "copy", also: "duplicate the selected slides copy page", run: () => backend.duplicateSelectedSlides() },
-        { id: "ribbonDeleteSlides", tab: "home", group: "slides", label: qsTr("Delete slides"), icon: "trash-2", also: "delete the selected slides remove page", on: () => backend.slideSelectionState.canDelete, run: () => backend.deleteSelectedSlides() },
-        { id: "importDeckMenuItem", tab: "home", group: "slides", label: qsTr("Reuse slides…"), icon: "folder-open", tip: qsTr("Import slides from another deck"), also: "import slides from another deck borrow steal reuse", on: () => !backend.startVisible, run: () => { win.commitEditors(); backend.importDeckDialog() } },
+        { id: "ribbonDuplicateSlides", tab: "home", group: "slides", label: qsTr("Duplicate slides"), icon: "copy", also: "duplicate the selected slides copy page duplicate this slide", run: () => backend.duplicateSelectedSlides() },
+        { id: "ribbonDeleteSlides", tab: "home", group: "slides", label: qsTr("Delete slides"), icon: "trash-2", also: "delete the selected slides remove page delete this slide", on: () => backend.slideSelectionState.canDelete, run: () => backend.deleteSelectedSlides() },
+        { id: "importDeckMenuItem", tab: "home", group: "slides", label: qsTr("Import from deck…"), icon: "folder-open", tip: qsTr("Import slides (and their design) from another deck"), also: "import slides from another deck borrow steal reuse", on: () => !backend.startVisible, run: () => { win.commitEditors(); backend.importDeckDialog() } },
+        { id: "ribbonDuplicate", tab: "home", group: "editing", label: qsTr("Duplicate"), keys: "Ctrl+D", also: "duplicate the selected objects", on: () => backend.hasSelection, run: () => backend.duplicateSelected() },
+        { id: "ribbonDelete", tab: "home", group: "editing", label: qsTr("Delete"), icon: "trash-2", keys: "Del", also: "delete the selected objects remove", on: () => backend.hasSelection, run: () => backend.deleteSelected() },
         { id: "ribbonSelectAll", tab: "home", group: "editing", label: qsTr("Select all"), keys: "Ctrl+A", run: () => backend.selectAll() },
         // ── Insert ──
         { id: "insertText", tab: "insert", group: "text", label: qsTr("Text"), icon: "type", keys: "T", tip: qsTr("Text box  T"), also: "words box type", on: () => !backend.startVisible, run: () => { win.toFormat(); backend.addText() } },
-        { id: "insertShape", tab: "insert", group: "text", kind: "menu", label: qsTr("Shape"), icon: "shapes", tip: qsTr("Shapes, the pen and freehand  S adds a rectangle") },
+        { id: "insertEquation", tab: "insert", group: "text", label: qsTr("Equation"), icon: "sigma", also: "an equation maths math formula latex fraction", on: () => !backend.startVisible, run: () => { win.workspace = 0; win.commitEditors(); backend.addEquation() } },
+        { id: "insertShape", tab: "insert", group: "shapes", kind: "menu", label: qsTr("Shape"), icon: "shapes", tip: qsTr("Shapes, the pen and freehand  S adds a rectangle") },
         { id: "openShapeGallery", parent: "insertShape", label: qsTr("Shape gallery…"), icon: "shapes", also: "a shape rectangle circle arrow", on: () => !backend.startVisible, run: () => { win.toFormat(); shapeGallery.open() } },
         { id: "drawWithPen", parent: "insertShape", sep: true, label: qsTr("Draw with the pen"), icon: "pen-tool", also: "path bezier line vector", on: () => !backend.startVisible, run: () => { win.toFormat(); editCanvas.startPathTool(1) } },
         { id: "drawFreehand", parent: "insertShape", label: qsTr("Draw freehand"), icon: "pencil-line", also: "sketch scribble line", on: () => !backend.startVisible, run: () => { win.toFormat(); editCanvas.startPathTool(2) } },
+        { id: "connectObjectsAction", tab: "insert", group: "shapes", label: qsTr("Connect objects"), icon: "spline", also: "connector line", on: () => backend.selectionCount === 2, run: () => backend.connectSelected() },
         { id: "insertPicture", tab: "insert", group: "objects", label: qsTr("Picture"), icon: "image", tip: qsTr("Insert a picture"), also: "a picture image photo png", on: () => !backend.startVisible, run: () => { win.toFormat(); backend.insertImageDialog() } },
         { id: "insertTable", tab: "insert", group: "objects", label: qsTr("Table"), icon: "table", tip: qsTr("Insert a table"), also: "a table grid rows columns", on: () => !backend.startVisible, run: () => { win.toFormat(); if (backend.addTable()) tableEditor.show() } },
         { id: "insertChart", tab: "insert", group: "objects", label: qsTr("Chart"), icon: "chart-column", tip: qsTr("Insert a chart"), also: "a chart graph bar line pie data", on: () => !backend.startVisible, run: () => { win.toFormat(); backend.addChart() } },
         { id: "insertDiagram", tab: "insert", group: "objects", label: qsTr("Diagram"), icon: "workflow", tip: qsTr("Insert a process or hierarchy diagram"), also: "a diagram process hierarchy flow", on: () => !backend.startVisible, run: () => { win.toFormat(); diagramDialog.show() } },
-        { id: "insertEquation", tab: "insert", group: "objects", label: qsTr("Equation"), icon: "sigma", also: "an equation maths math formula latex fraction", on: () => !backend.startVisible, run: () => { win.workspace = 0; win.commitEditors(); backend.addEquation() } },
         { id: "mediaMenuButton", tab: "insert", group: "media", kind: "menu", label: qsTr("Media"), icon: "clapperboard", tip: qsTr("Audio and video") },
-        { id: "insertEmbeddedMedia", parent: "mediaMenuButton", label: qsTr("Audio or video · embed…"), icon: "clapperboard", also: "insert film sound video audio movie clip embed", on: () => !backend.startVisible, run: () => { win.toFormat(); backend.insertMediaDialog(true) } },
+        { id: "insertEmbeddedMedia", parent: "mediaMenuButton", label: qsTr("Audio or video · embed…"), icon: "clapperboard", also: "insert film sound video audio movie clip embed film or sound", on: () => !backend.startVisible, run: () => { win.toFormat(); backend.insertMediaDialog(true) } },
         { id: "insertLinkedMedia", parent: "mediaMenuButton", label: qsTr("Audio or video · link…"), also: "insert film sound video audio movie clip link", on: () => !backend.startVisible, run: () => { win.toFormat(); backend.insertMediaDialog(false) } },
         { id: "objectLinkAction", tab: "insert", group: "links", label: qsTr("Link or action…"), icon: "link", also: "hyperlink jump url", on: () => backend.hasSelection, run: () => linkDialog.show() },
         // ── Design ──
         { id: "slideSizeAction", tab: "design", group: "size", label: qsTr("Slide size…"), icon: "scan", also: "change the slide size aspect ratio widescreen portrait", on: () => !backend.startVisible, run: () => { win.commitEditors(); slideSizeDialog.show() } },
-        { id: "ribbonDesignMasters", tab: "design", group: "size", label: qsTr("Edit masters and layouts"), icon: "layout-template", also: "design theme master layout template", run: () => { win.commitEditors(); win.workspace = 1 } },
+        { id: "ribbonDesignMasters", tab: "design", group: "size", label: qsTr("Edit masters and layouts"), icon: "layout-template", also: "design theme master layout template remove what nothing uses unused tidy hygiene", run: () => { win.commitEditors(); win.workspace = 1 } },
         // ── Arrange ──
         { id: "ribbonGroup", tab: "arrange", group: "group", label: qsTr("Group"), icon: "group", keys: "Ctrl+G", on: () => backend.selectionCount > 1, run: () => backend.groupSelected() },
         { id: "ribbonUngroup", tab: "arrange", group: "group", label: qsTr("Ungroup"), icon: "ungroup", keys: "Ctrl+Shift+G", on: () => !!backend.selection.groupId, run: () => backend.ungroupSelected() },
@@ -267,18 +268,17 @@ ApplicationWindow {
         { id: "ribbonUnlockAll", tab: "arrange", group: "lock", label: qsTr("Unlock all"), icon: "lock-open", run: () => backend.unlockAllObjects() },
         { id: "ribbonHide", tab: "arrange", group: "lock", label: qsTr("Hide selected"), icon: "eye-off", also: "hide the selected objects", on: () => backend.hasSelection, run: () => backend.setSelectedProperty("hidden", true) },
         { id: "ribbonShowAll", tab: "arrange", group: "lock", label: qsTr("Show all"), icon: "eye", also: "show all objects", run: () => backend.showAllObjects() },
-        { id: "connectObjectsAction", tab: "arrange", group: "combine", label: qsTr("Connect objects"), icon: "spline", also: "connector line", on: () => backend.selectionCount === 2, run: () => backend.connectSelected() },
         { id: "combineShapesAction", tab: "arrange", group: "combine", label: qsTr("Combine shapes…"), also: "merge union subtract intersect", on: () => backend.selectionCount > 1, run: () => { win.commitEditors(); combineShapesDialog.open() } },
         { id: "textOnShapeAction", tab: "arrange", group: "combine", label: qsTr("Put the text on this shape"), icon: "spline", also: "put the text on a shape along path curve circle words", on: () => backend.selectionCount === 2, run: () => { win.commitEditors(); win.workspace = 0; backend.putTextOnShape() } },
         // ── Slide Show ──
         { id: "ribbonShowFromHere", tab: "show", group: "start", label: qsTr("Play from this slide"), icon: "play", also: "present from this slide show current", run: () => { win.commitEditors(); presenter.start(true, false) } },
         { id: "ribbonShowRehearse", tab: "show", group: "start", label: qsTr("Rehearse"), icon: "timer", also: "rehearse in a window practise timing", run: () => { win.commitEditors(); presenter.start(false, true) } },
-        { id: "ribbonSkipSlides", tab: "show", group: "setup", kind: "toggle", label: qsTr("Skip in show"), icon: "eye-off", tip: qsTr("Skip the selected slides in the show (or include them again)"), also: "skip the selected slides hide omit include", checked: () => !!backend.slideSelectionState.allSkipped, run: () => backend.setSlidesSkipped(!backend.slideSelectionState.allSkipped) },
+        { id: "ribbonSkipSlides", tab: "show", group: "setup", kind: "toggle", label: qsTr("Skip in show"), icon: "eye-off", tip: qsTr("Skip the selected slides in the show (or include them again)"), also: "skip the selected slides hide omit include skip this slide in the show", checked: () => !!backend.slideSelectionState.allSkipped, run: () => backend.setSlidesSkipped(!backend.slideSelectionState.allSkipped) },
         { id: "ribbonShowSetup", tab: "show", group: "setup", label: qsTr("Presenter setup…"), icon: "monitor", also: "displays console timings custom shows", run: () => { win.commitEditors(); win.workspace = 4 } },
         { id: "openMediaPreflight", tab: "show", group: "setup", label: qsTr("Media preflight…"), also: "check media audio video before the show", run: () => mediaPreflight.open() },
         // ── Review ──
-        { id: "toolbarReview", tab: "review", group: "review", label: qsTr("Review"), icon: "message-square-text", tip: qsTr("Comments, findings and spelling"), also: "comments findings outline statistics accessibility spelling", run: () => { win.commitEditors(); win.workspace = 3 } },
-        { id: "deckLanguageMenu", tab: "review", group: "proofing", kind: "languages", label: qsTr("Language"), icon: "languages", tip: qsTr("The deck is written in…"), also: "the deck is written in language dictionary spelling", run: () => win.ribbonTab = 5 },
+        { id: "toolbarReview", tab: "review", group: "review", label: qsTr("Review"), icon: "message-square-text", tip: qsTr("Comments, findings and spelling"), also: "comments findings outline statistics accessibility spelling check the spelling find and replace comment on this slide check what would stop someone reading this", run: () => { win.commitEditors(); win.workspace = 3 } },
+        { id: "deckLanguageMenu", tab: "review", group: "proofing", kind: "languages", label: qsTr("Language"), icon: "languages", tip: qsTr("The deck is written in…"), also: "the deck is written in language dictionary spelling", run: () => win.ribbonTab = win.ribbonTabs.findIndex(t => t.key === "review") },
         { id: "smartPunctuationItem", tab: "review", group: "proofing", kind: "toggle", label: qsTr("Smart punctuation"), also: "quotes dashes ellipsis curly", checked: () => backend.smartPunctuation, run: () => backend.setSmartPunctuation(!backend.smartPunctuation) },
         // ── View ──
         { id: "lightTableMenuItem", tab: "view", group: "views", label: qsTr("Light table"), icon: "layout-grid", also: "sorter order overview grid", run: () => { win.commitEditors(); win.workspace = 6; slideSorter.focusBrowser() } },
@@ -307,24 +307,32 @@ ApplicationWindow {
         { id: "helpGuideMenuItem", parent: "ribbonHelpButton", label: qsTr("OmaShow guide"), icon: "info", keys: "F1", also: "help manual explain how what does sections parts", run: () => { win.commitEditors(); helpGuide.open() } },
         { id: "helpShortcutsMenuItem", parent: "ribbonHelpButton", label: qsTr("Keyboard shortcuts"), icon: "keyboard", keys: "?", also: "keys help", run: () => helpSheet.open() }
     ]
-    // Ctrl+K-only commands: personal's palette had these with no menu or toolbar place;
-    // they stay search-only (no ribbon button, so nothing is shown twice).
-    readonly property var paletteOnly: [
-        { group: qsTr("Slides"), name: qsTr("Duplicate this slide"), also: "copy page", shortcut: "Ctrl+D", enabled: !backend.startVisible, run: () => backend.duplicateSlide() },
-        { group: qsTr("Slides"), name: qsTr("Delete this slide"), also: "remove page", enabled: backend.slideCount > 1, run: () => backend.deleteSlide() },
-        { group: qsTr("Slides"), name: qsTr("Skip this slide in the show"), also: "hide omit", enabled: !backend.startVisible, run: () => backend.setSlidesSkipped(true) },
-        { group: qsTr("Insert"), name: qsTr("Film or sound"), also: "video audio movie clip", enabled: !backend.startVisible, run: () => { win.workspace = 0; backend.insertMediaDialog() } },
-        { group: qsTr("Review"), name: qsTr("Check the spelling"), also: "dictionary language words typo", run: () => { win.workspace = 3 } },
-        { group: qsTr("Edit"), name: qsTr("Find and replace"), also: "search words swap", enabled: !backend.startVisible, run: () => win.workspace = 3 },
-        { group: qsTr("Review"), name: qsTr("Comment on this slide"), also: "note remark feedback", enabled: !backend.startVisible, run: () => win.workspace = 3 },
-        { group: qsTr("Review"), name: qsTr("Check what would stop someone reading this"), also: "accessibility contrast alt text findings", enabled: !backend.startVisible, run: () => win.workspace = 3 },
-        { group: qsTr("Design"), name: qsTr("Remove what nothing uses"), also: "unused tidy hygiene clean", enabled: !backend.startVisible, run: () => win.workspace = 1 }
-    ]
     readonly property var ribbonTabs: [
         { key: "home", label: qsTr("Home") }, { key: "insert", label: qsTr("Insert") }, { key: "design", label: qsTr("Design") },
         { key: "arrange", label: qsTr("Arrange") }, { key: "show", label: qsTr("Slide Show") }, { key: "review", label: qsTr("Review") },
         { key: "view", label: qsTr("View") }
     ]
+    readonly property var ribbonGroupLabels: ({
+        clipboard: qsTr("Clipboard"), slides: qsTr("Slides"), editing: qsTr("Editing"), text: qsTr("Text"), shapes: qsTr("Shapes"),
+        objects: qsTr("Objects"), media: qsTr("Media"), links: qsTr("Links"), size: qsTr("Size and masters"), group: qsTr("Group"),
+        order: qsTr("Order"), lock: qsTr("Lock and hide"), combine: qsTr("Combine"), start: qsTr("Start"), setup: qsTr("Set up"),
+        review: qsTr("Review"), proofing: qsTr("Proofing"), views: qsTr("Views"), panels: qsTr("Panels"), zoom: qsTr("Zoom"),
+        guides: qsTr("Guides"), access: qsTr("Accessibility") })
+    // Ctrl+K's list, built when it opens (not re-built under the user on every selection change).
+    function paletteCommands() {
+        return ribbonCommands.filter(c => c.kind !== "menu" && !!c.run).map(c => ({
+            group: paletteGroup(c), name: c.label, also: (c.also ?? "") + " " + (c.tip ?? ""),
+            shortcut: c.keys ?? "", enabled: cmdOn(c), run: c.run }))
+    }
+    // A button reached with Tab inside a scrolled row comes into view.
+    function revealInRow(item) {
+        let row = item.parent
+        while (row && !(row.objectName && row.objectName.indexOf("ribbonTabRow_") === 0)) row = row.parent
+        if (!row) return
+        const x = item.mapToItem(row.contentItem, 0, 0).x
+        if (x < row.contentX) row.contentX = Math.max(0, x - Theme.s2)
+        else if (x + item.width > row.contentX + row.width) row.contentX = Math.min(row.contentWidth - row.width, x + item.width - row.width + Theme.s2)
+    }
     readonly property var cmd: { const m = ({}); for (const c of ribbonCommands) m[c.id] = c; return m }
     function cmdOn(c) { return !c.on || !!c.on() }
     function cmdsIn(tab, group) { return ribbonCommands.filter(c => c.tab === tab && c.group === group) }
@@ -357,51 +365,64 @@ ApplicationWindow {
         checked: c.kind === "toggle" && !!c.checked()
         readonly property bool opensMenu: c.kind === "menu" || c.kind === "layouts" || c.kind === "languages"
         tip: (c.tip ?? c.label) + (c.keys && !c.tip ? "  " + c.keys : "")
-        focusPolicy: Qt.TabFocus
+        focusPolicy: Qt.StrongFocus
+        onActiveFocusChanged: if (activeFocus) win.revealInRow(rb)
         Accessible.role: c.kind === "toggle" ? Accessible.CheckBox : opensMenu ? Accessible.ButtonMenu : Accessible.Button
         Accessible.checkable: c.kind === "toggle"
         Accessible.checked: checked
         Accessible.description: c.tip ?? ""
         onClicked: {
-            if (c.kind === "menu") rbMenu.popup(rb, 0, rb.height)
-            else if (c.kind === "layouts") backend.design.layouts.length ? rbLayouts.popup(rb, 0, rb.height) : backend.setupDesign()
-            else if (c.kind === "languages") rbLanguages.popup(rb, 0, rb.height)
+            if (c.kind === "menu") menuLoader.item.popup(rb, 0, rb.height)
+            else if (c.kind === "layouts") backend.design.layouts.length ? layoutsLoader.item.popup(rb, 0, rb.height) : backend.setupDesign()
+            else if (c.kind === "languages") languagesLoader.item.popup(rb, 0, rb.height)
             else c.run()
         }
-        RibbonMenu { id: rbMenu; owner: rb.c.kind === "menu" ? rb.c.id : "" }
-        Menu {
-            id: rbLayouts
-            Instantiator {
-                model: rb.c.kind === "layouts" ? backend.design.layouts : []
-                delegate: MenuItem {
-                    required property var modelData
-                    text: modelData.name
-                    checkable: true
-                    checked: modelData.id === backend.slideDesign.layoutId
-                    onTriggered: { win.commitEditors(); layoutApplyDialog.show(modelData.id) }
+        // Only the drop-down a button's kind needs is created.
+        Loader { id: menuLoader; active: rb.c.kind === "menu"; sourceComponent: Component { RibbonMenu { owner: rb.c.id } } }
+        Loader {
+            id: layoutsLoader
+            active: rb.c.kind === "layouts"
+            sourceComponent: Component {
+                Menu {
+                    id: rbLayouts
+                    Instantiator {
+                        model: backend.design.layouts
+                        delegate: MenuItem {
+                            required property var modelData
+                            text: modelData.name
+                            checkable: true
+                            checked: modelData.id === backend.slideDesign.layoutId
+                            onTriggered: { win.commitEditors(); layoutApplyDialog.show(modelData.id) }
+                        }
+                        onObjectAdded: (index, object) => rbLayouts.insertItem(index, object)
+                        onObjectRemoved: (index, object) => rbLayouts.removeItem(object)
+                    }
                 }
-                onObjectAdded: (index, object) => rbLayouts.insertItem(index, object)
-                onObjectRemoved: (index, object) => rbLayouts.removeItem(object)
             }
         }
-        Menu {
-            id: rbLanguages
-            Repeater {
-                model: rb.c.kind === "languages" ? backend.spellingLanguages() : []
-                MenuItem {
-                    required property string modelData
-                    text: modelData
-                    checkable: true
-                    checked: backend.deckLanguage === modelData
-                    onTriggered: backend.setDeckLanguage(modelData)
+        Loader {
+            id: languagesLoader
+            active: rb.c.kind === "languages"
+            sourceComponent: Component {
+                Menu {
+                    Repeater {
+                        model: backend.spellingLanguages()
+                        MenuItem {
+                            required property string modelData
+                            text: modelData
+                            checkable: true
+                            checked: backend.deckLanguage === modelData
+                            onTriggered: backend.setDeckLanguage(modelData)
+                        }
+                    }
+                    MenuItem {
+                        objectName: "noDictionaries"
+                        enabled: false
+                        visible: backend.spellingLanguages().length === 0
+                        height: visible ? implicitHeight : 0
+                        text: qsTr("No dictionaries are installed")
+                    }
                 }
-            }
-            MenuItem {
-                objectName: rb.c.kind === "languages" ? "noDictionaries" : ""
-                enabled: false
-                visible: rb.c.kind === "languages" && backend.spellingLanguages().length === 0
-                height: visible ? implicitHeight : 0
-                text: qsTr("No dictionaries are installed")
             }
         }
     }
@@ -544,13 +565,10 @@ ApplicationWindow {
     LayoutApplyDialog { id: layoutApplyDialog }
     // Every command the menus offer, by name and by the words people use for it.
     // OMASHOW-PERSONAL: ribbon-only prototype (UI-RIBBON-003) — Ctrl+K lists the
-    // ribbon's own table (same labels, rules and handlers) and the search-only extras.
+    // ribbon's own table (same labels, rules and handlers), built as it opens.
     CommandPalette {
         id: commandPalette
-        commands: win.ribbonCommands.filter(c => c.kind !== "menu" && !!c.run).map(c => ({
-            group: win.paletteGroup(c), name: c.label === "?" ? qsTr("Help") : c.label,
-            also: (c.also ?? "") + " " + (c.tip ?? ""), shortcut: c.keys ?? "",
-            enabled: win.cmdOn(c), run: c.run })).concat(win.paletteOnly)
+        onAboutToShow: commands = win.paletteCommands()
     }
     // Where the guide's "Take me there" goes. Most parts need a deck open.
     function canVisitHelp(key) {
@@ -717,7 +735,7 @@ ApplicationWindow {
                     display: AbstractButton.TextOnly
                     implicitHeight: Theme.hTitleBar - 6
                     readonly property bool opensMenu: true
-                    focusPolicy: Qt.TabFocus
+                    focusPolicy: Qt.StrongFocus
                     Accessible.role: Accessible.ButtonMenu
                     onClicked: fileMenu.popup(fileButton, 0, fileButton.height)
                     RibbonMenu { id: fileMenu; objectName: "ribbonFileMenu"; owner: "file" }
@@ -738,11 +756,10 @@ ApplicationWindow {
                             display: AbstractButton.TextOnly
                             implicitHeight: Theme.hTitleBar - 6
                             leftPadding: win.width < 1000 ? Theme.s1 : Theme.s2; rightPadding: leftPadding
-                            // In a room, Done (row 2) is the one way back; File stays usable.
-                            enabled: !win.inMode
+                            // Usable in rooms too: personal's menus were reachable there.
                             checkable: false
                             checked: win.ribbonTab === index
-                            focusPolicy: Qt.TabFocus
+                            focusPolicy: Qt.StrongFocus
                             Accessible.role: Accessible.PageTab
                             Accessible.checked: checked
                             // Showing a tab has no side effects.
@@ -786,91 +803,92 @@ ApplicationWindow {
             }
         }
 
-        // ── Row 2: the selected tab's groups, or a room's title and Done ────
+        // ── Row 2: the selected tab's groups (+ in a room: its title and Done) ─
         Rectangle {
             objectName: "mainToolbar"
             Layout.fillWidth: true
-            // A room's bar is only a title and Done, so it takes the slimmer height.
-            implicitHeight: win.inMode ? Theme.hWorkspaceBar : Theme.hToolbar
+            implicitHeight: Theme.hToolbar
             color: Theme.framePanel
             Hairline { anchors.top: parent.top; width: parent.width }
 
             // Every tab is built once and kept; only the selected one shows. Too
             // wide for the window: the row scrolls sideways (never wraps), with a
             // 3 px bar shown only while the pointer is over the row.
-            StackLayout {
-                id: ribbonStack
-                objectName: "ribbonStack"
+            RowLayout {
                 anchors.fill: parent
                 anchors.leftMargin: Theme.s3
                 anchors.rightMargin: Theme.s3
-                visible: !win.inMode
-                currentIndex: win.ribbonTab
-                Repeater {
-                    model: win.ribbonTabs
-                    Flickable {
-                        id: tabFlick
-                        required property var modelData
-                        required property int index
-                        objectName: "ribbonTabRow_" + modelData.key
-                        readonly property bool overflows: contentWidth > width + 1
-                        contentWidth: tabRow.implicitWidth
-                        contentHeight: height
-                        clip: true
-                        interactive: overflows
-                        flickableDirection: Flickable.HorizontalFlick
-                        boundsBehavior: Flickable.StopAtBounds
-                        Accessible.role: Accessible.Pane
-                        Accessible.name: modelData.label
-                        HoverHandler { id: rowHover }
-                        WheelHandler {
-                            enabled: tabFlick.overflows
-                            acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
-                            onWheel: (e) => tabFlick.contentX = Math.max(0, Math.min(tabFlick.contentWidth - tabFlick.width,
-                                                                                     tabFlick.contentX - (e.angleDelta.y !== 0 ? e.angleDelta.y : e.angleDelta.x)))
-                        }
-                        ScrollBar.horizontal: ScrollBar {
-                            objectName: "ribbonScrollBar"
-                            height: 3
-                            padding: 0
-                            policy: ScrollBar.AlwaysOn
-                            visible: tabFlick.overflows && rowHover.hovered
-                            contentItem: Rectangle { implicitHeight: 3; radius: 1.5; color: Theme.textMuted }
-                            background: Item {}
-                        }
-                        RowLayout {
-                            id: tabRow
-                            height: tabFlick.height
-                            spacing: Theme.s1
-                            Repeater {
-                                model: win.groupsIn(tabFlick.modelData.key)
-                                RowLayout {
-                                    required property string modelData
-                                    required property int index
-                                    spacing: Theme.s1
-                                    Accessible.role: Accessible.Grouping
-                                    Accessible.name: modelData
-                                    ToolbarRule { visible: index > 0 }
-                                    Repeater {
-                                        model: win.cmdsIn(tabFlick.modelData.key, modelData)
-                                        RibbonButton { required property var modelData; c: modelData }
+                spacing: Theme.s2
+                StackLayout {
+                    id: ribbonStack
+                    objectName: "ribbonStack"
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    currentIndex: win.ribbonTab
+                    Repeater {
+                        model: win.ribbonTabs
+                        Flickable {
+                            id: tabFlick
+                            required property var modelData
+                            required property int index
+                            objectName: "ribbonTabRow_" + modelData.key
+                            readonly property bool overflows: contentWidth > width + 1
+                            contentWidth: tabRow.implicitWidth
+                            contentHeight: height
+                            clip: true
+                            // Wheel and scrollbar only: a drag on a button must stay a click.
+                            interactive: false
+                            flickableDirection: Flickable.HorizontalFlick
+                            boundsBehavior: Flickable.StopAtBounds
+                            Accessible.role: Accessible.Pane
+                            Accessible.name: modelData.label
+                            HoverHandler { id: rowHover }
+                            WheelHandler {
+                                enabled: tabFlick.overflows
+                                acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                                onWheel: (e) => tabFlick.contentX = Math.max(0, Math.min(tabFlick.contentWidth - tabFlick.width,
+                                                                                         tabFlick.contentX - (e.angleDelta.y !== 0 ? e.angleDelta.y : e.angleDelta.x)))
+                            }
+                            ScrollBar.horizontal: ScrollBar {
+                                objectName: "ribbonScrollBar"
+                                // A 3 px line with a 9 px grab area.
+                                height: 9
+                                topPadding: 6
+                                leftPadding: 0; rightPadding: 0; bottomPadding: 0
+                                policy: ScrollBar.AlwaysOn
+                                visible: tabFlick.overflows && rowHover.hovered
+                                contentItem: Rectangle { implicitHeight: 3; radius: 1.5; color: Theme.textMuted }
+                                background: Item {}
+                            }
+                            RowLayout {
+                                id: tabRow
+                                height: tabFlick.height
+                                spacing: Theme.s1
+                                Repeater {
+                                    model: win.groupsIn(tabFlick.modelData.key)
+                                    RowLayout {
+                                        required property string modelData
+                                        required property int index
+                                        spacing: Theme.s1
+                                        Accessible.role: Accessible.Grouping
+                                        Accessible.name: win.ribbonGroupLabels[modelData] ?? modelData
+                                        ToolbarRule { visible: index > 0 }
+                                        Repeater {
+                                            model: win.cmdsIn(tabFlick.modelData.key, modelData)
+                                            RibbonButton { required property var modelData; c: modelData }
+                                        }
                                     }
                                 }
                             }
                         }
                     }
                 }
-            }
 
-            // A room you visit: its name, and the way back. (Play is on the title line.)
-            RowLayout {
-                anchors.fill: parent
-                anchors.leftMargin: Theme.s4
-                anchors.rightMargin: Theme.s3
-                spacing: Theme.s3
-                visible: win.inMode
+                // In a room: its name and the way back, pinned right; the tabs stay usable.
+                ToolbarRule { visible: win.inMode }
                 Label {
                     objectName: "modeTitle"
+                    visible: win.inMode
                     text: win.workspace === 1 ? qsTr("Masters and layouts")
                         : win.workspace === 3 ? qsTr("Review")
                         : win.workspace === 4 ? qsTr("Presenter setup")
@@ -879,23 +897,19 @@ ApplicationWindow {
                     font.weight: Theme.wHeading
                     color: Theme.textPrimary
                 }
-                Label {
-                    Layout.fillWidth: true
-                    elide: Text.ElideRight
-                    color: Theme.textMuted
-                    font.pixelSize: Theme.fsLabel
-                    text: win.workspace === 1 ? qsTr("Changes here reach every slide that uses the master or layout.")
-                        : win.workspace === 3 ? qsTr("Comments, findings, search and spelling across the whole deck.")
-                        : win.workspace === 4 ? qsTr("Choose the displays and rehearse. The console opens when the show starts.")
-                        : qsTr("Every slide at once. Drag to reorder; double-click one to edit it.")
-                }
                 Button {
                     objectName: "modeDone"
+                    visible: win.inMode
                     text: qsTr("Done")
                     highlighted: true
                     onClicked: win.leaveMode()
+                    readonly property string about: win.workspace === 1 ? qsTr("Changes here reach every slide that uses the master or layout.")
+                        : win.workspace === 3 ? qsTr("Comments, findings, search and spelling across the whole deck.")
+                        : win.workspace === 4 ? qsTr("Choose the displays and rehearse. The console opens when the show starts.")
+                        : qsTr("Every slide at once. Drag to reorder; double-click one to edit it.")
                     ToolTip.visible: hovered; ToolTip.delay: Theme.tooltipDelay
-                    ToolTip.text: qsTr("Back to the slide  Esc")
+                    ToolTip.text: about + "\n" + qsTr("Back to the slide  Esc")
+                    Accessible.description: about
                 }
             }
             Hairline { anchors.bottom: parent.bottom; width: parent.width }
