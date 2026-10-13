@@ -86,10 +86,18 @@ qreal unscale(qreal now, qreal before, qreal scale, qreal ptPerUnit) {
 // Whether a family is still the free match that stood in for an Office
 // family, rather than one chosen since.
 // fallbacks: the deck's record of fallbacks used (theme.fontFallbacks).
+// The recorded fallback for an Office family, whatever its spelling.
+QString recorded(const QMap<QString, QString> *fallbacks, const QString &office) {
+    if (!fallbacks) return {};
+    for (auto it = fallbacks->cbegin(); it != fallbacks->cend(); ++it)
+        if (it.key().compare(office, Qt::CaseInsensitive) == 0) return it.value();
+    return {};
+}
+
 bool stillSwapped(const QString &office, const QString &family, const QMap<QString, QString> *fallbacks = nullptr) {
     for (const auto &option : FontSwap::options(office))
         if (option.family.compare(family, Qt::CaseInsensitive) == 0) return true;
-    if (fallbacks) return fallbacks->value(office).compare(family, Qt::CaseInsensitive) == 0 && !family.isEmpty();
+    if (fallbacks) return !family.isEmpty() && recorded(fallbacks, office).compare(family, Qt::CaseInsensitive) == 0;
     // Drawing (no deck at hand): the fallback this computer would pick.
     const auto *fb = FontSwap::fallback(office);
     return fb && fb->family.compare(family, Qt::CaseInsensitive) == 0;
@@ -164,7 +172,7 @@ public:
         for (int i = 0; i < entry->options.size(); ++i)
             if (entry->options[i].family.compare(current, Qt::CaseInsensitive) == 0) now = i;
         // A fallback stands in: any table match installed since is better.
-        if (now < 0 && fallbacks && fallbacks->value(entry->name).compare(current, Qt::CaseInsensitive) == 0) now = entry->options.size();
+        if (now < 0 && fallbacks && recorded(fallbacks, entry->name).compare(current, Qt::CaseInsensitive) == 0) now = entry->options.size();
         if (now <= 0) return nullptr;   // the best already, or chosen by hand since
         for (int i = 0; i < now; ++i)
             if (installed(entry->options[i].family)) return &entry->options[i];
@@ -172,16 +180,18 @@ public:
     }
     void count(const QString &office, const QString &free) {
         ++tally[office][free]; ++report.changed;
-        if (fallbacks) {
-            const auto *fb = FontSwap::fallback(office);
-            // Only when no table match is what stands in (a fallback can be
-            // the same family as some other Office font's table match).
-            const auto entry = table().constFind(office.toLower());
-            bool tableMatch = false;
-            if (entry != table().cend())
-                for (const auto &option : entry->options) tableMatch |= option.family.compare(free, Qt::CaseInsensitive) == 0;
-            if (fb && fb->family == free && entry != table().cend() && !tableMatch) fallbacks->insert(entry->name, free);
-        }
+        const auto entry = table().constFind(office.toLower());
+        if (!fallbacks || entry == table().cend()) return;
+        // A table match stands in (a fallback can be the same family as some
+        // other Office font's table match): any older record goes.
+        for (const auto &option : entry->options)
+            if (option.family.compare(free, Qt::CaseInsensitive) == 0) {
+                for (auto it = fallbacks->begin(); it != fallbacks->end();)
+                    it = it.key().compare(entry->name, Qt::CaseInsensitive) == 0 ? fallbacks->erase(it) : std::next(it);
+                return;
+            }
+        const auto *fb = FontSwap::fallback(office);
+        if (fb && fb->family.compare(free, Qt::CaseInsensitive) == 0) fallbacks->insert(entry->name, fb->family);
     }
 
     void object(SceneObject &o) {
@@ -532,15 +542,12 @@ FontSwap::VerticalFix FontSwap::verticalFix(const SceneObject &o, qreal size) {
     if (o.origFont.isEmpty() || o.fontFamily.isEmpty() || size <= 0 || !stillSwapped(o.origFont, o.fontFamily)) return fix;
     const auto entry = table().constFind(o.origFont.toLower());
     if (entry == table().cend() || entry->ascent <= 0) return fix;
-    // Only for matches drawn at the Office size (metric-compatible): their
-    // lines are meant to land where PowerPoint's do. A scaled match already
-    // differs in shape; measured, moving it made it sit worse (Segoe UI).
     const auto *option = optionFor(o.origFont, o.fontFamily);
+    // Metric-compatible matches get their lines put where PowerPoint's land.
     // A scaled table match is left alone (measured: moving it made it sit
-    // worse). A fallback gets both: sized down by x-height it would otherwise
+    // worse, Segoe UI). A fallback gets both: sized down by x-height it would otherwise
     // sit high by the ascent it lost (measured: 10 px on a 44 pt title).
     if (!option || (!option->metric && !option->fallback)) return fix;
-    const bool moveBaseline = true;
     // Worked out from the box's font: a stretch in another family or a larger
     // size sets its own lines, so such a box is left as it was.
     for (const auto &run : o.runs)
@@ -562,7 +569,6 @@ FontSwap::VerticalFix FontSwap::verticalFix(const SceneObject &o, qreal size) {
     const qreal officeSize = size / (o.fontScale > 0 ? o.fontScale : 1);
     fix.line = (entry->ascent + entry->descent + entry->gap) * officeSize / (free * size);
     fix.shift = it->ascent * size - entry->ascent * officeSize;
-    if (!moveBaseline) fix.shift = 0;
     if (std::abs(fix.line - 1) < 0.005) fix.line = 1;
     if (std::abs(fix.shift) < 0.25) fix.shift = 0;
     return fix;
@@ -604,8 +610,10 @@ const FontSwap::Option *FontSwap::fallback(const QString &officeFamily) {
             result = std::make_shared<Option>();
             result->family = family;
             result->fallback = true;
-            result->metric = std::abs(sameSize - 1) <= 0.015;
-            result->size = result->metric ? 1.0 : std::round(size * 1000) / 1000;
+            // Same width at the same size: drawn at the Office size. Not called
+            // metric-compatible; one sentence says nothing about every glyph.
+            const bool sameWidth = std::abs(sameSize - 1) <= 0.015;
+            result->size = sameWidth ? 1.0 : std::round(size * 1000) / 1000;
             result->width = sameSize * result->size;
             const qreal free = (m.ascent() + m.descent() + qMax<qreal>(0, m.leading())) / 1000;
             if (entry->ascent > 0 && free > 0)
