@@ -153,6 +153,9 @@ void Presenter::routeWindows() {
 bool Presenter::start(bool fromCurrent, bool rehearsal) {
   if (m_running)
     return true;
+  // FONT-CHECK-3: a deck still behind its font check is not on screen yet.
+  if (m_backend->fontGate())
+    return false;
   if (!m_audience || !m_console || m_backend->document().slides.isEmpty() ||
       audienceIndex() < 0) {
     m_status = tr("No audience window or display is available");
