@@ -1,4 +1,5 @@
 #include "backend.h"
+#include "core/fontswap.h"
 
 #include <QFontDatabase>
 #include <QSet>
@@ -316,6 +317,7 @@ void Backend::acceptImported(const Document &document, const QString &sourcePath
   emit fileStateChanged();
   emit documentChanged();
   emit importReportChanged();
+  requestFontCheck(sourcePath);
   const auto name = QFileInfo(sourcePath).fileName();
   setStatus(warnings.isEmpty()
                 ? tr("Opened %1 from %2 — save it as an OmaShow deck").arg(name, kind)
@@ -568,6 +570,14 @@ void Backend::acceptOpen(const Document &document, const QUrl &url) {
   m_autosave.stop(); Recovery::discard();
   setStatus(tr("Opened %1").arg(fileName()));
   emit opened();
+  if (url.isLocalFile()) requestFontCheck(url.toLocalFile());
+}
+
+// FONT-CHECK-2: asked once the deck is on screen (with fallbacks); fonts that
+// arrive later are applied in place.
+void Backend::requestFontCheck(const QString &source) {
+  if (source.isEmpty() || FontSwap::needed(m_document).isEmpty()) return;
+  emit fontCheckRequested(source);
 }
 
 void Backend::newDeck() { createDeck(0, 1920, 1080); }
