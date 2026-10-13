@@ -1,6 +1,7 @@
 // OmaShow — native presentations for Omarchy.
 
 #include "core/fonts.h"
+#include "core/fontsandbox.h"
 
 #include <QGuiApplication>
 #include <QFont>
@@ -117,6 +118,26 @@ int captureInterface(QQmlApplicationEngine &engine, Backend &backend, Presenter 
     if (!haveDeck) {
         save(window, QStringLiteral("start"));
         backend.createDeck(0, 1920, 1080, 0);
+    }
+    // FONT-CHECK-1 (OMASHOW_UI_SHOT_FONTCHECK=1): the font check shown on
+    // opening a PowerPoint deck, photographed, and what it listed.
+    if (haveDeck && !qEnvironmentVariableIsEmpty("OMASHOW_UI_SHOT_FONTCHECK")) {
+        settle(500);
+        QObject *check = window->findChild<QObject *>(QStringLiteral("fontCheckDialog"));
+        qInfo().noquote() << "ui-shot fontcheck: sandbox" << backend.fontSandboxDir();
+        qInfo().noquote() << "ui-shot fontcheck: needed" << QJsonDocument::fromVariant(backend.fontsToInstall()).toJson(QJsonDocument::Compact);
+        qInfo().noquote() << "ui-shot fontcheck: shown" << (check && check->property("visible").toBool());
+        qInfo().noquote() << "ui-shot fontcheck: swaps" << QJsonDocument::fromVariant(backend.fontSwaps()).toJson(QJsonDocument::Compact);
+        save(window, QStringLiteral("fontcheck"));
+        // OMASHOW_UI_SHOT_FONTCHECK=hide: tick "Don't show again" and close, as a person would.
+        if (check && qEnvironmentVariable("OMASHOW_UI_SHOT_FONTCHECK") == QLatin1String("hide")) {
+            if (auto *box = check->findChild<QObject *>(QStringLiteral("fontCheckHide"))) box->setProperty("checked", true);
+            QMetaObject::invokeMethod(check, "close");
+            settle(300);
+            qInfo().noquote() << "ui-shot fontcheck: hidden for" << backend.importReport().value(QStringLiteral("source")).toString()
+                              << backend.fontCheckHidden(backend.importReport().value(QStringLiteral("source")).toString());
+        }
+        return 0;
     }
     // OMASHOW-PERSONAL: font swap check (OMASHOW_UI_SHOT_FONTS=1): the import
     // banner, the install offer, the install itself (run it with
@@ -404,6 +425,9 @@ int main(int argc, char *argv[]) {
         QQuickWindow::setDefaultAlphaBuffer(true);
     QGuiApplication app(argc, argv);
     Fonts::loadBundled();   // Inter travels with OmaShow; draw it the same everywhere
+    // FONT-CHECK-1: extra fonts from OmaShow's own folder, this process only;
+    // fontconfig never sees them, so the rest of Omarchy is unaffected.
+    FontSandbox::load();
     Workers::Session workerSession;
 
     // The identity trio. setDesktopFileName is what becomes the Wayland app_id,

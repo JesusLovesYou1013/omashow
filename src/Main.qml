@@ -859,6 +859,9 @@ ApplicationWindow {
     LinkDialog { id: linkDialog }
     FontsDialog { id: fontsDialog }
     FontInstallDialog { id: fontInstallDialog }
+    // FONT-CHECK-1: say which free fonts an opened PowerPoint deck needs.
+    FontCheckDialog { id: fontCheckDialog }
+    Connections { target: backend; function onImportReportChanged() { Qt.callLater(() => fontCheckDialog.check(backend.importReport)) } }
     MediaOptimisation { id: mediaOptimisation }
     Connections { target: backend; function onMediaOptimisationRequested() { win.commitEditors(); mediaOptimisation.show() } }
     MediaPreflight { id: mediaPreflight; onEditRequested: win.workspace=0 }
