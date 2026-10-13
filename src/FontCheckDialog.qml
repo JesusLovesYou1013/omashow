@@ -60,7 +60,9 @@ Sheet {
         if (!src || needed.length === 0) return
         const fetchable = needed.filter(r => r.downloadable)
         if (fetchable.length === 0) return
-        if (backend.fontAutoDownload) { backend.downloadFonts(fetchable.map(r => r.family)); return }
+        // Pack on (Daniel): never this popup. Its fonts come with the pack,
+        // ahead of the rest if it is still running; nothing to do if complete.
+        if (backend.fontAutoDownload || backend.extraFontsPack) { backend.downloadFonts(fetchable.map(r => r.family)); return }
         if (backend.fontCheckHidden(src)) return
         if (visible && mode === "pack") { heldDeck = { source: src, rows: needed }; return }   // shown when the pack view closes
         mode = "deck"; source = src; rows = needed
