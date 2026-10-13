@@ -16,6 +16,10 @@
 #include <QLocale>
 #include <QPainter>
 #include <QProcess>
+#include <QFont>
+#include <QRawFont>
+#include <QTextLayout>
+#include <QGlyphRun>
 #include <QSaveFile>
 #include <QUrl>
 #include <QSet>
@@ -306,6 +310,64 @@ Family find(const QString &family) {
     return out;
 }
 
+// The weight OmaShow really draws for a family at a weight: Qt picks the
+// nearest face that exists (Noto Serif at 600 is its Medium, Inter at 600 its Bold).
+int drawnWeight(const QString &family, int weight, bool italic) {
+    QFont f(family);              // built as render/textlayout.cpp builds it
+    f.setPixelSize(48);
+    f.setWeight(QFont::Weight(weight));
+    f.setItalic(italic);
+    // The face text layout really draws with (QFontInfo echoes the request,
+    // and QRawFont::fromFont can resolve differently from layout).
+    QTextLayout layout(QStringLiteral("Hg"), f);
+    layout.beginLayout();
+    layout.createLine();
+    layout.endLayout();
+    const auto runs = layout.glyphRuns();
+    if (runs.isEmpty() || !runs.first().rawFont().isValid()) return weight;
+    // The loaded file's own OS/2 usWeightClass: rawFont().weight() also echoes the request.
+    const QByteArray os2 = runs.first().rawFont().fontTable("OS/2");
+    return os2.size() >= 6 ? int(be16(os2, 4)) : weight;
+}
+
+int fcWeight(int css) {
+    static const int map[][2] = {{100, 0}, {200, 40}, {300, 50}, {350, 55}, {400, 80}, {500, 100}, {600, 180}, {700, 200}, {800, 205}, {900, 210}};
+    for (const auto &m : map) if (m[0] == css) return m[1];
+    return -1;
+}
+
+// A face of one weight that PowerPoint can only name by its own family,
+// e.g. "Noto Serif Medium" (name ID 1): carried as that family's regular
+// (and italic). Empty name when no static file of exactly that weight exists.
+Family weightFace(const QString &family, int weight) {
+    Family out;
+    const int fc = fcWeight(weight);
+    if (fc < 0 || family.isEmpty()) return out;
+    QString escaped;
+    for (const QChar c : family) { if (c == QLatin1Char('-') || c == QLatin1Char(':') || c == QLatin1Char(',') || c == QLatin1Char('\\')) escaped += QLatin1Char('\\'); escaped += c; }
+    for (int slant : {0, 100}) {
+        QProcess fcl;
+        fcl.start(QStringLiteral("fc-list"), {QStringLiteral(":family=%1:weight=%2:slant=%3").arg(escaped).arg(fc).arg(slant), QStringLiteral("file")}, QIODevice::ReadOnly);
+        if (!fcl.waitForFinished(5000)) continue;
+        const QString file = QString::fromUtf8(fcl.readAllStandardOutput()).section(QLatin1Char('\n'), 0, 0).section(QStringLiteral(": "), 0, 0).trimmed().remove(QRegularExpression(QStringLiteral(":$")));
+        if (file.isEmpty()) continue;
+        QFile f(file);
+        if (!f.open(QIODevice::ReadOnly)) continue;
+        const QByteArray data = f.readAll();
+        const QString why = refusal(data);
+        if (!why.isEmpty()) { out.refused = why; continue; }
+        if (slant == 0) {
+            const QByteArray n = name(data, 1);   // UTF-16LE
+            out.name = QString::fromUtf16(reinterpret_cast<const char16_t *>(n.constData()), n.size() / 2);
+            out.styles[0] = {file, data};
+        } else {
+            out.styles[2] = {file, data};
+        }
+    }
+    if (out.styles[0].file.isEmpty()) out.name.clear();
+    return out;
+}
+
 } // namespace Embed
 
 struct Writer {
@@ -325,6 +387,9 @@ struct Writer {
     int mediaCount = 0, chartCount = 0, commentCount = 0;
     QStringList embedded;    // families carried inside the deck
     QStringList notCarried;  // "Family (why)" for installed families that could not be
+    // Weights PowerPoint has no switch for (only bold on/off) travel as their own
+    // family name, e.g. "Noto Serif Medium"; key "family|weight".
+    mutable QHash<QString, Embed::Family> weightFaces;
 
     explicit Writer(const Document &document) : doc(document) {
         e = 12192000.0 / qMax(1.0, doc.size.width());
@@ -528,8 +593,21 @@ struct Writer {
         x.start(tag).attr("lang", lang);
         const qreal size = run && run->fontSize > 0 ? run->fontSize : o.fontSize;
         x.attr("sz", hundredthsPt(size));
-        const bool bold = run && run->weight ? run->weight >= 600 : o.fontWeight >= 600;
+        const int weight = run && run->weight ? run->weight : o.fontWeight;
         const bool italic = run && run->italic ? run->italic == 1 : o.italic;
+        QString family = run && !run->fontFamily.isEmpty() ? run->fontFamily : o.fontFamily;
+        // Write the face OmaShow draws, not the nearest switch PowerPoint has:
+        // 400 and 700 are plain and bold; any other drawn weight is named by its
+        // own family and carried, so PowerPoint draws the same face.
+        bool bold = weight >= 600;
+        const int drawn = Embed::drawnWeight(family, weight, italic);
+        if (drawn == 400 || drawn == 700) bold = drawn == 700;
+        else if (!Embed::shipsWithOffice(family)) {
+            const QString key = family + QLatin1Char('|') + QString::number(drawn);
+            auto it = weightFaces.find(key);
+            if (it == weightFaces.end()) it = weightFaces.insert(key, Embed::weightFace(family, drawn));
+            if (!it->name.isEmpty()) { family = it->name; bold = false; }
+        }
         const bool underline = run && run->underline ? run->underline == 1 : o.underline;
         x.attr("b", bold ? "1" : "0").attr("i", italic ? "1" : "0").attr("u", underline ? "sng" : "none");
         const bool strike = run && run->strike ? run->strike == 1 : o.strike;
@@ -540,7 +618,6 @@ struct Writer {
         if (!qFuzzyIsNull(o.letterSpacing)) x.attr("spc", qRound(o.letterSpacing * e / 12700.0 * 100));
         const QColor color = run && run->color.isValid() ? run->color : o.textColor;
         writeSolidFill(x, color, o.opacity);
-        const QString family = run && !run->fontFamily.isEmpty() ? run->fontFamily : o.fontFamily;
         x.start("a:latin").attr("typeface", family).end();
         if (!linkRel.isEmpty()) {
             x.start("a:hlinkClick").attr("r:id", linkRel);
@@ -1858,8 +1935,11 @@ struct Writer {
             static const char *slotTag[4] = {"p:regular", "p:bold", "p:italic", "p:boldItalic"};
             QVector<Embed::Family> carried;
             qint64 budget = 20 * 1024 * 1024;   // whole files are carried; keep decks mailable
-            for (const auto &family : Fonts::families(doc).keys()) {
-                auto f = Embed::find(family);
+            QVector<Embed::Family> candidates;
+            for (const auto &family : Fonts::families(doc).keys()) candidates.append(Embed::find(family));
+            for (const auto &w : std::as_const(weightFaces)) if (!w.name.isEmpty()) candidates.append(w);
+            for (auto f : candidates) {
+                const QString family = f.name;
                 qint64 size = 0;
                 for (const auto &face : f.styles) size += face.data.size();
                 if (f.styles[0].file.isEmpty() && f.styles[1].file.isEmpty()) {
