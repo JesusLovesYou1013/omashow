@@ -588,9 +588,18 @@ struct TextOut {
     int anchor = 0;           // 0 top, 1 middle, 2 bottom
     bool shrink = false;
     qreal fontScale = 1;
+    // Text insets in EMU (lIns, tIns, rIns, bIns); the defaults are DrawingML's.
+    qreal inset[4] = {91440, 45720, 91440, 45720};
     QString link;
     bool empty = true;
 };
+
+static void readInsets(const Node *bodyPr, qreal inset[4]) {
+    static const char *names[4] = {"lIns", "tIns", "rIns", "bIns"};
+    for (int i = 0; i < 4; ++i)
+        if (bodyPr->has(QLatin1String(names[i])))
+            inset[i] = qMax(0.0, bodyPr->attr(QLatin1String(names[i])).toDouble());
+}
 
 // Reads a txBody (or a table cell's) into words, a box look and the runs
 // that differ from it.
@@ -604,12 +613,14 @@ TextOut convertText(const Node *txBody, const TextChain &chain, const TextContex
         if (anchor == QLatin1String("t")) out.anchor = 0;
         else if (anchor == QLatin1String("ctr")) out.anchor = 1;
         else if (anchor == QLatin1String("b")) out.anchor = 2;
+        readInsets(body, out.inset);
     }
     if (const Node *own = txBody->child(QStringLiteral("bodyPr"))) {
         const auto anchor = own->attr(QStringLiteral("anchor"));
         if (anchor == QLatin1String("t")) out.anchor = 0;
         else if (anchor == QLatin1String("ctr")) out.anchor = 1;
         else if (anchor == QLatin1String("b")) out.anchor = 2;
+        readInsets(own, out.inset);
         if (const Node *fit = own->child(QStringLiteral("normAutofit"))) {
             out.shrink = true;
             if (fit->has(QStringLiteral("fontScale")))
@@ -942,6 +953,15 @@ struct Reader {
 
     void applyText(SceneObject &o, const TextOut &text, const RunLook &fallback) {
         o.type = ObjectType::Text;
+        // OmaShow text has no inset of its own: the text object is separate
+        // from any filled box, so take PowerPoint's inset off its rectangle
+        // and the words land, and wrap, where PowerPoint puts them.
+        {
+            const qreal l = text.inset[0] * u.k, t = text.inset[1] * u.k;
+            const qreal r = text.inset[2] * u.k, b = text.inset[3] * u.k;
+            if (o.rect.width() > l + r + 1) { o.rect.setLeft(o.rect.left() + l); o.rect.setRight(o.rect.right() - r); }
+            if (o.rect.height() > t + b + 1) { o.rect.setTop(o.rect.top() + t); o.rect.setBottom(o.rect.bottom() - b); }
+        }
         o.text = text.text;
         const auto &b = text.box;
         const qreal sz = (b.sz > 0 ? b.sz : fallback.sz > 0 ? fallback.sz : 1800) / 100.0 * text.fontScale;
