@@ -82,9 +82,13 @@ Sheet {
             }
         }
         Label {
+            Layout.fillWidth: true; wrapMode: Text.Wrap; color: Theme.textSecondary
+            text: qsTr("Put the font files (.ttf or .otf) in OmaShow's own font folder. Only OmaShow reads it, so your system fonts are not changed:")
+        }
+        Label {
             objectName: "fontCheckFolder"
-            Layout.fillWidth: true; wrapMode: Text.WrapAnywhere; color: Theme.textSecondary
-            text: qsTr("Put the font files (.ttf or .otf) in OmaShow's own font folder; only OmaShow reads it, so your system fonts are not changed:\n%1").arg(backend.fontSandboxDir())
+            Layout.fillWidth: true; wrapMode: Text.WrapAnywhere; font.family: "monospace"
+            text: backend.fontSandboxDir()
         }
         RowLayout {
             Layout.fillWidth: true
