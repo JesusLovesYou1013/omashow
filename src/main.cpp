@@ -30,6 +30,7 @@
 #include <QQmlEngine>
 #include <QTextStream>
 #include <QDir>
+#include <QJsonDocument>
 #include <QFile>
 #include <QEventLoop>
 #include <QQuickWindow>
@@ -116,6 +117,27 @@ int captureInterface(QQmlApplicationEngine &engine, Backend &backend, Presenter 
     if (!haveDeck) {
         save(window, QStringLiteral("start"));
         backend.createDeck(0, 1920, 1080, 0);
+    }
+    // OMASHOW-PERSONAL: font swap check (OMASHOW_UI_SHOT_FONTS=1): the import
+    // banner, the install offer, the install itself (run it with
+    // OMASHOW_FONT_INSTALL=user or simulate and an isolated XDG_DATA_HOME),
+    // the deck redrawn with what arrived, and the Extra fonts pack offer.
+    if (haveDeck && qEnvironmentVariableIntValue("OMASHOW_UI_SHOT_FONTS")) {
+        save(window, QStringLiteral("fonts-import"));
+        QObject *dialog = window->findChild<QObject *>(QStringLiteral("fontInstallDialog"));
+        qInfo().noquote() << "ui-shot fonts: swaps" << QJsonDocument::fromVariant(backend.fontSwaps()).toJson(QJsonDocument::Compact);
+        qInfo().noquote() << "ui-shot fonts: to install" << QJsonDocument::fromVariant(backend.fontsToInstall()).toJson(QJsonDocument::Compact);
+        if (dialog) { QMetaObject::invokeMethod(dialog, "showDeck"); save(window, QStringLiteral("fonts-offer")); QMetaObject::invokeMethod(dialog, "close"); }
+        QEventLoop wait;
+        bool done = false;
+        QObject::connect(&backend, &Backend::fontInstallFinished, &wait, [&](bool ok, const QString &message) {
+            qInfo().noquote() << "ui-shot fonts: finished" << ok << message; done = true; wait.quit(); });
+        QTimer::singleShot(240000, &wait, &QEventLoop::quit);
+        if (backend.installFonts(backend.fontsToInstall()) && !done) wait.exec();
+        qInfo().noquote() << "ui-shot fonts: swaps after" << QJsonDocument::fromVariant(backend.fontSwaps()).toJson(QJsonDocument::Compact);
+        save(window, QStringLiteral("fonts-after"));
+        if (dialog) { QMetaObject::invokeMethod(dialog, "showPack"); save(window, QStringLiteral("fonts-pack")); QMetaObject::invokeMethod(dialog, "close"); }
+        return 0;
     }
     const struct { int workspace; const char *name; } views[] = {
         {0, "edit"}, {1, "design"}, {2, "animate"}, {3, "review"}, {4, "present"}, {6, "sorter"}};
