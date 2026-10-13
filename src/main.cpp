@@ -131,7 +131,8 @@ int captureInterface(QQmlApplicationEngine &engine, Backend &backend, Presenter 
         QObject *check = window->findChild<QObject *>(QStringLiteral("fontCheckDialog"));
         qInfo().noquote() << "ui-shot fontcheck: sandbox" << backend.fontSandboxDir();
         qInfo().noquote() << "ui-shot fontcheck: needed" << json(backend.fontsToInstall());
-        qInfo().noquote() << "ui-shot fontcheck: shown" << (check && check->property("visible").toBool());
+        qInfo().noquote() << "ui-shot fontcheck: shown" << (check && check->property("visible").toBool())
+                          << "deck held" << backend.fontGate() << "show running" << presenter.property("running").toBool();
         qInfo().noquote() << "ui-shot fontcheck: swaps" << json(backend.fontSwaps());
         save(window, QStringLiteral("fontcheck"));
         if (qEnvironmentVariableIsSet("OMASHOW_UI_SHOT_SAVE")) backend.saveTo(outDir + QStringLiteral("/before.omashow"));
@@ -262,7 +263,8 @@ int captureInterface(QQmlApplicationEngine &engine, Backend &backend, Presenter 
             qInfo().noquote() << "ui-shot fontcheck: dialog state" << check->property("phase").toString() << "visible" << check->property("visible").toBool();
             qInfo().noquote() << "ui-shot fontcheck: swaps after" << json(backend.fontSwaps());
             qInfo().noquote() << "ui-shot fontcheck: needed after" << json(backend.fontsToInstall());
-            qInfo().noquote() << "ui-shot fontcheck: modified" << backend.modified() << "canUndo" << backend.canUndo();
+            qInfo().noquote() << "ui-shot fontcheck: modified" << backend.modified() << "canUndo" << backend.canUndo()
+                              << "revision" << backend.revision() << "deck held" << backend.fontGate() << "show running" << presenter.property("running").toBool();
             if (cond == QLatin1String("show")) {
                 qInfo().noquote() << "ui-shot fontcheck: cond show still running" << presenter.property("running").toBool() << "pending" << backend.fontsPending();
                 save(window, QStringLiteral("cond-during-show"));
@@ -632,6 +634,10 @@ int main(int argc, char *argv[]) {
                                     QStringLiteral("Window size for --ui-shot (default 1920x1080)."),
                                     QStringLiteral("WxH"), QStringLiteral("1920x1080"));
     parser.addOption(uiShotOption);
+    // Open straight into the show (autostart). The show starts only once the
+    // deck is displayed, i.e. after its font check (FONT-CHECK-3).
+    QCommandLineOption showOption(QStringLiteral("show"), QStringLiteral("Start the slide show once the deck is open."));
+    parser.addOption(showOption);
     parser.addOption(uiSizeOption);
     parser.addPositionalArgument(QStringLiteral("file"), QStringLiteral("Deck to open."));
     parser.process(app);
@@ -768,6 +774,15 @@ int main(int argc, char *argv[]) {
     if (!positional.isEmpty()) {
         if (parser.isSet(atOption))
             QObject::connect(&backend, &Backend::opened, &app, [&] { backend.setTime(parser.value(atOption).toDouble()); }, Qt::SingleShotConnection);
+        if (parser.isSet(showOption))
+            QObject::connect(&backend, &Backend::opened, &app, [&] { QMetaObject::invokeMethod(&presenter, [&] { presenter.start(false, false); }, Qt::QueuedConnection); }, Qt::SingleShotConnection);
+        if (parser.isSet(uiShotOption)) {
+            // FONT-CHECK-3 test: what the deck looks like the moment it is first displayed.
+            QObject::connect(&backend, &Backend::opened, &app, [&] {
+                qInfo().noquote() << "ui-shot fontcheck: first display swaps" << QString::fromUtf8(QJsonDocument::fromVariant(backend.fontSwaps()).toJson(QJsonDocument::Compact))
+                                  << "revision" << backend.revision() << "show running" << presenter.property("running").toBool();
+            }, Qt::SingleShotConnection);
+        }
         if (parser.isSet(uiShotOption)) backend.open(QUrl::fromLocalFile(positional.first()));
         else backend.openAsync(QUrl::fromLocalFile(positional.first()));
     } else if (parser.isSet(atOption)) backend.setTime(parser.value(atOption).toDouble());
