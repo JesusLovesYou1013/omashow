@@ -489,10 +489,19 @@ QString splitWeight(const QString &face, int *weight) {
         {QStringLiteral(" Extra Bold"), 800}, {QStringLiteral(" ExtraBold"), 800}, {QStringLiteral(" UltraBold"), 800},
         {QStringLiteral(" Thin"), 100}, {QStringLiteral(" Light"), 300}, {QStringLiteral(" Medium"), 500},
         {QStringLiteral(" Black"), 900}, {QStringLiteral(" Heavy"), 900}};
+    // Families in their own right (Office ships these) keep their names.
+    static const QStringList own = {QStringLiteral("Arial Black"), QStringLiteral("Segoe UI Light"), QStringLiteral("Segoe UI Semilight"),
+        QStringLiteral("Segoe UI Semibold"), QStringLiteral("Segoe UI Black"), QStringLiteral("Franklin Gothic Medium"),
+        QStringLiteral("Franklin Gothic Demi"), QStringLiteral("Franklin Gothic Heavy"), QStringLiteral("Arial Rounded MT Bold")};
+    if (own.contains(face, Qt::CaseInsensitive)) return face;
     for (const auto &w : words) {
         if (!face.endsWith(w.first, Qt::CaseInsensitive)) continue;
         const QString stem = face.left(face.size() - w.first.size());
-        if (QFontDatabase::hasFamily(stem) || !Fonts::bundledFiles(stem).isEmpty()) { *weight = w.second; return stem; }
+        // Only when the stem really has a face of that weight here.
+        bool has = false;
+        for (const auto &style : QFontDatabase::styles(stem))
+            if (QFontDatabase::weight(stem, style) == w.second) has = true;
+        if (has) { *weight = w.second; return stem; }
     }
     return face;
 }
