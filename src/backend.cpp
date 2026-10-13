@@ -1,3 +1,4 @@
+#include <QMetaMethod>
 #include "backend.h"
 #include "core/fontswap.h"
 
@@ -318,11 +319,30 @@ void Backend::gateOpen(Gate gate) {
   if (!any || gate.source.isEmpty() || qEnvironmentVariableIsSet("OMASHOW_NO_FONT_SWAP")) { completeOpen(gate); return; }
   m_deckNeeded.clear();
   for (const auto &r : rows) m_deckNeeded.insert(r.toMap().value(QStringLiteral("family")).toString());
+  // Decided here, not in the window: no popup wanted, or no window at all.
+  const bool silent = fontAutoDownload() || extraFontsPack();
+  if ((!silent && fontCheckHidden(gate.source)) || !isSignalConnected(QMetaMethod::fromSignal(&Backend::fontCheckRequested))) {
+    m_gateHandled = true; completeOpen(gate); m_gateHandled = false; return;
+  }
   m_gate = gate;
   m_gate.active = true;
+  m_gate.silent = silent;
   setStatus(tr("Checking fonts for %1…").arg(QFileInfo(gate.source).fileName()));
   emit fontGateChanged();
+  if (silent) {
+    QStringList fetch;
+    for (const auto &r : rows) if (r.toMap().value(QStringLiteral("downloadable")).toBool()) fetch << r.toMap().value(QStringLiteral("family")).toString();
+    if (!downloadFonts(fetch)) finishFontGate();
+    return;
+  }
   emit fontCheckRequested(gate.source, rows);
+}
+
+// "Use fallback fonts" on the loading state: stop waiting, show it now.
+void Backend::skipFontGate() {
+  if (!m_gate.active) return;
+  if (m_gate.silent) cancelFontDownload();
+  finishFontGate();
 }
 
 void Backend::finishFontGate() {
