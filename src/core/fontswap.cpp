@@ -1,4 +1,5 @@
 #include "core/fontswap.h"
+#include "core/fontdownloader.h"
 
 #include <QFile>
 #include <QFont>
@@ -116,8 +117,8 @@ const FontSwap::Option *optionFor(const QString &office, const QString &family) 
     return fb && fb->family.compare(family, Qt::CaseInsensitive) == 0 ? fb : nullptr;
 }
 
-template <typename F>
-void eachObject(Document &document, F visit) {
+template <typename D, typename F>
+void eachObject(D &document, F visit) {
     for (auto &slide : document.slides) for (auto &o : slide.objects) visit(o);
     for (auto &master : document.masters) for (auto &o : master.objects) visit(o);
     for (auto &layout : document.layouts) for (auto &o : layout.placeholders) visit(o);
@@ -146,6 +147,10 @@ public:
     FontSwap::Report report;
     Tally tally;
     QMap<QString, QString> *fallbacks = nullptr;   // the deck's record of fallbacks used
+    // The record as it was when this pass began: an upgrade early in the pass
+    // erases the record, and later places (theme slots) must still know the
+    // family they hold was a fallback (FONT-CHECK-2).
+    QMap<QString, QString> recordedBefore;
 
     const FontSwap::Option *pick(const QString &family) {
         if (family.isEmpty()) return nullptr;
@@ -198,10 +203,14 @@ public:
         for (int i = 0; i < entry->options.size(); ++i)
             if (entry->options[i].family.compare(current, Qt::CaseInsensitive) == 0) now = i;
         // A fallback stands in: any table match installed since is better.
-        if (now < 0 && fallbacks && recorded(fallbacks, entry->name).compare(current, Qt::CaseInsensitive) == 0) now = entry->options.size();
+        if (now < 0 && fallbacks && recorded(&recordedBefore, entry->name).compare(current, Qt::CaseInsensitive) == 0) now = entry->options.size();
         if (now <= 0) return nullptr;   // the best already, or chosen by hand since
         for (int i = 0; i < now; ++i)
             if (installed(entry->options[i].family)) return &entry->options[i];
+        // FONT-CHECK-2: a deck saved elsewhere with a fallback this computer
+        // lacks (or does not pick): this computer's fallback, sized for it.
+        if (now == entry->options.size() && !installed(current))
+            if (const auto *fb = FontSwap::fallback(entry->name); fb && fb->family.compare(current, Qt::CaseInsensitive) != 0) return fb;
         return nullptr;
     }
     void count(const QString &office, const QString &free) {
@@ -421,6 +430,7 @@ QString FontSwap::officeFor(const QString &freeFamily) {
 FontSwap::Report FontSwap::apply(Document &document) {
     Swapper swapper;
     swapper.fallbacks = &document.theme.fontFallbacks;
+    swapper.recordedBefore = document.theme.fontFallbacks;
     eachObject(document, [&](SceneObject &o) { swapper.object(o); });
     for (auto it = document.theme.fonts.begin(); it != document.theme.fonts.end(); ++it) {
         if (document.theme.fontOrigins.contains(it.key())) {
@@ -521,7 +531,10 @@ namespace {
 QVariantMap installRow(const FontSwap::Option &best, const QStringList &offices) {
     return {{QStringLiteral("family"), best.family}, {QStringLiteral("offices"), offices},
             {QStringLiteral("metric"), best.metric}, {QStringLiteral("package"), best.package},
-            {QStringLiteral("googleFonts"), best.googleFonts}, {QStringLiteral("github"), best.github}};
+            {QStringLiteral("googleFonts"), best.googleFonts}, {QStringLiteral("github"), best.github},
+            // FONT-CHECK-2: whether OmaShow can fetch it (pinned files), and how much.
+            {QStringLiteral("downloadable"), FontDownloader::downloadable(best.family)},
+            {QStringLiteral("bytes"), double(FontDownloader::bytesFor({best.family}))}};
 }
 QVariantList rowsFor(const QStringList &offices) {
     QMap<QString, QStringList> byFamily;
@@ -544,9 +557,8 @@ QVariantList rowsFor(const QStringList &offices) {
 
 QVariantList FontSwap::needed(const Document &document) {
     QStringList offices;
-    Document copy = document;
     const auto note = [&](const QString &family) { if (isOffice(family)) offices.append(family); };
-    eachObject(copy, [&](SceneObject &o) {
+    eachObject(document, [&](const SceneObject &o) {
         note(o.origFont.isEmpty() ? o.fontFamily : o.origFont);
         for (const auto &run : o.runs) note(run.origFont.isEmpty() ? run.fontFamily : run.origFont);
         for (const auto &cell : o.table.cells)
