@@ -43,7 +43,9 @@ struct Option {
 // family's stored metrics the way the table's were (x-height ratio for size;
 // same-size width within 1.5% counts as metric-compatible). Null for a
 // family the table has no metrics for.
-const Option *fallback(const QString &officeFamily);
+// style: 0 regular, 1 bold, 2 italic (widths are measured per style).
+const Option *fallback(const QString &officeFamily, int style = 0);
+int styleOf(int weight, bool italic);
 
 // The free matches of an Office family, best first; empty when the table does
 // not know the family.
