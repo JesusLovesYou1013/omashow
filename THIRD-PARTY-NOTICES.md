@@ -32,6 +32,12 @@ language a deck is written in.
 
 ## Fonts
 
-OmaShow bundles no fonts. It uses the fonts installed on the system (Inter
-when present). PDF export embeds subsets of the fonts a deck uses; the licence
+OmaShow bundles one typeface: **Inter 4.1** by The Inter Project Authors
+(https://github.com/rsms/inter), the static Regular, Bold, Italic and Bold
+Italic TrueType files from the official release `Inter-4.1.zip`
+(sha256 9883fdd4a49d4fb66bd8177ba6625ef9a64aa45899767dde3d36aa425756b11e),
+unmodified, under the SIL Open Font License 1.1 (`src/fonts/inter/LICENSE.txt`,
+installed as `/usr/share/licenses/omashow/LICENSE.Inter`). OmaShow draws it
+app-wide and embeds it in PowerPoint decks it saves, as the OFL allows when
+bundled with software. Other fonts are the system's own. PDF export embeds subsets of the fonts a deck uses; the licence
 of a font chosen for a deck is that font's own.
