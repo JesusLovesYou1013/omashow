@@ -602,16 +602,17 @@ const FontSwap::Option *FontSwap::fallback(const QString &officeFamily) {
             font.setPixelSize(1000);
             if (entry->weight) font.setWeight(QFont::Weight(entry->weight));
             const QFontMetricsF m(font);
-            const qreal xh = m.xHeight() / 1000, cap = m.capHeight() / 1000;
             const qreal width = m.horizontalAdvance(kSentence) / 1000;
-            qreal size = xh > 0 ? entry->xHeight / xh : (cap > 0 && entry->capHeight > 0 ? entry->capHeight / cap : 1);
-            size = qBound<qreal>(0.6, size, 1.6);
+            // Sized by width (Daniel): the fallback sets the same sentence
+            // as wide as the Office font, so lines break where PowerPoint's do.
+            // A weighted advance over a representative sample (map "xm"[2]).
             const qreal sameSize = width / entry->sentence;
+            qreal size = width > 0 ? entry->sentence / width : 1;
+            size = qBound<qreal>(0.6, size, 1.6);
             result = std::make_shared<Option>();
             result->family = family;
             result->fallback = true;
-            // Same width at the same size: drawn at the Office size. Not called
-            // metric-compatible; one sentence says nothing about every glyph.
+            // Within 1.5%: drawn at the Office size.
             const bool sameWidth = std::abs(sameSize - 1) <= 0.015;
             result->size = sameWidth ? 1.0 : std::round(size * 1000) / 1000;
             result->width = sameSize * result->size;
