@@ -40,9 +40,10 @@ struct Option {
 // When none of an Office family's free matches is installed: the installed
 // font drawn instead (fontconfig's choice for the family's generic class),
 // with size and line factors measured here, at runtime, against the Office
-// family's stored metrics the way the table's were (x-height ratio for size;
-// same-size width within 1.5% counts as metric-compatible). Null for a
-// family the table has no metrics for.
+// family's stored metrics: size = the Office font's kerned advance over an
+// English sample (map "aw", per style) ÷ the fallback's over the same text,
+// snapped to 1 within 0.3%; line factor from the GDI+ line height. Null for a
+// family the table has no width for.
 // style: 0 regular, 1 bold, 2 italic (widths are measured per style).
 const Option *fallback(const QString &officeFamily, int style = 0);
 int styleOf(int weight, bool italic);

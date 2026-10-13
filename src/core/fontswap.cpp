@@ -181,6 +181,7 @@ public:
             const int n = qBound(0, qMin(run.length, length - run.start), length);
             if (n <= 0) continue;
             covered += n;
+            if (!run.fontFamily.isEmpty()) continue;   // sized on its own
             count[FontSwap::styleOf(run.weight ? run.weight : o.fontWeight, run.italic ? run.italic == 1 : o.italic)] += n;
         }
         count[FontSwap::styleOf(o.fontWeight, o.italic)] += qMax(0, length - covered);
@@ -238,7 +239,8 @@ public:
             if (!run.fontFamily.isEmpty()) {
                 if (!run.origFont.isEmpty()) continue;
                 const auto *opt = styled(pick(run.fontFamily), run.fontFamily,
-                                         FontSwap::styleOf(run.weight ? run.weight : o.fontWeight, run.italic ? run.italic == 1 : o.italic));
+                                         FontSwap::styleOf(run.weight ? run.weight : o.origWeight ? o.origWeight : o.fontWeight,
+                                                           run.italic ? run.italic == 1 : o.italic));
                 if (!opt) {
                     // A family of its own drawn at the box's size: the box's
                     // factor is not this family's, so it keeps the deck's size.
@@ -615,6 +617,13 @@ const QString kCorpus = QStringLiteral(
     "o the next session.");
 }
 
+namespace {
+const Entry *entry0(const QString &office) {
+    const auto it = table().constFind(office.toLower());
+    return it == table().cend() ? nullptr : &*it;
+}
+}
+
 int FontSwap::styleOf(int weight, bool italic) {
     return weight >= 600 ? 1 : italic ? 2 : 0;
 }
@@ -624,6 +633,8 @@ const FontSwap::Option *FontSwap::fallback(const QString &officeFamily, int styl
     static QMutex lock;
     static QHash<QString, std::shared_ptr<Option>> measured;
     style = qBound(0, style, 2);
+    // No width for this style in the map: the regular one, measured regular.
+    if (style && entry0(officeFamily) && !(entry0(officeFamily)->advance[style] > 0)) style = 0;
     const QString key = officeFamily.toLower() + QLatin1Char('|') + QString::number(style);
     QMutexLocker locker(&lock);
     if (const auto it = measured.constFind(key); it != measured.cend()) return it->get();
@@ -652,7 +663,7 @@ const FontSwap::Option *FontSwap::fallback(const QString &officeFamily, int styl
             const bool corpus = entry->advance[style] > 0;
             const qreal width = corpus ? m.horizontalAdvance(kCorpus) / 1000 / kCorpus.size() : m.horizontalAdvance(kSentence) / 1000;
             const qreal office = corpus ? entry->advance[style] : entry->sentence;
-            if (width <= 0) break;
+            if (width <= 0 || office <= 0) break;
             // Sized by width (Daniel): the fallback sets the same sentence
             // as wide as the Office font, so lines break where PowerPoint's do.
             const qreal sameSize = width / office;
