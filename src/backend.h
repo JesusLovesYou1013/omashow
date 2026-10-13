@@ -135,6 +135,10 @@ class Backend : public QObject {
     Q_PROPERTY(double packDone READ packDone NOTIFY fontDownloadChanged)
     Q_PROPERTY(double packBytes READ packBytes NOTIFY fontDownloadChanged)
     Q_PROPERTY(QString packStatus READ packStatus NOTIFY fontDownloadChanged)
+    // FONT-CHECK-3 (Daniel): the font check comes first. An opened deck that
+    // needs downloadable fonts is held here, not shown, until its fonts are in
+    // or the fallback is chosen; then it is displayed already correct.
+    Q_PROPERTY(bool fontGate READ fontGate NOTIFY fontGateChanged)
     Q_PROPERTY(bool fontDownloadRunning READ fontDownloadRunning NOTIFY fontDownloadChanged)
     Q_PROPERTY(double fontDownloadDone READ fontDownloadDone NOTIFY fontDownloadChanged)
     Q_PROPERTY(double fontDownloadTotal READ fontDownloadTotal NOTIFY fontDownloadChanged)
@@ -184,6 +188,9 @@ public:
     double packDone() const;
     double packBytes() const;
     QString packStatus() const { return m_packStatus; }
+    bool fontGate() const { return m_gate.active; }
+    // Display the held deck now (fonts arrived, or fallbacks chosen).
+    Q_INVOKABLE void finishFontGate();
     bool fontDownloadRunning() const;
     double fontDownloadDone() const;
     double fontDownloadTotal() const;
@@ -630,6 +637,7 @@ signals:
     void importReportChanged();
     void fontDownloadChanged();
     void extraFontsPackChanged();
+    void fontGateChanged();
     void packFinished(int ready, int total, const QVariantMap &failed, bool offline);
     void fontAutoDownloadChanged();
     void fontDownloadFinished(const QStringList &installed, const QVariantMap &failed, bool offline, bool cancelled);
@@ -840,6 +848,18 @@ private:
     mutable int m_packReadyCount = 0;
     QString m_packStatus;
     void finishDeck();
+    struct Gate {
+        bool active = false;
+        Document document;
+        QUrl url;
+        QString source, kind, original;
+        QStringList warnings;
+        bool foreign = false, recovery = false;
+    } m_gate;
+    bool m_gateHandled = false;   // the opening deck's check is done: no second popup
+    // Every open comes through here: held behind the font check if needed.
+    void gateOpen(Gate gate);
+    void completeOpen(const Gate &gate);
     bool m_fontsPending = false;
     void requestFontCheck(const QString &source);
     QTimer m_exportTicker;
