@@ -538,21 +538,34 @@ QVariantMap installRow(const FontSwap::Option &best, const QStringList &offices)
             {QStringLiteral("downloadable"), FontDownloader::downloadable(best.family)},
             {QStringLiteral("bytes"), double(FontDownloader::bytesFor({best.family}))}};
 }
-QVariantList rowsFor(const QStringList &offices) {
+// The free family OmaShow would fetch for an Office font: the best match
+// when it can be downloaded, else the first that can (Aptos: Intos has no
+// pinned files, Zalando Sans has). Shared by needed() and pack().
+const FontSwap::Option *choice(const QVector<FontSwap::Option> &opts) {
+    if (opts.isEmpty()) return nullptr;
+    const FontSwap::Option *want = &opts.first();
+    if (!FontDownloader::downloadable(want->family))
+        for (const auto &o : opts) if (FontDownloader::downloadable(o.family)) { want = &o; break; }
+    return want;
+}
+
+// all: the Extra fonts pack (every Office font, installed rows marked);
+// otherwise only what is missing here.
+QVariantList rowsFor(const QStringList &offices, bool all = false) {
     QMap<QString, QStringList> byFamily;
     QHash<QString, FontSwap::Option> option;
     for (const auto &office : offices) {
         const auto opts = FontSwap::options(office);
-        if (opts.isEmpty() || installed(office) || installed(opts.first().family)) continue;
-        // FONT-CHECK-2: the best match when OmaShow can fetch it, else the
-        // first that it can (Aptos: Intos has no pinned files, Zalando Sans
-        // has); none when a downloadable one is already here.
-        const FontSwap::Option *want = &opts.first();
-        if (!FontDownloader::downloadable(want->family))
-            for (const auto &o : opts) if (FontDownloader::downloadable(o.family)) { want = &o; break; }
-        bool better = false;
-        for (const auto &o : opts) { if (&o == want) break; if (installed(o.family)) better = true; }
-        if (better || (want != &opts.first() && installed(want->family))) continue;
+        const auto *want = choice(opts);
+        if (!want) continue;
+        if (all) {
+            if (!FontDownloader::downloadable(want->family)) continue;
+        } else {
+            if (installed(office) || installed(opts.first().family)) continue;
+            bool better = false;   // a match ahead of the choice is here already
+            for (const auto &o : opts) { if (&o == want) break; if (installed(o.family)) better = true; }
+            if (better || (want != &opts.first() && installed(want->family))) continue;
+        }
         byFamily[want->family].append(table().value(office.toLower()).name);
         option.insert(want->family, *want);
     }
@@ -560,11 +573,22 @@ QVariantList rowsFor(const QStringList &offices) {
     for (auto it = byFamily.cbegin(); it != byFamily.cend(); ++it) {
         QStringList names = it.value();
         names.removeDuplicates();
-        rows.append(installRow(option.value(it.key()), names));
+        auto row = installRow(option.value(it.key()), names);
+        row.insert(QStringLiteral("installed"), installed(it.key()) || FontDownloader::complete(it.key()));
+        rows.append(row);
     }
     return rows;
 }
 } // namespace
+
+// FONT-CHECK-3: the Extra fonts pack, Daniel's request: the free match OmaShow
+// would fetch for every Office font in the map, each row marked installed or not.
+QVariantList FontSwap::pack() {
+    QStringList offices;
+    for (const auto &entry : table()) offices.append(entry.name);
+    offices.sort(Qt::CaseInsensitive);
+    return rowsFor(offices, true);
+}
 
 QVariantList FontSwap::needed(const Document &document) {
     QStringList offices;
