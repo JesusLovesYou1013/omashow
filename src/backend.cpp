@@ -578,6 +578,10 @@ void Backend::acceptOpen(const Document &document, const QUrl &url) {
 void Backend::requestFontCheck(const QString &source) {
   if (source.isEmpty()) return;
   const auto rows = FontSwap::needed(m_document);
+  // The families this deck waits for; one arriving (from the deck's own
+  // download or a running pack) is applied when the window says it is safe.
+  m_deckNeeded.clear();
+  for (const auto &r : rows) m_deckNeeded.insert(r.toMap().value(QStringLiteral("family")).toString());
   bool any = false;   // only when something can actually be fetched
   for (const auto &r : rows) any = any || r.toMap().value(QStringLiteral("downloadable")).toBool();
   if (any) emit fontCheckRequested(source, rows);

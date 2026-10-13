@@ -4,6 +4,7 @@
 #include <QElapsedTimer>
 #include <QFileSystemWatcher>
 #include <QObject>
+#include <QSet>
 #include <QString>
 #include <QTimer>
 #include <QUrl>
@@ -125,6 +126,14 @@ class Backend : public QObject {
     Q_PROPERTY(bool reducedMotion READ reducedMotion WRITE setReducedMotion NOTIFY viewPreferencesChanged)
     Q_PROPERTY(bool highContrast READ highContrast WRITE setHighContrast NOTIFY viewPreferencesChanged)
     Q_PROPERTY(bool fontsPending READ fontsPending NOTIFY fontDownloadChanged)
+    // FONT-CHECK-3: the Extra fonts pack (Daniel's request): free matches for
+    // every Office font in the map, fetched into OmaShow's own folder.
+    Q_PROPERTY(bool extraFontsPack READ extraFontsPack WRITE setExtraFontsPack NOTIFY extraFontsPackChanged)
+    Q_PROPERTY(bool packRunning READ packRunning NOTIFY fontDownloadChanged)
+    Q_PROPERTY(int packReady READ packReady NOTIFY fontDownloadChanged)
+    Q_PROPERTY(int packTotal READ packTotal NOTIFY fontDownloadChanged)
+    Q_PROPERTY(double packDone READ packDone NOTIFY fontDownloadChanged)
+    Q_PROPERTY(double packBytes READ packBytes NOTIFY fontDownloadChanged)
     Q_PROPERTY(bool fontDownloadRunning READ fontDownloadRunning NOTIFY fontDownloadChanged)
     Q_PROPERTY(double fontDownloadDone READ fontDownloadDone NOTIFY fontDownloadChanged)
     Q_PROPERTY(double fontDownloadTotal READ fontDownloadTotal NOTIFY fontDownloadChanged)
@@ -163,6 +172,16 @@ public:
     // FONT-CHECK-2: fetch free fonts into OmaShow's own folder, then use them in place.
     Q_INVOKABLE bool downloadFonts(const QStringList &families);
     Q_INVOKABLE void cancelFontDownload();
+    Q_INVOKABLE QVariantList fontPack() const;
+    Q_INVOKABLE bool downloadPack();
+    Q_INVOKABLE void cancelPack();
+    bool extraFontsPack() const;
+    void setExtraFontsPack(bool on);
+    bool packRunning() const { return !m_packLeft.isEmpty(); }
+    int packReady() const;
+    int packTotal() const;
+    double packDone() const;
+    double packBytes() const;
     bool fontDownloadRunning() const;
     double fontDownloadDone() const;
     double fontDownloadTotal() const;
@@ -608,6 +627,8 @@ signals:
     void opened();
     void importReportChanged();
     void fontDownloadChanged();
+    void extraFontsPackChanged();
+    void packFinished(int ready, int total, const QVariantMap &failed, bool offline);
     void fontAutoDownloadChanged();
     void fontDownloadFinished(const QStringList &installed, const QVariantMap &failed, bool offline, bool cancelled);
     // A deck was opened (local file or import source) that names Office fonts
@@ -800,7 +821,15 @@ private:
     bool m_printersRunning = false, m_printersKnown = false;
     int m_reducedMotion = -1, m_highContrast = -1;
     class FontDownloader *m_fontDownloader = nullptr;
-    void fontDownloadDoneWith(const QStringList &installed, const QVariantMap &failed, bool offline, bool cancelled);
+    void ensureDownloader();
+    void familyArrived(const QString &family);
+    void familyLost(const QString &family, const QString &why, bool network);
+    void runFinished(const QStringList &installed, const QVariantMap &failed, bool offline, bool cancelled);
+    QStringList m_deckFamilies, m_packFamilies;   // what the dialog / the pack asked for
+    QSet<QString> m_deckLeft, m_packLeft, m_deckNeeded;
+    QStringList m_deckInstalled;
+    QVariantMap m_deckFailed, m_packFailed;
+    bool m_deckCancelled = false;
     bool m_fontsPending = false;
     void requestFontCheck(const QString &source);
     QTimer m_exportTicker;

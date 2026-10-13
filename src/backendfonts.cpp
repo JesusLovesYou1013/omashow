@@ -59,38 +59,142 @@ bool Backend::openFontSandbox() {
     return QDesktopServices::openUrl(QUrl::fromLocalFile(dir));
 }
 
-bool Backend::fontDownloadRunning() const { return m_fontDownloader && m_fontDownloader->running(); }
-double Backend::fontDownloadDone() const { return m_fontDownloader ? double(m_fontDownloader->bytesDone()) : 0; }
-double Backend::fontDownloadTotal() const { return m_fontDownloader ? double(m_fontDownloader->bytesTotal()) : 0; }
+bool Backend::extraFontsPack() const {
+    QSettings settings(fontSettingsPath(), QSettings::IniFormat);
+    return settings.value("extraFontsPack", false).toBool();
+}
+// On: the pack is wanted (the window offers the download). Off: nothing is
+// deleted; a pack download still running is stopped (a deck's fonts go on).
+void Backend::setExtraFontsPack(bool on) {
+    if (on == extraFontsPack()) return;
+    QSettings settings(fontSettingsPath(), QSettings::IniFormat);
+    settings.setValue("extraFontsPack", on);
+    settings.sync();
+    if (!on) cancelPack();
+    emit extraFontsPackChanged();
+}
+QVariantList Backend::fontPack() const { return FontSwap::pack(); }
+int Backend::packTotal() const { return FontSwap::pack().size(); }
+int Backend::packReady() const {
+    int n = 0;
+    for (const auto &r : FontSwap::pack()) n += r.toMap().value(QStringLiteral("installed")).toBool();
+    return n;
+}
+double Backend::packDone() const { return m_fontDownloader ? double(m_fontDownloader->bytesDone(m_packFamilies)) : 0; }
+double Backend::packBytes() const { return double(FontDownloader::bytesFor(m_packFamilies)); }
 
+bool Backend::fontDownloadRunning() const { return !m_deckLeft.isEmpty(); }
+double Backend::fontDownloadDone() const { return m_fontDownloader ? double(m_fontDownloader->bytesDone(m_deckFamilies)) : 0; }
+double Backend::fontDownloadTotal() const { return double(FontDownloader::bytesFor(m_deckFamilies)); }
+
+void Backend::ensureDownloader() {
+    if (m_fontDownloader) return;
+    m_fontDownloader = new FontDownloader(this);
+    connect(m_fontDownloader, &FontDownloader::progress, this, &Backend::fontDownloadChanged);
+    connect(m_fontDownloader, &FontDownloader::familyReady, this, &Backend::familyArrived);
+    connect(m_fontDownloader, &FontDownloader::familyFailed, this, &Backend::familyLost);
+    connect(m_fontDownloader, &FontDownloader::finished, this, &Backend::runFinished);
+}
+
+// A deck's fonts: ahead of anything queued (a running pack included).
 bool Backend::downloadFonts(const QStringList &families) {
-    if (families.isEmpty() || fontDownloadRunning()) return false;
-    if (!m_fontDownloader) {
-        m_fontDownloader = new FontDownloader(this);
-        connect(m_fontDownloader, &FontDownloader::progress, this, &Backend::fontDownloadChanged);
-        connect(m_fontDownloader, &FontDownloader::finished, this, &Backend::fontDownloadDoneWith);
-    }
-    if (!m_fontDownloader->start(families)) return false;
+    if (families.isEmpty() || !m_deckLeft.isEmpty()) return false;
+    ensureDownloader();
+    m_deckFamilies = families;
+    m_deckLeft = QSet<QString>(families.cbegin(), families.cend());
+    m_deckInstalled.clear(); m_deckFailed.clear(); m_deckCancelled = false;
+    for (const auto &f : families) m_deckNeeded.insert(f);
+    m_fontDownloader->add(families, true);
     setStatus(tr("Downloading free fonts: %1…").arg(families.join(QStringLiteral(", "))));
     emit fontDownloadChanged();
     return true;
 }
+void Backend::cancelFontDownload() {
+    if (!m_fontDownloader || m_deckLeft.isEmpty()) return;
+    m_deckCancelled = true;
+    // Only the deck's own families that the pack does not also want.
+    QStringList mine;
+    for (const auto &f : std::as_const(m_deckLeft)) if (!m_packLeft.contains(f)) mine.append(f);
+    if (mine.size() == m_deckLeft.size() && m_packLeft.isEmpty()) m_fontDownloader->cancel(); else m_fontDownloader->drop(mine);
+}
 
-void Backend::cancelFontDownload() { if (m_fontDownloader) m_fontDownloader->cancel(); }
-
-void Backend::fontDownloadDoneWith(const QStringList &installed, const QVariantMap &failed, bool offline, bool cancelled) {
-    // Used by the window when it is safe (not mid-show, editors committed).
-    if (!installed.isEmpty()) m_fontsPending = true;
-    emit fontDownloadChanged();
-    QString message;
-    if (cancelled) message = tr("Font download cancelled");
-    else {
-        if (!installed.isEmpty()) message = tr("Installed free fonts: %1").arg(installed.join(QStringLiteral(", ")));
-        if (offline) message += (message.isEmpty() ? QString() : QStringLiteral(". ")) + tr("Couldn't reach the font server; similar fonts are used");
-        else if (!failed.isEmpty()) message += (message.isEmpty() ? QString() : QStringLiteral(". ")) + tr("Not installed: %1").arg(failed.keys().join(QStringLiteral(", ")));
+bool Backend::downloadPack() {
+    ensureDownloader();
+    QStringList families;
+    for (const auto &r : FontSwap::pack()) {
+        const auto row = r.toMap();
+        if (!row.value(QStringLiteral("installed")).toBool()) families.append(row.value(QStringLiteral("family")).toString());
     }
-    setStatus(message);
-    emit fontDownloadFinished(installed, failed, offline, cancelled);
+    m_packFamilies = families;
+    m_packFailed.clear();
+    m_packLeft = QSet<QString>(families.cbegin(), families.cend());
+    if (families.isEmpty()) { emit fontDownloadChanged(); emit packFinished(packReady(), packTotal(), {}, false); return true; }
+    m_fontDownloader->add(families, false);
+    emit fontDownloadChanged();
+    return true;
+}
+void Backend::cancelPack() {
+    if (!m_fontDownloader || m_packLeft.isEmpty()) return;
+    QStringList drop;
+    for (const auto &f : std::as_const(m_packLeft)) if (!m_deckLeft.contains(f)) drop.append(f);
+    m_fontDownloader->drop(drop);
+}
+
+void Backend::familyArrived(const QString &family) {
+    // The open deck uses it: applied (by the window, when safe) per family.
+    if (m_deckNeeded.contains(family)) m_fontsPending = true;
+    if (m_deckLeft.remove(family)) m_deckInstalled.append(family);
+    m_packLeft.remove(family);
+    if (!m_packFamilies.isEmpty() && m_packLeft.isEmpty() == false)
+        setStatus(tr("Extra fonts pack: %1 of %2 fonts ready").arg(packReady()).arg(packTotal()));
+    emit fontDownloadChanged();
+    runFinished({}, {}, false, false);   // settles whichever group just completed
+}
+void Backend::familyLost(const QString &family, const QString &why, bool network) {
+    if (m_deckLeft.remove(family)) m_deckFailed.insert(family, QVariantMap{{"why", why}, {"network", network}});
+    if (m_packLeft.remove(family)) m_packFailed.insert(family, QVariantMap{{"why", why}, {"network", network}});
+    emit fontDownloadChanged();
+    runFinished({}, {}, false, false);
+}
+
+// Groups end when their last family is in (or failed); the run's own end
+// only matters for families that never reported.
+void Backend::runFinished(const QStringList &, const QVariantMap &, bool, bool) {
+    const auto summarise = [](const QVariantMap &failed, QVariantMap &plain, bool &offline) {
+        offline = !failed.isEmpty();
+        for (auto it = failed.cbegin(); it != failed.cend(); ++it) {
+            plain.insert(it.key(), it.value().toMap().value("why"));
+            offline = offline && it.value().toMap().value("network").toBool();
+        }
+    };
+    if (m_deckLeft.isEmpty() && !m_deckFamilies.isEmpty()) {
+        QVariantMap failed; bool offline = false;
+        summarise(m_deckFailed, failed, offline);
+        offline = offline && m_deckInstalled.isEmpty();
+        const auto installed = m_deckInstalled;
+        const bool cancelled = m_deckCancelled;
+        m_deckFamilies.clear(); m_deckInstalled.clear(); m_deckFailed.clear();
+        QString message;
+        if (cancelled) message = tr("Font download cancelled");
+        else {
+            if (!installed.isEmpty()) message = tr("Installed free fonts: %1").arg(installed.join(QStringLiteral(", ")));
+            if (offline) message += (message.isEmpty() ? QString() : QStringLiteral(". ")) + tr("Couldn't reach the font server; similar fonts are used");
+            else if (!failed.isEmpty()) message += (message.isEmpty() ? QString() : QStringLiteral(". ")) + tr("Not installed: %1").arg(failed.keys().join(QStringLiteral(", ")));
+        }
+        setStatus(message);
+        emit fontDownloadChanged();
+        emit fontDownloadFinished(installed, failed, offline, cancelled);
+    }
+    if (m_packLeft.isEmpty() && !m_packFamilies.isEmpty()) {
+        QVariantMap failed; bool offline = false;
+        summarise(m_packFailed, failed, offline);
+        m_packFamilies.clear(); m_packFailed.clear();
+        const int ready = packReady(), total = packTotal();
+        setStatus(failed.isEmpty() ? tr("Extra fonts pack: all %1 fonts ready").arg(total)
+                                   : tr("Extra fonts pack: %1 of %2 fonts ready, %3 not installed").arg(ready).arg(total).arg(failed.size()));
+        emit fontDownloadChanged();
+        emit packFinished(ready, total, failed, offline);
+    }
 }
 
 // Fonts that just arrived are drawn at once, in place. This is not an edit:
