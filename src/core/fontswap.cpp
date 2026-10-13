@@ -234,15 +234,26 @@ private:
             if (run.origFont.isEmpty()) continue;
             const auto *opt = better(run.origFont, run.fontFamily);
             if (!opt) continue;
-            const qreal before = run.origFontSize > 0 ? run.origFontSize : boxBefore;
-            const qreal expected = qFuzzyCompare(run.fontScale, 1.0) ? before : before * run.fontScale;
-            if (qFuzzyCompare(run.fontScale, 1.0) ? run.fontSize > 0 && !same(run.fontSize, expected) && run.origFontSize > 0
-                                                  : !same(run.fontSize, expected)) continue;
+            const bool scaled = !qFuzzyCompare(run.fontScale, 1.0);
+            // The size the run had before any swap: recorded when it was
+            // scaled, otherwise its own explicit size, otherwise the box's.
+            qreal before;
+            if (scaled) {
+                before = run.origFontSize > 0 ? run.origFontSize : boxBefore;
+                if (!same(run.fontSize, before * run.fontScale)) continue;   // resized since
+            } else {
+                if (run.origFontSize > 0 && run.fontSize > 0 && !same(run.fontSize, run.origFontSize)) continue;
+                before = run.fontSize > 0 ? run.fontSize : boxBefore;
+            }
             const qreal scale = scales(opt) ? opt->size : 1.0;
             run.fontFamily = opt->family;
             run.fontScale = scale;
-            if (scale != 1) run.fontSize = before * scale;
-            else run.fontSize = run.origFontSize > 0 ? run.origFontSize : !qFuzzyCompare(o.fontScale, 1.0) ? boxBefore : 0;
+            if (scale != 1) {
+                if (!scaled && run.fontSize > 0) run.origFontSize = run.fontSize;
+                run.fontSize = before * scale;
+            } else if (scaled) {
+                run.fontSize = run.origFontSize > 0 ? run.origFontSize : !qFuzzyCompare(o.fontScale, 1.0) ? boxBefore : 0;
+            }
             count(run.origFont, opt->family);
         }
         for (auto &cell : o.table.cells) {

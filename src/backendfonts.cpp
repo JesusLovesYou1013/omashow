@@ -132,7 +132,7 @@ bool Backend::installFonts(const QVariantList &rows) {
         // Testing: say what would happen, change nothing.
         QJsonArray plan;
         for (const auto &package : packages)
-            plan.append(QJsonObject{{"how", "pacman"}, {"command", "pkexec pacman -S --needed --noconfirm " + package}});
+            plan.append(QJsonObject{{"how", "pacman"}, {"command", "pkexec pacman -S --needed --noconfirm -- " + package}});
         for (const auto &row : downloads)
             plan.append(QJsonObject{{"how", "download"}, {"family", row.value("family").toString()},
                                     {"from", !row.value("googleFonts").toString().isEmpty() ? "google/fonts " + row.value("googleFonts").toString() : "github " + row.value("github").toString()},
@@ -158,9 +158,10 @@ bool Backend::installFonts(const QVariantList &rows) {
     const QString dir = userFontDir();
 
     if (!packages.isEmpty()) {
-        QStringList args{QStringLiteral("pacman"), QStringLiteral("-S"), QStringLiteral("--needed"), QStringLiteral("--noconfirm")};
+        // A stuck pacman (database lock) must not leave the install running for good.
+        QStringList args{QStringLiteral("600"), QStringLiteral("pkexec"), QStringLiteral("pacman"), QStringLiteral("-S"), QStringLiteral("--needed"), QStringLiteral("--noconfirm"), QStringLiteral("--")};
         args += packages;
-        chain->steps.append({QStringLiteral("pkexec"), args, [chain, packages, installed, failed](int code, const QByteArray &) {
+        chain->steps.append({QStringLiteral("timeout"), args, [chain, packages, installed, failed](int code, const QByteArray &) {
             if (code != 0) { *failed += packages; return; }
             // The running app learns of the new files at once.
             QStringList list{QStringLiteral("-Qlq")};
@@ -185,7 +186,7 @@ bool Backend::installFonts(const QVariantList &rows) {
         api = QStringLiteral("https://api.github.com/repos/%1/%2/contents/%3").arg(owner, repo, path);
         const bool googleFonts = owner == QLatin1String("google");
         const QString target = dir + "/" + compact(family);
-        chain->steps.append({QStringLiteral("curl"), {QStringLiteral("-fsSL"), QStringLiteral("--max-time"), QStringLiteral("60"), api},
+        chain->steps.append({QStringLiteral("curl"), {QStringLiteral("-fsSL"), QStringLiteral("--proto"), QStringLiteral("=https"), QStringLiteral("--proto-redir"), QStringLiteral("=https"), QStringLiteral("--max-time"), QStringLiteral("60"), api},
             [chain, family, owner, repo, path, googleFonts, target, installed, failed](int code, const QByteArray &out) {
             if (code != 0) { failed->append(family); return; }
             auto added = std::make_shared<int>(0);
@@ -205,11 +206,11 @@ bool Backend::installFonts(const QVariantList &rows) {
                 else {
                     // Git LFS files are served from media.githubusercontent.com.
                     const auto ref = QUrlQuery(QUrl(o.value("url").toString())).queryItemValue("ref");
-                    url = QStringLiteral("https://media.githubusercontent.com/media/%1/%2/%3/%4/%5").arg(owner, repo, ref.isEmpty() ? "HEAD" : ref, path, name);
+                    url = QStringLiteral("https://media.githubusercontent.com/media/%1/%2/%3/%4%5").arg(owner, repo, ref.isEmpty() ? "HEAD" : ref, path.isEmpty() ? QString() : path + "/", name);
                 }
                 if (!url.startsWith(QLatin1String("https://"))) continue;
                 const QString file = target + "/" + name;
-                fetches.append({QStringLiteral("curl"), {QStringLiteral("-fsSL"), QStringLiteral("--max-time"), QStringLiteral("120"), QStringLiteral("--create-dirs"), QStringLiteral("-o"), file, url},
+                fetches.append({QStringLiteral("curl"), {QStringLiteral("-fsSL"), QStringLiteral("--proto"), QStringLiteral("=https"), QStringLiteral("--proto-redir"), QStringLiteral("=https"), QStringLiteral("--max-time"), QStringLiteral("120"), QStringLiteral("--create-dirs"), QStringLiteral("-o"), file, url},
                     [file, added](int code, const QByteArray &) {
                         if (code != 0) { QFile::remove(file); return; }
                         if (QFontDatabase::addApplicationFont(file) < 0) QFile::remove(file);   // not a font after all
@@ -238,10 +239,13 @@ void Backend::fontInstallDone(bool ok, const QStringList &installed, const QStri
     m_fontInstallRunning = false;
     emit fontInstallChanged();
     // Boxes still naming an Office font can use what just arrived.
+    if (qEnvironmentVariableIsSet("OMASHOW_NO_FONT_SWAP")) { emit importReportChanged(); }
+    else {
     m_history.begin(m_document, tr("Use installed free fonts"));
     const auto report = FontSwap::apply(m_document);
     if (report.changed) { m_history.commit(); touch(); } else m_history.abandon();
     emit importReportChanged();
+    }
     QString message = installed.isEmpty() ? QString() : tr("Installed %1").arg(installed.join(QStringLiteral(", ")));
     if (!failed.isEmpty()) message += (message.isEmpty() ? QString() : QStringLiteral(". ")) + tr("Could not install %1").arg(failed.join(QStringLiteral(", ")));
     setStatus(message);
