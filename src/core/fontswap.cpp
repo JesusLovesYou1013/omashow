@@ -587,7 +587,12 @@ QVariantList FontSwap::pack() {
     QStringList offices;
     for (const auto &entry : table()) offices.append(entry.name);
     offices.sort(Qt::CaseInsensitive);
-    return rowsFor(offices, true);
+    auto rows = rowsFor(offices, true);
+    // Tests only: a pack of just these families (comma list), so a local
+    // server can stand in for the whole one.
+    const auto only = qEnvironmentVariable("OMASHOW_FONT_TEST_PACK").split(QLatin1Char(','), Qt::SkipEmptyParts);
+    if (!only.isEmpty()) rows.removeIf([&](const QVariant &r) { return !only.contains(r.toMap().value(QStringLiteral("family")).toString()); });
+    return rows;
 }
 
 QVariantList FontSwap::needed(const Document &document) {

@@ -94,7 +94,8 @@ Sheet {
             if (root.mode !== "pack") return
             root.failed = failedMap; root.offline = wasOffline
             root.rows = backend.fontPack()
-            root.phase = "result"
+            // Cancelled with nothing failed: back to the offer (the rest can come any time).
+            root.phase = Object.keys(failedMap).length === 0 && root.todo.length > 0 ? "offer" : "result"
             if (Object.keys(failedMap).length > 0) root.details = true
         }
     }
