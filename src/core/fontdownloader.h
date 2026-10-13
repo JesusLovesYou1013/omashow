@@ -1,20 +1,25 @@
 #pragma once
 
-// Downloads the free fonts a deck needs into OmaShow's own font folder
-// (FONT-CHECK-2). Only files listed in :/fonts/font-sources.json are fetched:
-// exact paths in google/fonts at one pinned commit, each with its size and
-// sha256. A file is written as <name>.part, its hash checked before anything
-// parses it, then renamed and handed to QFontDatabase::addApplicationFont.
-// Nothing outside FontSandbox::dir() is touched; no password, no packages.
+// Downloads free fonts into OmaShow's own font folder (FONT-CHECK-2/3). Only
+// files listed in :/fonts/font-sources.json are fetched: exact paths in
+// google/fonts at one pinned commit, each with its size and sha256, checked
+// before anything parses the file. A family is built in <sandbox>.staging/
+// <Family>/ and moved into the sandbox with one directory rename once every
+// file is verified, so a family folder in the sandbox always means complete
+// (and nothing half-made is ever in the folder other apps may share).
 //
-// Up to four files at a time; a file that sends nothing for 20 s, or more
-// bytes than listed, is dropped; the whole run gives up after 5 minutes.
-// OMASHOW_FONT_BASE_URL replaces the base URL (tests; hashes still apply).
+// One queue for everything (a deck's fonts and the Extra fonts pack); a deck
+// can move its families to the front. Four files at a time; a file that sends
+// nothing for 20 s, more bytes than listed, or fails its hash fails its
+// family. Three network failures in a row (HTTP 429 and 5xx count) end the
+// run as offline; a write that fails ends it as "disk full". Free space is
+// checked before families are queued. No overall deadline.
+// OMASHOW_FONT_BASE_URL replaces the base URL (tests; hashes still apply);
+// OMASHOW_FONT_TEST_FREE_BYTES fakes the free space (tests).
 
 #include <QHash>
 #include <QList>
 #include <QObject>
-#include <QPointer>
 #include <QStringList>
 #include <QVariantMap>
 
@@ -29,54 +34,43 @@ public:
     explicit FontDownloader(QObject *parent = nullptr);
     ~FontDownloader() override;
 
-    // Families with files listed, and their total download size in bytes.
     static bool downloadable(const QString &family);
     static qint64 bytesFor(const QStringList &families);
+    // Its folder is in the sandbox (complete by construction).
+    static bool complete(const QString &family);
 
     bool running() const { return m_running; }
-    // Starts fetching every listed file of these families that is not already
-    // in the folder with the right hash. False when nothing could start.
-    bool start(const QStringList &families);
-    void cancel();
-
-    qint64 bytesDone() const;
-    qint64 bytesTotal() const { return m_total; }
+    // Queue these families (front: ahead of everything queued, also moving
+    // ones already queued). Starts the run when idle.
+    bool add(const QStringList &families, bool front);
+    void drop(const QStringList &families);   // these only, as cancelled
+    void cancel();                            // everything
+    qint64 bytesDone(const QStringList &families) const;
 
 signals:
     void progress();
-    // installed: families with every file in place and loaded.
-    // failed: family -> reason. offline: every failure was the network.
+    void familyReady(const QString &family);
+    void familyFailed(const QString &family, const QString &why, bool network);
     void finished(const QStringList &installed, const QVariantMap &failed, bool offline, bool cancelled);
 
 private:
-    struct File {
-        QString family, path, sha256, target;
-        qint64 size = 0;
-        bool font = true;
-        bool present = false;   // already in the folder with the right hash
-    };
-    struct Active {
-        File file;
-        QNetworkReply *reply = nullptr;
-        QFile *out = nullptr;
-        QTimer *stall = nullptr;
-        qint64 received = 0;
-    };
+    struct File { QString family, path, sha256, target; qint64 size = 0; bool font = true; };
+    struct Active { File file; QFile *out = nullptr; QTimer *stall = nullptr; qint64 received = 0; };
+    struct Family { int left = 0; qint64 total = 0, done = 0; };
     void pump();
     void done(QNetworkReply *reply);
-    void fail(const QString &family, const QString &why, bool network);
     void settle(const QString &family);
+    void failFamily(const QString &family, const QString &why, bool network);
+    void stopAll(const QString &why, bool network);
     void finish(bool cancelled);
-    static bool load(const QString &path);
+    static bool loadFamily(const QString &family);
 
     QNetworkAccessManager *m_net = nullptr;
-    QTimer *m_deadline = nullptr;
     QList<File> m_queue;
     QHash<QNetworkReply *, Active> m_active;
-    QStringList m_families, m_installed;
-    QHash<QString, int> m_left;              // family -> files still to come
-    QHash<QString, QList<File>> m_verified;  // family -> files verified, still .part
+    QHash<QString, Family> m_fam;   // families still coming
+    QStringList m_installed;
     QVariantMap m_failed;
-    bool m_allNetwork = true, m_running = false, m_cancelled = false;
-    qint64 m_total = 0, m_finishedBytes = 0;
+    int m_networkFails = 0;
+    bool m_running = false, m_cancelled = false, m_allNetwork = true;
 };
