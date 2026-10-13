@@ -134,6 +134,7 @@ class Backend : public QObject {
     Q_PROPERTY(int packTotal READ packTotal NOTIFY fontDownloadChanged)
     Q_PROPERTY(double packDone READ packDone NOTIFY fontDownloadChanged)
     Q_PROPERTY(double packBytes READ packBytes NOTIFY fontDownloadChanged)
+    Q_PROPERTY(QString packStatus READ packStatus NOTIFY fontDownloadChanged)
     Q_PROPERTY(bool fontDownloadRunning READ fontDownloadRunning NOTIFY fontDownloadChanged)
     Q_PROPERTY(double fontDownloadDone READ fontDownloadDone NOTIFY fontDownloadChanged)
     Q_PROPERTY(double fontDownloadTotal READ fontDownloadTotal NOTIFY fontDownloadChanged)
@@ -182,6 +183,7 @@ public:
     int packTotal() const;
     double packDone() const;
     double packBytes() const;
+    QString packStatus() const { return m_packStatus; }
     bool fontDownloadRunning() const;
     double fontDownloadDone() const;
     double fontDownloadTotal() const;
@@ -830,6 +832,14 @@ private:
     QStringList m_deckInstalled;
     QVariantMap m_deckFailed, m_packFailed;
     bool m_deckCancelled = false;
+    // The pack's rows, built once and kept up to date as families settle
+    // (not rebuilt on every progress tick).
+    const QVariantList &packRows() const;
+    mutable QVariantList m_packRows;
+    mutable bool m_packRowsBuilt = false;
+    mutable int m_packReadyCount = 0;
+    QString m_packStatus;
+    void finishDeck();
     bool m_fontsPending = false;
     void requestFontCheck(const QString &source);
     QTimer m_exportTicker;
