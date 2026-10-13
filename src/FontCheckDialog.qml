@@ -57,13 +57,17 @@ Sheet {
     // From backend.fontCheckRequested (a deck was opened). Never during a show:
     // the window holds it until the show ends.
     function check(src, needed) {
-        if (!src || needed.length === 0) return
+        // The deck waits (backend.fontGate) until this resolves: every way out
+        // ends in backend.finishFontGate(), which displays it already correct.
         const fetchable = needed.filter(r => r.downloadable)
-        if (fetchable.length === 0) return
+        if (!src || fetchable.length === 0) { backend.finishFontGate(); return }
         // Pack on (Daniel): never this popup. Its fonts come with the pack,
         // ahead of the rest if it is still running; nothing to do if complete.
-        if (backend.fontAutoDownload || backend.extraFontsPack) { backend.downloadFonts(fetchable.map(r => r.family)); return }
-        if (backend.fontCheckHidden(src)) return
+        if (backend.fontAutoDownload || backend.extraFontsPack) {
+            if (!backend.downloadFonts(fetchable.map(r => r.family))) backend.finishFontGate()
+            return
+        }
+        if (backend.fontCheckHidden(src)) { backend.finishFontGate(); return }
         if (visible && mode === "pack") { heldDeck = { source: src, rows: needed }; return }   // shown when the pack view closes
         mode = "deck"; source = src; rows = needed
         // A short list is shown at once (each free font and the Office font it replaces).
@@ -83,12 +87,15 @@ Sheet {
 
     onClosed: {
         if (hideAgain.checked && source) backend.setFontCheckHidden(source, true)
+        if (mode === "deck" && backend.fontGate) backend.finishFontGate()   // fonts in, or fallbacks chosen
         if (heldDeck) { const held = heldDeck; heldDeck = null; Qt.callLater(() => check(held.source, held.rows)) }
     }
 
     Connections {
         target: backend
         function onFontDownloadFinished(installed, failedMap, wasOffline, cancelled) {
+            // A silent download (pack on, or always-download) for a held deck.
+            if (backend.fontGate && !(root.visible && root.mode === "deck")) { backend.finishFontGate(); return }
             if (!root.visible || root.mode !== "deck") return
             if (cancelled) { root.phase = "offer"; return }
             root.failed = failedMap; root.offline = wasOffline
