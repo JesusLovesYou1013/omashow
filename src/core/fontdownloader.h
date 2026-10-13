@@ -53,6 +53,7 @@ private:
         QString family, path, sha256, target;
         qint64 size = 0;
         bool font = true;
+        bool present = false;   // already in the folder with the right hash
     };
     struct Active {
         File file;
@@ -64,6 +65,7 @@ private:
     void pump();
     void done(QNetworkReply *reply);
     void fail(const QString &family, const QString &why, bool network);
+    void settle(const QString &family);
     void finish(bool cancelled);
     static bool load(const QString &path);
 
@@ -71,7 +73,9 @@ private:
     QTimer *m_deadline = nullptr;
     QList<File> m_queue;
     QHash<QNetworkReply *, Active> m_active;
-    QStringList m_families;
+    QStringList m_families, m_installed;
+    QHash<QString, int> m_left;              // family -> files still to come
+    QHash<QString, QList<File>> m_verified;  // family -> files verified, still .part
     QVariantMap m_failed;
     bool m_allNetwork = true, m_running = false, m_cancelled = false;
     qint64 m_total = 0, m_finishedBytes = 0;
