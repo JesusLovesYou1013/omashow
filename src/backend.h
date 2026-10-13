@@ -191,6 +191,9 @@ public:
     bool fontGate() const { return m_gate.active; }
     // Display the held deck now (fonts arrived, or fallbacks chosen).
     Q_INVOKABLE void finishFontGate();
+    Q_INVOKABLE void skipFontGate();
+    Q_PROPERTY(bool fontGateSilent READ fontGateSilent NOTIFY fontGateChanged)
+    bool fontGateSilent() const { return m_gate.active && m_gate.silent; }
     bool fontDownloadRunning() const;
     double fontDownloadDone() const;
     double fontDownloadTotal() const;
@@ -854,7 +857,7 @@ private:
         QUrl url;
         QString source, kind, original;
         QStringList warnings;
-        bool foreign = false, recovery = false;
+        bool foreign = false, recovery = false, silent = false;
     } m_gate;
     bool m_gateHandled = false;   // the opening deck's check is done: no second popup
     // Every open comes through here: held behind the font check if needed.
