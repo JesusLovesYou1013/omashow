@@ -762,7 +762,7 @@ ApplicationWindow {
                } }
     Shortcut { sequence: "Space"; context: Qt.ApplicationShortcut; enabled: !win.dialogOpen && !presenter.running && !backend.startVisible && (win.workspace === 2 || win.workspace === 4)
                onActivated: backend.togglePlay() }
-    Shortcut { sequence: "F5"; context: Qt.ApplicationShortcut; enabled: !win.dialogOpen && !presenter.running && !backend.startVisible; onActivated: win.startShow() }
+    Shortcut { sequence: "F5"; context: Qt.ApplicationShortcut; enabled: !win.dialogOpen && !presenter.running && !backend.startVisible && !backend.fontGate; onActivated: win.startShow() }
     Shortcut { sequence: "?"; context: Qt.ApplicationShortcut; enabled: !win.dialogOpen && !presenter.running && !backend.startVisible && !win.textEntryFocused; onActivated: helpSheet.open() }
     Shortcut { sequence: "F1"; context: Qt.ApplicationShortcut; enabled: !win.dialogOpen && !presenter.running; onActivated: { win.commitEditors(); helpGuide.open() } }
     Shortcut { sequence: "Ctrl+Q"; context: Qt.ApplicationShortcut; enabled: !presenter.running; onActivated: win.close() }
@@ -812,7 +812,7 @@ ApplicationWindow {
         discardSheet.open()
     }
 
-    function startShow() { win.commitEditors(); presenter.start(false,false) }
+    function startShow() { if (backend.fontGate) return; win.commitEditors(); presenter.start(false,false) }
     function endShow() { presenter.stop() }
     SlideSizeDialog { id: slideSizeDialog }
     LayoutApplyDialog { id: layoutApplyDialog }
@@ -863,6 +863,26 @@ ApplicationWindow {
     FontsDialog { id: fontsDialog }
     // FONT-CHECK-1: say which free fonts an opened PowerPoint deck needs.
     FontCheckDialog { id: fontCheckDialog }
+    // FONT-CHECK-3: while an opening deck waits for its font check, a short
+    // loading state (and nothing to click behind it: no show can start).
+    Popup {
+        id: fontGateLoading
+        objectName: "fontGateLoading"
+        parent: Overlay.overlay; anchors.centerIn: parent
+        modal: true; closePolicy: Popup.NoAutoClose
+        visible: backend.fontGate && !fontCheckDialog.visible
+        Overlay.modal: Rectangle { color: Theme.withAlpha(Theme.showBg, .65) }
+        background: Rectangle { color: Theme.panelBg; border.color: Theme.border; radius: Theme.rControl }
+        ColumnLayout {
+            spacing: Theme.s2
+            Label { text: backend.fontDownloadRunning ? qsTr("Getting the free fonts this presentation needs…") : qsTr("Checking fonts…") }
+            ProgressBar {
+                Layout.preferredWidth: 280
+                indeterminate: !backend.fontDownloadRunning || backend.fontDownloadTotal <= 0
+                from: 0; to: Math.max(1, backend.fontDownloadTotal); value: backend.fontDownloadDone
+            }
+        }
+    }
     // FONT-CHECK-2: never in the middle of a show: a check or arrived fonts
     // wait until it ends; editors are committed before fonts are applied.
     property var pendingFontCheck: null
