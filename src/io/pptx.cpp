@@ -4,6 +4,7 @@
 #include "anim/build.h"
 #include "anim/presentation.h"
 #include "core/edit.h"
+#include "core/fonts.h"
 #include "core/imageasset.h"
 #include "core/link.h"
 #include "core/mediaasset.h"
@@ -13,6 +14,7 @@
 #include "core/textruns.h"
 #include "io/zip.h"
 
+#include <QFontDatabase>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -455,6 +457,7 @@ void applyStyleRefs(const Node *style, Look &look, const ColorContext &ctx) {
 struct RunLook {
     qreal sz = 0;          // hundredths of a point; 0 unknown
     int b = -1, i = -1, u = -1, strike = -1;
+    int weight = 0;        // from a weight-named family ("Noto Serif Medium" -> 500); 0 none
     QColor color;
     QString family;
     int baseline = 0;
@@ -462,6 +465,9 @@ struct RunLook {
     qreal spc = 0;         // hundredths of a point
     QString lang, link;
 };
+
+// Bold on top of any face is bold; otherwise a weight-named family's weight.
+int lookWeight(const RunLook &l) { return l.b > 0 ? 700 : l.weight ? l.weight : 400; }
 
 struct ParaLook {
     int algn = -1;         // 0 left, 1 centre, 2 right, 3 justify
@@ -471,6 +477,25 @@ struct ParaLook {
     qreal spcBef = -1;     // points
     int lvl = 0;
 };
+
+// PowerPoint has only bold on/off, so other weights travel as their own
+// family ("Noto Serif Medium", "Inter SemiBold"). When the family without the
+// weight word is here (installed or bundled), read it back as that family at
+// that weight, which is how OmaShow keeps it.
+QString splitWeight(const QString &face, int *weight) {
+    static const QList<QPair<QString, int>> words = {
+        {QStringLiteral(" Extra Light"), 200}, {QStringLiteral(" ExtraLight"), 200}, {QStringLiteral(" UltraLight"), 200},
+        {QStringLiteral(" Semi Bold"), 600}, {QStringLiteral(" SemiBold"), 600}, {QStringLiteral(" Semibold"), 600}, {QStringLiteral(" DemiBold"), 600},
+        {QStringLiteral(" Extra Bold"), 800}, {QStringLiteral(" ExtraBold"), 800}, {QStringLiteral(" UltraBold"), 800},
+        {QStringLiteral(" Thin"), 100}, {QStringLiteral(" Light"), 300}, {QStringLiteral(" Medium"), 500},
+        {QStringLiteral(" Black"), 900}, {QStringLiteral(" Heavy"), 900}};
+    for (const auto &w : words) {
+        if (!face.endsWith(w.first, Qt::CaseInsensitive)) continue;
+        const QString stem = face.left(face.size() - w.first.size());
+        if (QFontDatabase::hasFamily(stem) || !Fonts::bundledFiles(stem).isEmpty()) { *weight = w.second; return stem; }
+    }
+    return face;
+}
 
 QString mapFont(const QString &face, const Theme *theme) {
     if (face.startsWith(QLatin1String("+mj"))) return theme ? theme->major : QString();
@@ -505,7 +530,7 @@ void applyRPr(RunLook &run, const Node *rPr, const TextContext &ctx) {
     }
     if (const Node *latin = rPr->child(QStringLiteral("latin"))) {
         const auto face = mapFont(latin->attr(QStringLiteral("typeface")), ctx.color->theme);
-        if (!face.isEmpty()) run.family = face;
+        if (!face.isEmpty()) { int w = 0; run.family = splitWeight(face, &w); run.weight = w; }
     }
     if (const Node *link = rPr->child(QStringLiteral("hlinkClick"))) {
         const auto rid = link->attr(QStringLiteral("r:id"));
@@ -646,7 +671,7 @@ TextOut convertText(const Node *txBody, const TextChain &chain, const TextContex
         run.start = piece.start; run.length = piece.length;
         const auto &l = piece.look; const auto &b = out.box;
         bool differs = false;
-        if ((l.b > 0) != (b.b > 0)) { run.weight = l.b > 0 ? 700 : 400; differs = true; }
+        if (lookWeight(l) != lookWeight(b)) { run.weight = lookWeight(l); differs = true; }
         if ((l.i > 0) != (b.i > 0)) { run.italic = l.i > 0 ? 1 : 2; differs = true; }
         if ((l.u > 0) != (b.u > 0)) { run.underline = l.u > 0 ? 1 : 2; differs = true; }
         if ((l.strike > 0) != (b.strike > 0)) { run.strike = l.strike > 0 ? 1 : 2; differs = true; }
@@ -921,7 +946,7 @@ struct Reader {
         const auto &b = text.box;
         const qreal sz = (b.sz > 0 ? b.sz : fallback.sz > 0 ? fallback.sz : 1800) / 100.0 * text.fontScale;
         o.fontSize = sz * u.pt;
-        o.fontWeight = b.b > 0 ? 700 : 400;
+        o.fontWeight = lookWeight(b);
         o.italic = b.i > 0;
         o.underline = b.u > 0;
         o.strike = b.strike > 0;
