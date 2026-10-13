@@ -29,6 +29,7 @@ Sheet {
     property var failed: ({})
     property bool offline: false
     property bool details: false
+    property var heldDeck: null            // a deck opened while the pack view was up
     readonly property var todo: rows.filter(r => r.downloadable && !r.installed)
     readonly property real megabytes: todo.reduce((n, r) => n + (r.bytes || 0), 0) / 1048576
     readonly property bool running: mode === "pack" ? backend.packRunning : backend.fontDownloadRunning
@@ -61,7 +62,7 @@ Sheet {
         if (fetchable.length === 0) return
         if (backend.fontAutoDownload) { backend.downloadFonts(fetchable.map(r => r.family)); return }
         if (backend.fontCheckHidden(src)) return
-        if (visible && mode === "pack" && phase === "progress") return   // the deck can wait for the pack view to close
+        if (visible && mode === "pack") { heldDeck = { source: src, rows: needed }; return }   // shown when the pack view closes
         mode = "deck"; source = src; rows = needed
         // A short list is shown at once (each free font and the Office font it replaces).
         phase = "offer"; failed = {}; details = needed.length <= 4; hideAgain.checked = false
@@ -78,7 +79,10 @@ Sheet {
         if (!ok) { phase = "result"; failed = ({}); offline = false }
     }
 
-    onClosed: if (hideAgain.checked && source) backend.setFontCheckHidden(source, true)
+    onClosed: {
+        if (hideAgain.checked && source) backend.setFontCheckHidden(source, true)
+        if (heldDeck) { const held = heldDeck; heldDeck = null; Qt.callLater(() => check(held.source, held.rows)) }
+    }
 
     Connections {
         target: backend
@@ -129,7 +133,7 @@ Sheet {
 
         Label {
             objectName: "fontCheckDetailsToggle"
-            text: (root.details ? "▾ " : "▸ ") + qsTr("%1 fonts").arg(root.rows.length)
+            text: (root.details ? "▾ " : "▸ ") + qsTr("%n font(s)", "", root.rows.length)
             color: Theme.accent
             MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.details = !root.details }
         }
