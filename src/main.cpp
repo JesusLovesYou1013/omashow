@@ -119,45 +119,55 @@ int captureInterface(QQmlApplicationEngine &engine, Backend &backend, Presenter 
         save(window, QStringLiteral("start"));
         backend.createDeck(0, 1920, 1080, 0);
     }
-    // FONT-CHECK-1 (OMASHOW_UI_SHOT_FONTCHECK=1): the font check shown on
-    // opening a PowerPoint deck, photographed, and what it listed.
+    // FONT-CHECK-1/2 (OMASHOW_UI_SHOT_FONTCHECK=1|hide|download): the font
+    // check shown on opening a deck, photographed. hide: tick "Don't show
+    // again" and close. download: press Download, photograph the progress and
+    // the result, and say what the deck uses afterwards.
     if (haveDeck && !qEnvironmentVariableIsEmpty("OMASHOW_UI_SHOT_FONTCHECK")) {
+        const auto mode = qEnvironmentVariable("OMASHOW_UI_SHOT_FONTCHECK");
+        const auto json = [](const QVariant &v) { return QString::fromUtf8(QJsonDocument::fromVariant(v).toJson(QJsonDocument::Compact)); };
         settle(500);
         QObject *check = window->findChild<QObject *>(QStringLiteral("fontCheckDialog"));
         qInfo().noquote() << "ui-shot fontcheck: sandbox" << backend.fontSandboxDir();
-        qInfo().noquote() << "ui-shot fontcheck: needed" << QJsonDocument::fromVariant(backend.fontsToInstall()).toJson(QJsonDocument::Compact);
+        qInfo().noquote() << "ui-shot fontcheck: needed" << json(backend.fontsToInstall());
         qInfo().noquote() << "ui-shot fontcheck: shown" << (check && check->property("visible").toBool());
-        qInfo().noquote() << "ui-shot fontcheck: swaps" << QJsonDocument::fromVariant(backend.fontSwaps()).toJson(QJsonDocument::Compact);
+        qInfo().noquote() << "ui-shot fontcheck: swaps" << json(backend.fontSwaps());
         save(window, QStringLiteral("fontcheck"));
-        // OMASHOW_UI_SHOT_FONTCHECK=hide: tick "Don't show again" and close, as a person would.
-        if (check && qEnvironmentVariable("OMASHOW_UI_SHOT_FONTCHECK") == QLatin1String("hide")) {
+        const QString source = check ? check->property("source").toString() : QString();
+        if (check && mode == QLatin1String("hide")) {
             if (auto *box = check->findChild<QObject *>(QStringLiteral("fontCheckHide"))) box->setProperty("checked", true);
             QMetaObject::invokeMethod(check, "close");
             settle(300);
-            qInfo().noquote() << "ui-shot fontcheck: hidden for" << backend.importReport().value(QStringLiteral("source")).toString()
-                              << backend.fontCheckHidden(backend.importReport().value(QStringLiteral("source")).toString());
+            qInfo().noquote() << "ui-shot fontcheck: hidden for" << source << backend.fontCheckHidden(source);
         }
-        return 0;
-    }
-    // OMASHOW-PERSONAL: font swap check (OMASHOW_UI_SHOT_FONTS=1): the import
-    // banner, the install offer, the install itself (run it with
-    // OMASHOW_FONT_INSTALL=user or simulate and an isolated XDG_DATA_HOME),
-    // the deck redrawn with what arrived, and the Extra fonts pack offer.
-    if (haveDeck && qEnvironmentVariableIntValue("OMASHOW_UI_SHOT_FONTS")) {
-        save(window, QStringLiteral("fonts-import"));
-        QObject *dialog = window->findChild<QObject *>(QStringLiteral("fontInstallDialog"));
-        qInfo().noquote() << "ui-shot fonts: swaps" << QJsonDocument::fromVariant(backend.fontSwaps()).toJson(QJsonDocument::Compact);
-        qInfo().noquote() << "ui-shot fonts: to install" << QJsonDocument::fromVariant(backend.fontsToInstall()).toJson(QJsonDocument::Compact);
-        if (dialog) { QMetaObject::invokeMethod(dialog, "showDeck"); save(window, QStringLiteral("fonts-offer")); QMetaObject::invokeMethod(dialog, "close"); }
-        QEventLoop wait;
-        bool done = false;
-        QObject::connect(&backend, &Backend::fontInstallFinished, &wait, [&](bool ok, const QString &message) {
-            qInfo().noquote() << "ui-shot fonts: finished" << ok << message; done = true; wait.quit(); });
-        QTimer::singleShot(240000, &wait, &QEventLoop::quit);
-        if (backend.installFonts(backend.fontsToInstall()) && !done) wait.exec();
-        qInfo().noquote() << "ui-shot fonts: swaps after" << QJsonDocument::fromVariant(backend.fontSwaps()).toJson(QJsonDocument::Compact);
-        save(window, QStringLiteral("fonts-after"));
-        if (dialog) { QMetaObject::invokeMethod(dialog, "showPack"); save(window, QStringLiteral("fonts-pack")); QMetaObject::invokeMethod(dialog, "close"); }
+        if (check && mode == QLatin1String("download") && check->property("visible").toBool()) {
+            QEventLoop wait;
+            bool shotProgress = false;
+            QObject::connect(&backend, &Backend::fontDownloadChanged, &wait, [&] {
+                // Not from inside the download's own signal: save() spins an event loop.
+                if (!shotProgress && backend.fontDownloadDone() > 0) { shotProgress = true; QTimer::singleShot(0, &wait, [&] { save(window, QStringLiteral("fontcheck-progress")); }); }
+            });
+            QObject::connect(&backend, &Backend::fontDownloadFinished, &wait,
+                             [&](const QStringList &installed, const QVariantMap &failed, bool offline, bool cancelled) {
+                qInfo().noquote() << "ui-shot fontcheck: finished installed" << installed.join(QLatin1Char(','))
+                                  << "failed" << json(failed) << "offline" << offline << "cancelled" << cancelled;
+                QTimer::singleShot(400, &wait, &QEventLoop::quit);
+            });
+            QTimer::singleShot(qEnvironmentVariableIntValue("OMASHOW_UI_SHOT_CANCEL_MS") > 0 ? qEnvironmentVariableIntValue("OMASHOW_UI_SHOT_CANCEL_MS") : 1 << 30,
+                               &backend, [&] { if (!shotProgress) save(window, QStringLiteral("fontcheck-progress")); backend.cancelFontDownload(); });
+            QTimer::singleShot(400000, &wait, &QEventLoop::quit);
+            QMetaObject::invokeMethod(check->findChild<QObject *>(QStringLiteral("fontCheckDownload")), "clicked");
+            wait.exec();
+            qInfo().noquote() << "ui-shot fontcheck: dialog state" << check->property("state").toString() << "visible" << check->property("visible").toBool();
+            qInfo().noquote() << "ui-shot fontcheck: swaps after" << json(backend.fontSwaps());
+            qInfo().noquote() << "ui-shot fontcheck: needed after" << json(backend.fontsToInstall());
+            qInfo().noquote() << "ui-shot fontcheck: modified" << backend.modified() << "canUndo" << backend.canUndo();
+            save(window, QStringLiteral("fontcheck-after"));
+            if (qEnvironmentVariableIsSet("OMASHOW_UI_SHOT_SAVE")) backend.saveTo(outDir + QStringLiteral("/after.omashow"));
+            if (check->property("visible").toBool()) QMetaObject::invokeMethod(check, "close");
+            settle(300);
+            save(window, QStringLiteral("fontcheck-deck"));
+        }
         return 0;
     }
     const struct { int workspace; const char *name; } views[] = {

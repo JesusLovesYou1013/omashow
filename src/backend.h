@@ -126,7 +126,10 @@ class Backend : public QObject {
     Q_PROPERTY(bool highContrast READ highContrast WRITE setHighContrast NOTIFY viewPreferencesChanged)
     // Offer the free matches of every Windows and Office font (FontSwap::pack).
     Q_PROPERTY(bool extraFontsPack READ extraFontsPack WRITE setExtraFontsPack NOTIFY extraFontsPackChanged)
-    Q_PROPERTY(bool fontInstallRunning READ fontInstallRunning NOTIFY fontInstallChanged)
+    Q_PROPERTY(bool fontDownloadRunning READ fontDownloadRunning NOTIFY fontDownloadChanged)
+    Q_PROPERTY(double fontDownloadDone READ fontDownloadDone NOTIFY fontDownloadChanged)
+    Q_PROPERTY(double fontDownloadTotal READ fontDownloadTotal NOTIFY fontDownloadChanged)
+    Q_PROPERTY(bool fontAutoDownload READ fontAutoDownload WRITE setFontAutoDownload NOTIFY fontAutoDownloadChanged)
     Q_PROPERTY(QVariantMap slideTransition READ slideTransition NOTIFY selectionChanged)
     Q_PROPERTY(QVariantList exportQueue READ exportQueue NOTIFY exportQueueChanged)
     Q_PROPERTY(bool encoderAvailable READ encoderAvailable CONSTANT)
@@ -155,17 +158,21 @@ public:
     Q_INVOKABLE QVariantList fontSwaps() const;
     Q_INVOKABLE QVariantList fontsToInstall() const;
     Q_INVOKABLE QVariantList fontPack() const;
-    Q_INVOKABLE QString fontInstallMode() const;
+    // FONT-CHECK-2: fetch free fonts into OmaShow's own folder, then use them in place.
+    Q_INVOKABLE bool downloadFonts(const QStringList &families);
+    Q_INVOKABLE void cancelFontDownload();
+    bool fontDownloadRunning() const;
+    double fontDownloadDone() const;
+    double fontDownloadTotal() const;
+    bool fontAutoDownload() const;
+    void setFontAutoDownload(bool on);
     // FONT-CHECK-1: OmaShow's own font folder and the per-document font check.
     Q_INVOKABLE QString fontSandboxDir() const;
     Q_INVOKABLE bool fontCheckHidden(const QString &source) const;
     Q_INVOKABLE void setFontCheckHidden(const QString &source, bool hidden);
     Q_INVOKABLE bool openFontSandbox();
-    Q_INVOKABLE int reloadFontSandbox();
-    Q_INVOKABLE bool installFonts(const QVariantList &rows);
     bool extraFontsPack() const;
     void setExtraFontsPack(bool on);
-    bool fontInstallRunning() const { return m_fontInstallRunning; }
     // The upright weights (100-900) the typeface really has, ascending. A name
     // that is not installed answers for the face it falls back to. Cached per
     // family, so the inspector asks once per family change.
@@ -601,8 +608,12 @@ signals:
     void opened();
     void importReportChanged();
     void extraFontsPackChanged();
-    void fontInstallChanged();
-    void fontInstallFinished(bool ok, const QString &message);
+    void fontDownloadChanged();
+    void fontAutoDownloadChanged();
+    void fontDownloadFinished(const QStringList &installed, const QVariantMap &failed, bool offline, bool cancelled);
+    // A deck was opened (local file or import source) that names Office fonts
+    // whose free matches are not here.
+    void fontCheckRequested(const QString &source);
     void importReady();
     void deckImportChanged();
     void findChanged();
@@ -789,8 +800,10 @@ private:
     QString m_defaultPrinter;
     bool m_printersRunning = false, m_printersKnown = false;
     int m_reducedMotion = -1, m_highContrast = -1;
-    bool m_fontInstallRunning = false;
-    void fontInstallDone(bool ok, const QStringList &installed, const QStringList &failed);
+    class FontDownloader *m_fontDownloader = nullptr;
+    void fontDownloadDoneWith(const QStringList &installed, const QVariantMap &failed, bool offline, bool cancelled);
+    void applyArrivedFonts();
+    void requestFontCheck(const QString &source);
     QTimer m_exportTicker;
     int m_exportSerial = 0;
     void startNextExport();

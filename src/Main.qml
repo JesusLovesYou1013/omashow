@@ -409,7 +409,7 @@ ApplicationWindow {
         { id: "highContrastItem", tab: "view", group: "access", kind: "toggle", label: qsTr("Stronger contrast"), also: "high contrast accessibility legible ordinary", checked: () => backend.highContrast, run: () => backend.highContrast = !backend.highContrast },
         { id: "extraFontsPackItem", tab: "view", group: "fonts", kind: "toggle", label: qsTr("Extra fonts pack"), also: "office windows fonts free matches install calibri aptos cambria",
           tip: qsTr("Offer free stand-ins for every Windows and Office font"), checked: () => backend.extraFontsPack,
-          run: () => { backend.extraFontsPack = !backend.extraFontsPack; if (backend.extraFontsPack) fontInstallDialog.showPack() } },
+          run: () => { backend.extraFontsPack = !backend.extraFontsPack; if (backend.extraFontsPack) fontCheckDialog.showPack() } },
         // ── Animate (ANIM-001): the only place an animation is chosen, timed or ordered ──
         { id: "animPreview", tab: "animate", group: "preview", label: qsTr("Preview"), icon: "play", also: "play animation build preview slide",
           tip: qsTr("Play the chosen animation, or the whole slide when none is chosen"), on: () => backend.builds.length > 0,
@@ -858,10 +858,9 @@ ApplicationWindow {
     Connections { target: backend; function onTableEditorRequested() { win.commitEditors(); tableEditor.show() } }
     LinkDialog { id: linkDialog }
     FontsDialog { id: fontsDialog }
-    FontInstallDialog { id: fontInstallDialog }
     // FONT-CHECK-1: say which free fonts an opened PowerPoint deck needs.
     FontCheckDialog { id: fontCheckDialog }
-    Connections { target: backend; function onImportReportChanged() { Qt.callLater(() => fontCheckDialog.check(backend.importReport)) } }
+    Connections { target: backend; function onFontCheckRequested(source) { Qt.callLater(() => fontCheckDialog.check(source)) } }
     MediaOptimisation { id: mediaOptimisation }
     Connections { target: backend; function onMediaOptimisationRequested() { win.commitEditors(); mediaOptimisation.show() } }
     MediaPreflight { id: mediaPreflight; onEditRequested: win.workspace=0 }
@@ -1381,12 +1380,8 @@ ApplicationWindow {
                               ? qsTr("%1 was opened from %2 as a new OmaShow deck. One thing could not be brought across; the original is untouched.").arg(parent.parent.parent.report.name).arg(parent.parent.parent.report.kind)
                               : qsTr("%1 was opened from %2 as a new OmaShow deck. %3 things could not be brought across; the original is untouched.").arg(parent.parent.parent.report.name).arg(parent.parent.parent.report.kind).arg(parent.parent.parent.notes.length)
                     }
-                    Button {
-                        objectName: "importInstallFonts"
-                        visible: (parent.parent.parent.report.fontsToInstall ?? []).length > 0 && !backend.fontInstallRunning
-                        text: qsTr("Install free fonts…")
-                        onClicked: fontInstallDialog.showDeck()
-                    }
+                    // FONT-CHECK-2: the old pacman "Install free fonts…" button is gone; the font check offers the download.
+
                     Button {
                         objectName: "importFonts"
                         visible: (parent.parent.parent.report.missingFonts ?? []).length > 0
