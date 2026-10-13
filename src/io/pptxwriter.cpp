@@ -312,7 +312,17 @@ Family find(const QString &family) {
 
 // The weight OmaShow really draws for a family at a weight: Qt picks the
 // nearest face that exists (Noto Serif at 600 is its Medium, Inter at 600 its Bold).
+int drawnWeightUncached(const QString &family, int weight, bool italic);
 int drawnWeight(const QString &family, int weight, bool italic) {
+    static QHash<QString, int> cache;   // writer runs on one worker at a time
+    const QString key = family + QLatin1Char('|') + QString::number(weight) + (italic ? QLatin1String("|i") : QLatin1String(""));
+    auto it = cache.constFind(key);
+    if (it != cache.constEnd()) return *it;
+    const int w = drawnWeightUncached(family, weight, italic);
+    cache.insert(key, w);
+    return w;
+}
+int drawnWeightUncached(const QString &family, int weight, bool italic) {
     QFont f(family);              // built as render/textlayout.cpp builds it
     f.setPixelSize(48);
     f.setWeight(QFont::Weight(weight));
@@ -326,6 +336,8 @@ int drawnWeight(const QString &family, int weight, bool italic) {
     const auto runs = layout.glyphRuns();
     if (runs.isEmpty() || !runs.first().rawFont().isValid()) return weight;
     // The loaded file's own OS/2 usWeightClass: rawFont().weight() also echoes the request.
+    // A variable font's OS/2 holds its default instance, not the one drawn.
+    if (!runs.first().rawFont().fontTable("fvar").isEmpty()) return weight;
     const QByteArray os2 = runs.first().rawFont().fontTable("OS/2");
     return os2.size() >= 6 ? int(be16(os2, 4)) : weight;
 }
@@ -364,7 +376,9 @@ Family weightFace(const QString &family, int weight) {
             out.styles[2] = {file, data};
         }
     }
-    if (out.styles[0].file.isEmpty()) out.name.clear();
+    // Some files name the weight's family as the base family: carrying it
+    // under that name would collide with the real regular.
+    if (out.styles[0].file.isEmpty() || out.name.compare(family, Qt::CaseInsensitive) == 0) { out.name.clear(); out.styles[0] = {}; out.styles[2] = {}; }
     return out;
 }
 
@@ -601,8 +615,9 @@ struct Writer {
         // own family and carried, so PowerPoint draws the same face.
         bool bold = weight >= 600;
         const int drawn = Embed::drawnWeight(family, weight, italic);
-        if (drawn == 400 || drawn == 700) bold = drawn == 700;
-        else if (!Embed::shipsWithOffice(family)) {
+        // 400 under a bold request is Qt's synthetic bold (no bold file): stay bold.
+        if (drawn == 700) bold = true;
+        else if (drawn != 400 && !Embed::shipsWithOffice(family)) {
             const QString key = family + QLatin1Char('|') + QString::number(drawn);
             auto it = weightFaces.find(key);
             if (it == weightFaces.end()) it = weightFaces.insert(key, Embed::weightFace(family, drawn));
