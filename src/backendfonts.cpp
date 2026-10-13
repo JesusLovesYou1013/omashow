@@ -81,7 +81,13 @@ int Backend::packReady() const {
     return n;
 }
 double Backend::packDone() const { return m_fontDownloader ? double(m_fontDownloader->bytesDone(m_packFamilies)) : 0; }
-double Backend::packBytes() const { return double(FontDownloader::bytesFor(m_packFamilies)); }
+double Backend::packBytes() const {
+    if (!m_packFamilies.isEmpty()) return double(FontDownloader::bytesFor(m_packFamilies));
+    QStringList todo;   // idle: what a download would fetch now
+    for (const auto &r : FontSwap::pack())
+        if (!r.toMap().value(QStringLiteral("installed")).toBool()) todo << r.toMap().value(QStringLiteral("family")).toString();
+    return double(FontDownloader::bytesFor(todo));
+}
 
 bool Backend::fontDownloadRunning() const { return !m_deckLeft.isEmpty(); }
 double Backend::fontDownloadDone() const { return m_fontDownloader ? double(m_fontDownloader->bytesDone(m_deckFamilies)) : 0; }
@@ -161,11 +167,15 @@ void Backend::familyLost(const QString &family, const QString &why, bool network
 // only matters for families that never reported.
 void Backend::runFinished(const QStringList &, const QVariantMap &, bool, bool) {
     const auto summarise = [](const QVariantMap &failed, QVariantMap &plain, bool &offline) {
-        offline = !failed.isEmpty();
+        offline = false;
+        bool allNetwork = true;
         for (auto it = failed.cbegin(); it != failed.cend(); ++it) {
+            if (it.value().toMap().value("why").toString() == tr("cancelled")) continue;   // not a failure
+            offline = true;
             plain.insert(it.key(), it.value().toMap().value("why"));
-            offline = offline && it.value().toMap().value("network").toBool();
+            allNetwork = allNetwork && it.value().toMap().value("network").toBool();
         }
+        offline = offline && allNetwork;
     };
     if (m_deckLeft.isEmpty() && !m_deckFamilies.isEmpty()) {
         QVariantMap failed; bool offline = false;
@@ -190,8 +200,10 @@ void Backend::runFinished(const QStringList &, const QVariantMap &, bool, bool) 
         summarise(m_packFailed, failed, offline);
         m_packFamilies.clear(); m_packFailed.clear();
         const int ready = packReady(), total = packTotal();
-        setStatus(failed.isEmpty() ? tr("Extra fonts pack: all %1 fonts ready").arg(total)
-                                   : tr("Extra fonts pack: %1 of %2 fonts ready, %3 not installed").arg(ready).arg(total).arg(failed.size()));
+        setStatus(ready == total ? tr("Extra fonts pack: all %1 fonts ready").arg(total)
+                  : offline ? tr("Extra fonts pack: %1 of %2 fonts ready; couldn't reach the font server").arg(ready).arg(total)
+                  : failed.isEmpty() ? tr("Extra fonts pack paused: %1 of %2 fonts ready").arg(ready).arg(total)
+                  : tr("Extra fonts pack: %1 of %2 fonts ready, %3 not installed").arg(ready).arg(total).arg(failed.size()));
         emit fontDownloadChanged();
         emit packFinished(ready, total, failed, offline);
     }
