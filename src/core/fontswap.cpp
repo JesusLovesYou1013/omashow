@@ -1,7 +1,9 @@
 #include "core/fontswap.h"
 
 #include <QFile>
+#include <QFont>
 #include <QFontDatabase>
+#include <QFontMetricsF>
 #include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -15,6 +17,7 @@ namespace {
 struct Entry {
     QString name;                  // as the table spells it
     int weight = 0;
+    qreal ascent = -1, descent = 0, gap = 0;   // em, as Qt would read the Office font
     QVector<FontSwap::Option> options;
 };
 
@@ -29,6 +32,9 @@ const QHash<QString, Entry> &table() {
             Entry e;
             e.name = it.key();
             e.weight = json.value(QStringLiteral("wt")).toInt();
+            if (const auto va = json.value(QStringLiteral("va")).toArray(); va.size() == 3 && va[0].toDouble() > 0) {
+                e.ascent = va[0].toDouble(); e.descent = va[1].toDouble(); e.gap = va[2].toDouble();
+            }
             for (const auto &value : json.value(QStringLiteral("o")).toArray()) {
                 const auto o = value.toObject();
                 FontSwap::Option option;
@@ -56,9 +62,19 @@ bool installed(const QString &family) { return !family.isEmpty() && QFontDatabas
 // is restored from what was stored, not divided back with rounding.
 bool same(qreal a, qreal b) { return std::abs(a - b) <= 1e-6 * qMax<qreal>(1.0, std::abs(a)); }
 
+// Points per slide unit of the deck being reverted (PowerPoint's slide is
+// 960 pt wide as written), for rounding edited sizes the way PowerPoint stores
+// them.
+qreal g_ptPerUnit = 0.5;
+
+// A size untouched since the swap goes back to exactly what was read; one
+// changed in OmaShow is divided by the factor and rounded to PowerPoint's half
+// point (the field shows sizes in half points too).
 qreal unscale(qreal now, qreal before, qreal scale) {
     if (before > 0 && same(now, before * scale)) return before;
-    return now / scale;
+    if (g_ptPerUnit <= 0) return now / scale;
+    const qreal points = std::max<qreal>(1.0, std::round(now / scale * g_ptPerUnit * 2) / 2);
+    return points / g_ptPerUnit;
 }
 
 // Whether a family is still the free match that stood in for an Office
@@ -348,6 +364,7 @@ FontSwap::Report FontSwap::apply(Document &document) {
 }
 
 void FontSwap::revert(Document &document) {
+    g_ptPerUnit = 960.0 / qMax<qreal>(1.0, document.size.width());
     eachObject(document, [](SceneObject &o) {
         bool boxSwapped = false;
         if (!o.origFont.isEmpty() && stillSwapped(o.origFont, o.fontFamily)) {
@@ -469,4 +486,38 @@ QVariantList FontSwap::pack() {
     for (const auto &entry : table()) offices.append(entry.name);
     offices.sort(Qt::CaseInsensitive);
     return rowsFor(offices);
+}
+
+FontSwap::VerticalFix FontSwap::verticalFix(const SceneObject &o, qreal size) {
+    VerticalFix fix;
+    if (o.origFont.isEmpty() || o.fontFamily.isEmpty() || size <= 0 || !stillSwapped(o.origFont, o.fontFamily)) return fix;
+    const auto entry = table().constFind(o.origFont.toLower());
+    if (entry == table().cend() || entry->ascent <= 0) return fix;
+    // Only for matches drawn at the Office size (metric-compatible): their
+    // lines are meant to land where PowerPoint's do. A scaled match already
+    // differs in shape; measured, moving it made it sit worse (Segoe UI).
+    bool metric = false;
+    for (const auto &option : entry->options)
+        if (option.family.compare(o.fontFamily, Qt::CaseInsensitive) == 0) { metric = option.metric; break; }
+    if (!metric) return fix;
+    struct Em { qreal ascent, descent, leading; };
+    static thread_local QHash<QString, Em> cache;
+    const QString key = o.fontFamily + QLatin1Char('|') + QString::number(o.fontWeight) + QLatin1Char('|') + QString::number(o.italic);
+    auto it = cache.constFind(key);
+    if (it == cache.cend()) {
+        QFont font(o.fontFamily);
+        font.setPixelSize(1000);
+        font.setWeight(QFont::Weight(o.fontWeight > 0 ? o.fontWeight : 400));
+        font.setItalic(o.italic);
+        const QFontMetricsF m(font);
+        it = cache.insert(key, {m.ascent() / 1000, m.descent() / 1000, qMax<qreal>(0, m.leading()) / 1000});
+    }
+    const qreal free = it->ascent + it->descent + it->leading;
+    if (free <= 0) return fix;
+    const qreal officeSize = size / (o.fontScale > 0 ? o.fontScale : 1);
+    fix.line = (entry->ascent + entry->descent + entry->gap) * officeSize / (free * size);
+    fix.shift = it->ascent * size - entry->ascent * officeSize;
+    if (std::abs(fix.line - 1) < 0.005) fix.line = 1;
+    if (std::abs(fix.shift) < 0.25) fix.shift = 0;
+    return fix;
 }

@@ -59,6 +59,15 @@ Report apply(Document &document);
 // Undo apply() for a copy of the deck about to be written as PowerPoint.
 void revert(Document &document);
 
+// How a box drawn in its free stand-in must be laid out so its lines sit where
+// the Office family's would: the line height multiplied by `line`, and the
+// text moved up by `shift` (pixels at `size`, the size it is drawn at). From
+// the Office family's ascent/descent/gap in the table and the free family's as
+// Qt measures it; metric-compatible matches only. Drawing only: the deck keeps its own line height, so nothing
+// needs reversing on save. {1, 0} for a box that is not swapped.
+struct VerticalFix { qreal line = 1; qreal shift = 0; };
+VerticalFix verticalFix(const SceneObject &o, qreal size);
+
 // Free families worth installing for this deck: the best match of every
 // Office family it names (swapped or not) when that match is not installed.
 // {family, offices, package, googleFonts, github, metric}
