@@ -4,6 +4,7 @@
 #include "core/chart.h"
 #include "core/design.h"
 #include "core/fonts.h"
+#include "core/fontswap.h"
 #include "core/mediaasset.h"
 #include "core/shape.h"
 #include "core/table.h"
@@ -259,7 +260,9 @@ bool shipsWithOffice(const QString &family) {
         QStringLiteral("courier new"), QStringLiteral("georgia"), QStringLiteral("segoe ui"), QStringLiteral("tahoma"),
         QStringLiteral("times new roman"), QStringLiteral("trebuchet ms"), QStringLiteral("verdana"), QStringLiteral("aptos"),
         QStringLiteral("aptos display"), QStringLiteral("century gothic"), QStringLiteral("garamond"), QStringLiteral("gill sans mt")};
-    return known.contains(family.toLower());
+    // Every Windows and Office family the font map knows ships with Office
+    // (or is fetched by it): never carried, never renamed to a weight face.
+    return known.contains(family.toLower()) || FontSwap::isOffice(family);
 }
 
 // The installed files of exactly this family, by style slot.
@@ -2045,7 +2048,16 @@ struct Writer {
 
 namespace PptxWriter {
 
-QByteArray bytes(const Document &document, QStringList *warnings, const std::shared_ptr<Workers::Job> &job) {
+// What PowerPoint is given: the deck with every Office font that was swapped
+// for a free match on import named again, at its own size (FontSwap::revert).
+static Document forPowerPoint(const Document &document) {
+    Document copy = document;
+    FontSwap::revert(copy);
+    return copy;
+}
+
+QByteArray bytes(const Document &original, QStringList *warnings, const std::shared_ptr<Workers::Job> &job) {
+    const Document document = forPowerPoint(original);
     Writer writer(document);
     writer.job = job;
     const auto out = writer.run();
@@ -2053,8 +2065,9 @@ QByteArray bytes(const Document &document, QStringList *warnings, const std::sha
     return out;
 }
 
-Report write(const Document &document, const QString &path, const std::shared_ptr<Workers::Job> &job) {
+Report write(const Document &original, const QString &path, const std::shared_ptr<Workers::Job> &job) {
     Report report;
+    const Document document = forPowerPoint(original);
     if (document.slides.isEmpty()) { report.error = QStringLiteral("The deck has no slides to write."); return report; }
     Writer writer(document);
     writer.job = job;

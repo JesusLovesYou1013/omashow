@@ -407,6 +407,9 @@ ApplicationWindow {
         { id: "ribbonSnap", tab: "view", group: "guides", kind: "toggle", label: qsTr("Snap to guides"), also: "align magnet", checked: () => backend.snapEnabled, run: () => backend.snapEnabled = !backend.snapEnabled },
         { id: "reducedMotionItem", tab: "view", group: "access", kind: "toggle", label: qsTr("Less movement"), also: "reduced motion animation accessibility vestibular allow movement again", checked: () => backend.reducedMotion, run: () => backend.reducedMotion = !backend.reducedMotion },
         { id: "highContrastItem", tab: "view", group: "access", kind: "toggle", label: qsTr("Stronger contrast"), also: "high contrast accessibility legible ordinary", checked: () => backend.highContrast, run: () => backend.highContrast = !backend.highContrast },
+        { id: "extraFontsPackItem", tab: "view", group: "fonts", kind: "toggle", label: qsTr("Extra fonts pack"), also: "office windows fonts free matches install calibri aptos cambria",
+          tip: qsTr("Offer free stand-ins for every Windows and Office font"), checked: () => backend.extraFontsPack,
+          run: () => { backend.extraFontsPack = !backend.extraFontsPack; if (backend.extraFontsPack) fontInstallDialog.showPack() } },
         // ── Animate (ANIM-001): the only place an animation is chosen, timed or ordered ──
         { id: "animPreview", tab: "animate", group: "preview", label: qsTr("Preview"), icon: "play", also: "play animation build preview slide",
           tip: qsTr("Play the chosen animation, or the whole slide when none is chosen"), on: () => backend.builds.length > 0,
@@ -503,7 +506,7 @@ ApplicationWindow {
         objects: qsTr("Objects"), media: qsTr("Media"), links: qsTr("Links"), size: qsTr("Size and masters"), group: qsTr("Group"),
         order: qsTr("Order"), lock: qsTr("Lock and hide"), combine: qsTr("Combine"), start: qsTr("Start"), setup: qsTr("Set up"),
         review: qsTr("Review"), proofing: qsTr("Proofing"), views: qsTr("Views"), panels: qsTr("Panels"), zoom: qsTr("Zoom"),
-        guides: qsTr("Guides"), access: qsTr("Accessibility"), preview: qsTr("Preview"), effect: qsTr("Effect"), timing: qsTr("Timing"),
+        guides: qsTr("Guides"), access: qsTr("Accessibility"), fonts: qsTr("Fonts"), preview: qsTr("Preview"), effect: qsTr("Effect"), timing: qsTr("Timing"),
         show: qsTr("Show") })
     // Ctrl+K's list, built when it opens (not re-built under the user on every selection change).
     function paletteCommands() {
@@ -855,6 +858,7 @@ ApplicationWindow {
     Connections { target: backend; function onTableEditorRequested() { win.commitEditors(); tableEditor.show() } }
     LinkDialog { id: linkDialog }
     FontsDialog { id: fontsDialog }
+    FontInstallDialog { id: fontInstallDialog }
     MediaOptimisation { id: mediaOptimisation }
     Connections { target: backend; function onMediaOptimisationRequested() { win.commitEditors(); mediaOptimisation.show() } }
     MediaPreflight { id: mediaPreflight; onEditRequested: win.workspace=0 }
@@ -1375,6 +1379,12 @@ ApplicationWindow {
                               : qsTr("%1 was opened from %2 as a new OmaShow deck. %3 things could not be brought across; the original is untouched.").arg(parent.parent.parent.report.name).arg(parent.parent.parent.report.kind).arg(parent.parent.parent.notes.length)
                     }
                     Button {
+                        objectName: "importInstallFonts"
+                        visible: (parent.parent.parent.report.fontsToInstall ?? []).length > 0 && !backend.fontInstallRunning
+                        text: qsTr("Install free fonts…")
+                        onClicked: fontInstallDialog.showDeck()
+                    }
+                    Button {
                         objectName: "importFonts"
                         visible: (parent.parent.parent.report.missingFonts ?? []).length > 0
                         text: qsTr("Choose typefaces…")
@@ -1390,6 +1400,23 @@ ApplicationWindow {
                         objectName: "importDismiss"
                         text: qsTr("OK")
                         onClicked: backend.dismissImportReport()
+                    }
+                }
+                Label {
+                    objectName: "importFontSwaps"
+                    readonly property var swaps: parent.parent.report.fontSwaps ?? []
+                    readonly property var wanted: parent.parent.report.fontsToInstall ?? []
+                    visible: swaps.length > 0 || wanted.length > 0
+                    Layout.fillWidth: true
+                    Layout.leftMargin: Theme.s5
+                    wrapMode: Text.Wrap
+                    color: Theme.textSecondary
+                    text: {
+                        const parts = swaps.map(s => s.office + " → " + s.free + (s.metric ? "" : " (" + Math.round(s.size * 100) + "% size)"))
+                        let line = parts.length > 0 ? qsTr("Office fonts drawn with free matches: %1. Saving as PowerPoint names the originals again.").arg(parts.join(", ")) : ""
+                        if (wanted.length > 0)
+                            line += (line ? " " : "") + qsTr("Not installed here: %1.").arg(wanted.map(w => w.family + " (" + w.offices.slice(0, 3).join(", ") + ")").join(", "))
+                        return line
                     }
                 }
                 Repeater {

@@ -5,6 +5,7 @@
         <file alias="Inter-Italic.ttf">fonts/inter/Inter-Italic.ttf</file>
         <file alias="Inter-BoldItalic.ttf">fonts/inter/Inter-BoldItalic.ttf</file>
         <file alias="Inter-LICENSE.txt">fonts/inter/LICENSE.txt</file>
+        <file alias="office-font-map.json">fonts/office/office-font-map.json</file>
     </qresource>
     <qresource prefix="/">
         <file alias="StartCentre.qml">StartCentre.qml</file>
@@ -44,6 +45,7 @@
         <file alias="ConnectorTools.qml">ConnectorTools.qml</file>
         <file alias="LinkDialog.qml">LinkDialog.qml</file>
         <file alias="FontsDialog.qml">FontsDialog.qml</file>
+        <file alias="FontInstallDialog.qml">FontInstallDialog.qml</file>
         <file alias="CropOverlay.qml">CropOverlay.qml</file>
         <file>MediaTools.qml</file>
     <file>MediaPreflight.qml</file>

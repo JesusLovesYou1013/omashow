@@ -124,6 +124,9 @@ class Backend : public QObject {
     Q_PROPERTY(QVariantMap startState READ startState CONSTANT)
     Q_PROPERTY(bool reducedMotion READ reducedMotion WRITE setReducedMotion NOTIFY viewPreferencesChanged)
     Q_PROPERTY(bool highContrast READ highContrast WRITE setHighContrast NOTIFY viewPreferencesChanged)
+    // Offer the free matches of every Windows and Office font (FontSwap::pack).
+    Q_PROPERTY(bool extraFontsPack READ extraFontsPack WRITE setExtraFontsPack NOTIFY extraFontsPackChanged)
+    Q_PROPERTY(bool fontInstallRunning READ fontInstallRunning NOTIFY fontInstallChanged)
     Q_PROPERTY(QVariantMap slideTransition READ slideTransition NOTIFY selectionChanged)
     Q_PROPERTY(QVariantList exportQueue READ exportQueue NOTIFY exportQueueChanged)
     Q_PROPERTY(bool encoderAvailable READ encoderAvailable CONSTANT)
@@ -144,6 +147,19 @@ public:
     // suggested stand-in; and the rewrite, as one undo step.
     Q_INVOKABLE QVariantList missingFonts() const;
     Q_INVOKABLE int substituteFonts(const QVariantMap &replacements);
+    // Office fonts swapped for free matches on PowerPoint import, and the free
+    // matches worth installing (core/fontswap.h). Installing asks first, in
+    // the interface; system packages go through pacman (pkexec), the rest
+    // into the person's own font folder. OMASHOW_FONT_INSTALL=simulate only
+    // writes the plan; =user puts everything in the font folder.
+    Q_INVOKABLE QVariantList fontSwaps() const;
+    Q_INVOKABLE QVariantList fontsToInstall() const;
+    Q_INVOKABLE QVariantList fontPack() const;
+    Q_INVOKABLE QString fontInstallMode() const;
+    Q_INVOKABLE bool installFonts(const QVariantList &rows);
+    bool extraFontsPack() const;
+    void setExtraFontsPack(bool on);
+    bool fontInstallRunning() const { return m_fontInstallRunning; }
     // The upright weights (100-900) the typeface really has, ascending. A name
     // that is not installed answers for the face it falls back to. Cached per
     // family, so the inspector asks once per family change.
@@ -578,6 +594,9 @@ public:
 signals:
     void opened();
     void importReportChanged();
+    void extraFontsPackChanged();
+    void fontInstallChanged();
+    void fontInstallFinished(bool ok, const QString &message);
     void importReady();
     void deckImportChanged();
     void findChanged();
@@ -764,6 +783,8 @@ private:
     QString m_defaultPrinter;
     bool m_printersRunning = false, m_printersKnown = false;
     int m_reducedMotion = -1, m_highContrast = -1;
+    bool m_fontInstallRunning = false;
+    void fontInstallDone(bool ok, const QStringList &installed, const QStringList &failed);
     QTimer m_exportTicker;
     int m_exportSerial = 0;
     void startNextExport();

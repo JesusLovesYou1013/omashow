@@ -41,3 +41,14 @@ installed as `/usr/share/licenses/omashow/LICENSE.Inter`). OmaShow draws it
 app-wide and embeds it in PowerPoint decks it saves, as the OFL allows when
 bundled with software. Other fonts are the system's own. PDF export embeds subsets of the fonts a deck uses; the licence
 of a font chosen for a deck is that font's own.
+
+## Office font map
+
+`src/fonts/office/office-font-map.json` (compiled in as `:/fonts/office-font-map.json`)
+is derived from **office-font-map** by JesusLovesYou1013, licensed under the
+Creative Commons Attribution 4.0 International licence (CC BY 4.0,
+https://creativecommons.org/licenses/by/4.0/). It was reduced to the best free
+matches per Office font with their measured size, width and line factors.
+It contains no fonts. The free fonts it names are offered for installing
+from Arch packages, Google Fonts or their authors' repositories, each under
+its own licence (mostly the SIL Open Font License); none is bundled.
