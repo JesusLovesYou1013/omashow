@@ -15,6 +15,7 @@
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QRegularExpression>
+#include <QStorageInfo>
 #include <QTimer>
 #include <QUrl>
 
@@ -22,7 +23,7 @@ namespace {
 
 constexpr int kParallel = 4;
 constexpr int kStallMs = 20000;
-constexpr int kDeadlineMs = 5 * 60 * 1000;
+constexpr int kMaxNetworkFailsInARow = 3;
 constexpr qint64 kMaxFile = 8 * 1024 * 1024;
 
 struct Source { QString path, sha256; qint64 size = 0; bool font = true; };
@@ -85,6 +86,20 @@ QString baseUrl() {
     return base;
 }
 
+// Families are built here, beside the shared folder (never inside it: other
+// apps may read that folder through fontconfig), and moved in whole with one
+// directory rename, so a family folder in the sandbox always means complete.
+QString stagingRoot() { return FontSandbox::dir() + QStringLiteral(".staging"); }
+QString familyDir(const QString &family) { return FontSandbox::dir() + QLatin1Char('/') + folderName(family); }
+QString stagingDir(const QString &family) { return stagingRoot() + QLatin1Char('/') + folderName(family); }
+
+qint64 freeBytes(const QString &path) {
+    if (qEnvironmentVariableIsSet("OMASHOW_FONT_TEST_FREE_BYTES")) return qEnvironmentVariable("OMASHOW_FONT_TEST_FREE_BYTES").toLongLong();
+    QString p = path;
+    while (!p.isEmpty() && !QFileInfo::exists(p)) p = QFileInfo(p).path();
+    return QStorageInfo(p.isEmpty() ? QDir::homePath() : p).bytesAvailable();
+}
+
 } // namespace
 
 FontDownloader::FontDownloader(QObject *parent) : QObject(parent) {}
@@ -98,185 +113,230 @@ qint64 FontDownloader::bytesFor(const QStringList &families) {
     return n;
 }
 
-qint64 FontDownloader::bytesDone() const {
-    qint64 n = m_finishedBytes;
-    for (const auto &a : m_active) n += a.received;
+bool FontDownloader::complete(const QString &family) {
+    return downloadable(family) && QFileInfo(familyDir(family)).isDir();
+}
+
+qint64 FontDownloader::bytesDone(const QStringList &families) const {
+    qint64 n = 0;
+    for (const auto &f : families) {
+        const auto it = m_fam.constFind(f);
+        if (it != m_fam.cend()) n += it->done;
+        else if (complete(f)) n += bytesFor({f});
+    }
     return n;
 }
 
-bool FontDownloader::load(const QString &path) {
-    const int id = QFontDatabase::addApplicationFont(path);
-    return id >= 0 && !QFontDatabase::applicationFontFamilies(id).isEmpty();
+bool FontDownloader::loadFamily(const QString &family) {
+    QDirIterator it(familyDir(family), {QStringLiteral("*.ttf"), QStringLiteral("*.otf")}, QDir::Files);
+    bool any = false;
+    while (it.hasNext()) {
+        const int id = QFontDatabase::addApplicationFont(it.next());
+        if (id < 0 || QFontDatabase::applicationFontFamilies(id).isEmpty()) return false;
+        any = true;
+    }
+    return any;
 }
 
-bool FontDownloader::start(const QStringList &families) {
-    if (running()) return false;
-    m_queue.clear(); m_failed.clear(); m_families.clear(); m_left.clear(); m_verified.clear(); m_installed.clear();
-    m_allNetwork = true; m_total = 0; m_finishedBytes = 0;
-    m_running = true; m_cancelled = false;
-    const QString root = FontSandbox::dir();
+bool FontDownloader::add(const QStringList &families, bool front) {
+    if (!m_running) {
+        // Leftovers of a run that was killed: only half families live here.
+        QDir(stagingRoot()).removeRecursively();
+        m_running = true; m_cancelled = false; m_networkFails = 0;
+        m_failed.clear(); m_installed.clear();
+    }
+    QList<File> batch;
+    QStringList added;
+    qint64 need = 0;
     for (const auto &family : families) {
-        const auto sources = sourcesOf(family);
-        if (sources.isEmpty()) { fail(family, tr("no download is listed for it"), false); continue; }
-        m_left.insert(family, 0);
-        m_families.append(family);
-        const QString dir = root + QLatin1Char('/') + folderName(family);
-        if (!QDir().mkpath(dir) || !QFileInfo(dir).isWritable()) { fail(family, tr("cannot write to %1").arg(root), false); continue; }
-        // Leftovers of an earlier, interrupted run.
-        for (const auto &part : QDir(dir).entryList({QStringLiteral("*.part")}, QDir::Files)) QFile::remove(dir + QLatin1Char('/') + part);
-        for (const auto &s : sources) {
-            File file{family, s.path, s.sha256, dir + QLatin1Char('/') + QFileInfo(s.path).fileName(), s.size, s.font};
-            // Already here with the right bytes (a retry, or installed before).
-            if (QFileInfo::exists(file.target) && sha256Of(file.target) == file.sha256) {
-                file.present = true;
-                m_verified[family].append(file);   // loaded with the rest of its family
-                continue;
+        if (m_fam.contains(family)) {
+            if (front) {   // already queued: its files go to the front
+                QList<File> mine, rest;
+                for (const auto &f : std::as_const(m_queue)) (f.family == family ? mine : rest).append(f);
+                batch += mine; m_queue = rest;
             }
-            m_queue.append(file);
-            ++m_left[family];
-            m_total += s.size;
+            continue;
         }
+        if (m_installed.contains(family) || m_failed.contains(family)) { m_failed.remove(family); }
+        const auto sources = sourcesOf(family);
+        if (sources.isEmpty()) { m_failed.insert(family, tr("no download is listed for it")); emit familyFailed(family, m_failed.value(family).toString(), false); continue; }
+        if (complete(family)) {
+            // Complete on disk (an earlier run, or another OmaShow): just use it.
+            if (!QFontDatabase::hasFamily(family)) loadFamily(family);
+            m_installed.append(family);
+            QTimer::singleShot(0, this, [this, family] { emit familyReady(family); });
+            continue;
+        }
+        const QString dir = stagingDir(family);
+        QDir(dir).removeRecursively();
+        if (!QDir().mkpath(dir) || !QFileInfo(dir).isWritable()) {
+            m_failed.insert(family, tr("cannot write to %1").arg(FontSandbox::dir()));
+            emit familyFailed(family, m_failed.value(family).toString(), false);
+            continue;
+        }
+        Family fam;
+        for (const auto &s : sources) {
+            batch.append(File{family, s.path, s.sha256, dir + QLatin1Char('/') + QFileInfo(s.path).fileName(), s.size, s.font});
+            ++fam.left; fam.total += s.size;
+        }
+        need += fam.total;
+        m_fam.insert(family, fam);
+        added.append(family);
     }
-    for (const auto &family : m_left.keys()) settle(family);   // nothing to fetch for these
-    if (m_queue.isEmpty()) {
-        QTimer::singleShot(0, this, [this] { finish(false); });
-        return true;
+    // Room for what is about to arrive, with a margin.
+    if (need > 0 && freeBytes(stagingRoot()) < need + need / 10) {
+        for (const auto &family : added) failFamily(family, tr("not enough disk space"), false);
+        batch.erase(std::remove_if(batch.begin(), batch.end(), [&](const File &f) { return added.contains(f.family); }), batch.end());
     }
-    if (!m_net) m_net = new QNetworkAccessManager(this);
-    if (!m_deadline) {
-        m_deadline = new QTimer(this);
-        m_deadline->setSingleShot(true);
-        connect(m_deadline, &QTimer::timeout, this, [this] {
-            for (const auto &f : std::as_const(m_queue)) { fail(f.family, tr("timed out"), true); --m_left[f.family]; }
-            m_queue.clear();
-            for (const auto &family : m_left.keys()) settle(family);
-            for (auto *reply : m_active.keys()) { reply->setProperty("timedout", true); reply->abort(); }
-        });
-    }
-    m_deadline->start(kDeadlineMs);
-    pump();
+    m_queue = front ? batch + m_queue : m_queue + batch;
+    emit progress();
+    QTimer::singleShot(0, this, &FontDownloader::pump);
     return true;
 }
 
 void FontDownloader::pump() {
+    if (!m_running) return;
     while (m_active.size() < kParallel && !m_queue.isEmpty()) {
         const File file = m_queue.takeFirst();
-        if (m_failed.contains(file.family)) { --m_left[file.family]; settle(file.family); continue; }   // one bad file fails the family
-        auto *out = new QFile(file.target + QStringLiteral(".part"), this);
+        if (!m_fam.contains(file.family)) continue;   // its family failed or was dropped
+        auto *out = new QFile(file.target, this);
         if (!out->open(QIODevice::WriteOnly | QIODevice::Truncate)) {
             delete out;
-            fail(file.family, tr("cannot write to %1").arg(FontSandbox::dir()), false);
-            --m_left[file.family]; settle(file.family);
+            failFamily(file.family, tr("cannot write to %1").arg(FontSandbox::dir()), false);
             continue;
         }
         QNetworkRequest request(QUrl(baseUrl() + file.path));
         request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
         request.setMaximumRedirectsAllowed(3);
+        if (!m_net) m_net = new QNetworkAccessManager(this);
         auto *reply = m_net->get(request);
         auto *stall = new QTimer(reply);
         stall->setSingleShot(true);
         stall->start(kStallMs);
-        connect(stall, &QTimer::timeout, reply, [reply] { reply->setProperty("stalled", true); reply->abort(); });
-        m_active.insert(reply, Active{file, reply, out, stall, 0});
+        connect(stall, &QTimer::timeout, reply, [reply] { reply->setProperty("why", QStringLiteral("stalled")); reply->abort(); });
+        m_active.insert(reply, Active{file, out, stall, 0});
         connect(reply, &QNetworkReply::readyRead, this, [this, reply] {
             auto it = m_active.find(reply);
             if (it == m_active.end()) return;
             const auto bytes = reply->readAll();
             it->received += bytes.size();
             it->stall->start(kStallMs);
-            if (it->received > it->file.size) { reply->setProperty("oversize", true); reply->abort(); return; }
-            it->out->write(bytes);
+            if (it->received > it->file.size) { reply->setProperty("why", QStringLiteral("oversize")); reply->abort(); return; }
+            if (it->out->write(bytes) != bytes.size()) { reply->setProperty("why", QStringLiteral("diskfull")); reply->abort(); return; }
+            auto fam = m_fam.find(it->file.family);
+            if (fam != m_fam.end()) fam->done += bytes.size();
             emit progress();
         });
         connect(reply, &QNetworkReply::finished, this, [this, reply] { done(reply); });
     }
-    if (m_active.isEmpty() && m_queue.isEmpty()) finish(false);
+    if (m_active.isEmpty() && m_queue.isEmpty()) finish(m_cancelled);
 }
 
 void FontDownloader::done(QNetworkReply *reply) {
+    reply->deleteLater();
     auto it = m_active.find(reply);
-    if (it == m_active.end()) { reply->deleteLater(); return; }
+    if (it == m_active.end()) return;
     Active a = *it;
     m_active.erase(it);
-    const auto tail = reply->readAll();
-    a.received += tail.size();
-    if (a.received > a.file.size) reply->setProperty("oversize", true);
-    else a.out->write(tail);
+    QString why = reply->property("why").toString();
+    if (why.isEmpty() && reply->error() == QNetworkReply::NoError) {
+        const auto tail = reply->readAll();
+        a.received += tail.size();
+        if (a.received > a.file.size) why = QStringLiteral("oversize");
+        else if (a.out->write(tail) != tail.size()) why = QStringLiteral("diskfull");
+    }
     a.out->close();
-    const QString part = a.out->fileName();
     a.out->deleteLater();
-    reply->deleteLater();
-    m_finishedBytes += a.file.size;
-    --m_left[a.file.family];
-    // A licence text that does not arrive costs nothing: the fonts still work.
-    const auto drop = [&](const QString &why, bool network) { QFile::remove(part); if (a.file.font) fail(a.file.family, why, network); };
-    if (reply->property("cancelled").toBool()) { QFile::remove(part); fail(a.file.family, tr("cancelled"), false); }
-    else if (reply->property("timedout").toBool()) drop(tr("timed out"), true);
-    else if (reply->property("stalled").toBool()) drop(tr("the download stalled"), true);
-    else if (reply->property("oversize").toBool()) drop(tr("the server sent a different file"), false);
+    const QString family = a.file.family;
+    if (!m_fam.contains(family)) { QFile::remove(a.file.target); pump(); return; }   // dropped meanwhile
+    bool network = false;
+    QString error;
+    if (why == QLatin1String("dropped")) error = tr("cancelled");
+    else if (why == QLatin1String("stalled")) { error = tr("the download stalled"); network = true; }
+    else if (why == QLatin1String("oversize")) error = tr("the server sent a different file");
+    else if (why == QLatin1String("diskfull")) error = tr("disk full");
     else if (reply->error() != QNetworkReply::NoError) {
         const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-        drop(status ? tr("the server answered %1").arg(status) : reply->errorString(), status == 0);
-    } else if (sha256Of(part) != a.file.sha256) drop(tr("the file did not match its checksum"), false);
-    else m_verified[a.file.family].append(a.file);   // stays .part until the family is complete
-    settle(a.file.family);
+        error = status ? tr("the server answered %1").arg(status) : reply->errorString();
+        network = status == 0 || status == 429 || status >= 500;
+    } else if (sha256Of(a.file.target) != a.file.sha256) error = tr("the file did not match its checksum");
+
+    if (!error.isEmpty()) {
+        if (a.file.font || network || why == QLatin1String("diskfull") || why == QLatin1String("dropped")) failFamily(family, error, network);
+        else { QFile::remove(a.file.target); if (--m_fam[family].left == 0) settle(family); }   // a licence text: not worth the family
+        if (why == QLatin1String("diskfull")) stopAll(tr("disk full"), false);
+        else if (network && ++m_networkFails >= kMaxNetworkFailsInARow) stopAll(tr("couldn't reach the font server"), true);
+    } else {
+        m_networkFails = 0;
+        if (--m_fam[family].left == 0) settle(family);
+    }
     emit progress();
     pump();
 }
 
-// Once every file of a family is in: all verified -> renamed and loaded
-// together; any failure -> every part removed, nothing loaded.
+// Every file of the family is in staging and verified: one rename moves the
+// whole folder into the sandbox, then it is loaded.
 void FontDownloader::settle(const QString &family) {
-    if (m_left.value(family, 1) > 0) return;
-    m_left.remove(family);
-    auto files = m_verified.take(family);
-    // Regular renamed last: a crash midway leaves no Regular, so no family.
-    std::stable_partition(files.begin(), files.end(), [](const File &f) { return !f.target.contains(QLatin1String("Regular")); });
-    const bool ok = !m_failed.contains(family);
-    for (const auto &f : files) {
-        if (f.present) continue;
-        const QString part = f.target + QStringLiteral(".part");
-        if (!ok) { QFile::remove(part); continue; }
-        QFile::remove(f.target);
-        if (!QFile::rename(part, f.target)) fail(family, tr("cannot write to %1").arg(FontSandbox::dir()), false);
-    }
-    if (!ok || m_failed.contains(family)) {
-        for (const auto &f : files) if (f.font && !f.present) QFile::remove(f.target);
+    m_fam.remove(family);
+    const QString target = familyDir(family);
+    QDir().mkpath(FontSandbox::dir());
+    if (QFileInfo(target).isDir()) QDir(target).removeRecursively();   // an older, incomplete copy
+    if (!QDir().rename(stagingDir(family), target)) {
+        QDir(stagingDir(family)).removeRecursively();
+        m_failed.insert(family, tr("cannot write to %1").arg(FontSandbox::dir()));
+        emit familyFailed(family, m_failed.value(family).toString(), false);
         return;
     }
-    for (const auto &f : files)
-        if (f.font && !load(f.target)) fail(family, tr("not a usable font"), false);
-    // A file that will not load: the family goes (its other files stay
-    // registered until restart, but nothing is left on disk to load again).
-    if (m_failed.contains(family)) { for (const auto &f : files) QFile::remove(f.target); return; }
+    if (!loadFamily(family)) {
+        QDir(target).removeRecursively();
+        m_failed.insert(family, tr("not a usable font"));
+        emit familyFailed(family, m_failed.value(family).toString(), false);
+        return;
+    }
     m_installed.append(family);
+    emit familyReady(family);
 }
 
-void FontDownloader::fail(const QString &family, const QString &why, bool network) {
+void FontDownloader::failFamily(const QString &family, const QString &why, bool network) {
+    if (!m_fam.contains(family)) return;
+    m_fam.remove(family);
+    for (auto it = m_active.begin(); it != m_active.end(); ++it)
+        if (it->file.family == family) { it.key()->setProperty("why", QStringLiteral("dropped")); QTimer::singleShot(0, it.key(), &QNetworkReply::abort); }
+    QDir(stagingDir(family)).removeRecursively();
     if (!network) m_allNetwork = false;
-    if (!m_failed.contains(family)) m_failed.insert(family, why);
+    m_failed.insert(family, why);
+    emit familyFailed(family, why, network);
+}
+
+void FontDownloader::stopAll(const QString &why, bool network) {
+    const auto families = m_fam.keys();
+    for (const auto &f : families) failFamily(f, why, network);
+    m_queue.clear();
+}
+
+void FontDownloader::drop(const QStringList &families) {
+    for (const auto &f : families) failFamily(f, tr("cancelled"), false);
+    pump();
 }
 
 void FontDownloader::cancel() {
-    if (!running()) return;
+    if (!m_running) return;
     m_cancelled = true;
-    m_queue.clear();
+    stopAll(tr("cancelled"), false);
     const auto replies = m_active.keys();
-    for (auto *reply : replies) { reply->setProperty("cancelled", true); reply->abort(); }
-    // abort() finishes synchronously; anything left is closed here.
-    for (auto it = m_active.begin(); it != m_active.end(); ++it) { it->out->close(); QFile::remove(it->out->fileName()); }
+    for (auto *reply : replies) reply->abort();
+    for (auto it = m_active.begin(); it != m_active.end(); ++it) { it->out->close(); QFile::remove(it->file.target); }
     m_active.clear();
-    for (const auto &files : std::as_const(m_verified)) for (const auto &f : files) QFile::remove(f.target + QStringLiteral(".part"));
-    m_verified.clear(); m_left.clear();
+    QDir(stagingRoot()).removeRecursively();
     finish(true);
 }
 
 void FontDownloader::finish(bool cancelled) {
     if (!m_running) return;
     m_running = false;
-    cancelled = cancelled || m_cancelled;
-    if (m_deadline) m_deadline->stop();
-    const QStringList installed = m_installed;
-    // "offline": nothing arrived and every failure was the network.
-    emit finished(installed, m_failed, installed.isEmpty() && !m_failed.isEmpty() && m_allNetwork, cancelled);
+    QDir(stagingRoot()).rmdir(QStringLiteral("."));   // gone when empty
+    QDir().rmdir(stagingRoot());
+    const bool offline = m_installed.isEmpty() && !m_failed.isEmpty() && m_allNetwork;
+    emit finished(m_installed, m_failed, offline, cancelled || m_cancelled);
+    m_allNetwork = true;
 }
