@@ -144,6 +144,15 @@ bool FontDownloader::complete(const QString &family) {
     return true;
 }
 QString FontDownloader::cancelledReason() { return tr("cancelled"); }
+QString FontDownloader::familyForFolder(const QString &folder) {
+    static const QHash<QString, QString> byFolder = [] {
+        QHash<QString, QString> out;
+        const auto families = table().value(QStringLiteral("families")).toObject();
+        for (auto it = families.begin(); it != families.end(); ++it) out.insert(folderName(it.key()).toLower(), it.key());
+        return out;
+    }();
+    return byFolder.value(folder.toLower());
+}
 
 qint64 FontDownloader::bytesDone(const QStringList &families) const {
     qint64 n = 0;
