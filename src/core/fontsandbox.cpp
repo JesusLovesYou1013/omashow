@@ -6,6 +6,8 @@
 #include <QFont>
 #include <QFontDatabase>
 #include <QHash>
+#include <QReadWriteLock>
+#include "core/fontdownloader.h"
 #include <QSet>
 
 QString FontSandbox::dir() {
@@ -18,8 +20,10 @@ QString FontSandbox::dir() {
 }
 
 namespace {
-// folder key (lower case, no spaces) -> families its files declared
+// folder key (lower case, no spaces) -> families its files declare. Written
+// on the main thread as fonts load; read from drawing threads too: locked.
 QHash<QString, QStringList> &aliases() { static QHash<QString, QStringList> a; return a; }
+QReadWriteLock &aliasLock() { static QReadWriteLock l; return l; }
 QString key(QString name) { return name.remove(QLatin1Char(' ')).toLower(); }
 }
 
@@ -27,18 +31,27 @@ QStringList FontSandbox::loadFile(const QString &path, const QString &folder) {
     const int id = QFontDatabase::addApplicationFont(path);
     if (id < 0) return {};
     const auto families = QFontDatabase::applicationFontFamilies(id);
-    auto &known = aliases()[key(folder)];
-    for (const auto &f : families) if (!known.contains(f)) known.append(f);
+    if (families.isEmpty()) return families;
+    {
+        QWriteLocker lock(&aliasLock());
+        auto &known = aliases()[key(folder)];
+        for (const auto &f : families) if (!known.contains(f)) known.append(f);
+    }
+    // The map's name for this folder, if the file calls itself something else
+    // ("Fjord One" -> "Fjord"): text set in the map's name draws with it.
+    // Done here, on the loading (main) thread, never from a lookup.
+    const QString mapName = FontDownloader::familyForFolder(folder);
+    if (!mapName.isEmpty() && !families.contains(mapName, Qt::CaseInsensitive) && QFont::substitute(mapName) == mapName)
+        QFont::insertSubstitution(mapName, families.first());
     return families;
 }
 
 bool FontSandbox::available(const QString &family) {
     if (family.isEmpty()) return false;
     if (QFontDatabase::hasFamily(family)) return true;
+    QReadLocker lock(&aliasLock());
     const auto it = aliases().constFind(key(family));
-    if (it == aliases().cend() || it->isEmpty()) return false;
-    if (QFont::substitute(family) == family) QFont::insertSubstitution(family, it->first());
-    return true;
+    return it != aliases().cend() && !it->isEmpty();
 }
 
 int FontSandbox::load() {

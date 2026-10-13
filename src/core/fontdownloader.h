@@ -44,6 +44,8 @@ public:
     static bool complete(const QString &family);
     // The reason given to a family dropped or cancelled (not a failure).
     static QString cancelledReason();
+    // The listed family whose sandbox folder is <folder> (empty if none).
+    static QString familyForFolder(const QString &folder);
 
     bool running() const { return m_running; }
     // Queue these families (front: ahead of everything queued, also moving
