@@ -2,6 +2,7 @@
 #include "core/fontsandbox.h"
 
 #include <QCryptographicHash>
+#include <algorithm>
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
@@ -228,7 +229,9 @@ void FontDownloader::done(QNetworkReply *reply) {
 void FontDownloader::settle(const QString &family) {
     if (m_left.value(family, 1) > 0) return;
     m_left.remove(family);
-    const auto files = m_verified.take(family);
+    auto files = m_verified.take(family);
+    // Regular renamed last: a crash midway leaves no Regular, so no family.
+    std::stable_partition(files.begin(), files.end(), [](const File &f) { return !f.target.contains(QLatin1String("Regular")); });
     const bool ok = !m_failed.contains(family);
     for (const auto &f : files) {
         if (f.present) continue;
@@ -243,7 +246,10 @@ void FontDownloader::settle(const QString &family) {
     }
     for (const auto &f : files)
         if (f.font && !load(f.target)) fail(family, tr("not a usable font"), false);
-    if (!m_failed.contains(family)) m_installed.append(family);
+    // A file that will not load: the family goes (its other files stay
+    // registered until restart, but nothing is left on disk to load again).
+    if (m_failed.contains(family)) { for (const auto &f : files) QFile::remove(f.target); return; }
+    m_installed.append(family);
 }
 
 void FontDownloader::fail(const QString &family, const QString &why, bool network) {

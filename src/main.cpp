@@ -2,6 +2,7 @@
 
 #include "core/fonts.h"
 #include "core/fontsandbox.h"
+#include <QElapsedTimer>
 
 #include <QGuiApplication>
 #include <QFont>
@@ -438,7 +439,11 @@ int main(int argc, char *argv[]) {
     Fonts::loadBundled();   // Inter travels with OmaShow; draw it the same everywhere
     // FONT-CHECK-1: extra fonts from OmaShow's own folder, this process only;
     // fontconfig never sees them, so the rest of Omarchy is unaffected.
-    FontSandbox::load();
+    {
+        QElapsedTimer t; t.start();
+        const int n = FontSandbox::load();
+        if (qEnvironmentVariableIsSet("OMASHOW_FONT_TIMING")) qInfo().noquote() << "font sandbox:" << n << "files in" << t.elapsed() << "ms";
+    }
     Workers::Session workerSession;
 
     // The identity trio. setDesktopFileName is what becomes the Wayland app_id,
