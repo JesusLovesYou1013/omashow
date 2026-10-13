@@ -576,8 +576,11 @@ void Backend::acceptOpen(const Document &document, const QUrl &url) {
 // FONT-CHECK-2: asked once the deck is on screen (with fallbacks); fonts that
 // arrive later are applied in place.
 void Backend::requestFontCheck(const QString &source) {
-  if (source.isEmpty() || FontSwap::needed(m_document).isEmpty()) return;
-  emit fontCheckRequested(source);
+  if (source.isEmpty()) return;
+  const auto rows = FontSwap::needed(m_document);
+  bool any = false;   // only when something can actually be fetched
+  for (const auto &r : rows) any = any || r.toMap().value(QStringLiteral("downloadable")).toBool();
+  if (any) emit fontCheckRequested(source, rows);
 }
 
 void Backend::newDeck() { createDeck(0, 1920, 1080); }

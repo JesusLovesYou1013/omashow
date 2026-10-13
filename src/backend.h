@@ -124,8 +124,7 @@ class Backend : public QObject {
     Q_PROPERTY(QVariantMap startState READ startState CONSTANT)
     Q_PROPERTY(bool reducedMotion READ reducedMotion WRITE setReducedMotion NOTIFY viewPreferencesChanged)
     Q_PROPERTY(bool highContrast READ highContrast WRITE setHighContrast NOTIFY viewPreferencesChanged)
-    // Offer the free matches of every Windows and Office font (FontSwap::pack).
-    Q_PROPERTY(bool extraFontsPack READ extraFontsPack WRITE setExtraFontsPack NOTIFY extraFontsPackChanged)
+    Q_PROPERTY(bool fontsPending READ fontsPending NOTIFY fontDownloadChanged)
     Q_PROPERTY(bool fontDownloadRunning READ fontDownloadRunning NOTIFY fontDownloadChanged)
     Q_PROPERTY(double fontDownloadDone READ fontDownloadDone NOTIFY fontDownloadChanged)
     Q_PROPERTY(double fontDownloadTotal READ fontDownloadTotal NOTIFY fontDownloadChanged)
@@ -157,7 +156,10 @@ public:
     // writes the plan; =user puts everything in the font folder.
     Q_INVOKABLE QVariantList fontSwaps() const;
     Q_INVOKABLE QVariantList fontsToInstall() const;
-    Q_INVOKABLE QVariantList fontPack() const;
+    // Fonts arrived and are waiting to be used (the window applies them when
+    // no show is running and editors are committed).
+    bool fontsPending() const { return m_fontsPending; }
+    Q_INVOKABLE void applyArrivedFonts();
     // FONT-CHECK-2: fetch free fonts into OmaShow's own folder, then use them in place.
     Q_INVOKABLE bool downloadFonts(const QStringList &families);
     Q_INVOKABLE void cancelFontDownload();
@@ -171,8 +173,6 @@ public:
     Q_INVOKABLE bool fontCheckHidden(const QString &source) const;
     Q_INVOKABLE void setFontCheckHidden(const QString &source, bool hidden);
     Q_INVOKABLE bool openFontSandbox();
-    bool extraFontsPack() const;
-    void setExtraFontsPack(bool on);
     // The upright weights (100-900) the typeface really has, ascending. A name
     // that is not installed answers for the face it falls back to. Cached per
     // family, so the inspector asks once per family change.
@@ -607,13 +607,12 @@ public:
 signals:
     void opened();
     void importReportChanged();
-    void extraFontsPackChanged();
     void fontDownloadChanged();
     void fontAutoDownloadChanged();
     void fontDownloadFinished(const QStringList &installed, const QVariantMap &failed, bool offline, bool cancelled);
     // A deck was opened (local file or import source) that names Office fonts
     // whose free matches are not here.
-    void fontCheckRequested(const QString &source);
+    void fontCheckRequested(const QString &source, const QVariantList &rows);
     void importReady();
     void deckImportChanged();
     void findChanged();
@@ -802,7 +801,7 @@ private:
     int m_reducedMotion = -1, m_highContrast = -1;
     class FontDownloader *m_fontDownloader = nullptr;
     void fontDownloadDoneWith(const QStringList &installed, const QVariantMap &failed, bool offline, bool cancelled);
-    void applyArrivedFonts();
+    bool m_fontsPending = false;
     void requestFontCheck(const QString &source);
     QTimer m_exportTicker;
     int m_exportSerial = 0;

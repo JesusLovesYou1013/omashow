@@ -28,7 +28,6 @@ QString fontCheckKey(const QString &source) {
 
 QVariantList Backend::fontSwaps() const { return FontSwap::swapped(m_document); }
 QVariantList Backend::fontsToInstall() const { return FontSwap::needed(m_document); }
-QVariantList Backend::fontPack() const { return FontSwap::pack(); }
 QString Backend::fontSandboxDir() const { return FontSandbox::dir(); }
 
 bool Backend::fontCheckHidden(const QString &source) const {
@@ -60,18 +59,6 @@ bool Backend::openFontSandbox() {
     return QDesktopServices::openUrl(QUrl::fromLocalFile(dir));
 }
 
-bool Backend::extraFontsPack() const {
-    QSettings settings(fontSettingsPath(), QSettings::IniFormat);
-    return settings.value("extraFontsPack", false).toBool();
-}
-void Backend::setExtraFontsPack(bool on) {
-    if (on == extraFontsPack()) return;
-    QSettings settings(fontSettingsPath(), QSettings::IniFormat);
-    settings.setValue("extraFontsPack", on);
-    settings.sync();
-    emit extraFontsPackChanged();
-}
-
 bool Backend::fontDownloadRunning() const { return m_fontDownloader && m_fontDownloader->running(); }
 double Backend::fontDownloadDone() const { return m_fontDownloader ? double(m_fontDownloader->bytesDone()) : 0; }
 double Backend::fontDownloadTotal() const { return m_fontDownloader ? double(m_fontDownloader->bytesTotal()) : 0; }
@@ -92,8 +79,9 @@ bool Backend::downloadFonts(const QStringList &families) {
 void Backend::cancelFontDownload() { if (m_fontDownloader) m_fontDownloader->cancel(); }
 
 void Backend::fontDownloadDoneWith(const QStringList &installed, const QVariantMap &failed, bool offline, bool cancelled) {
+    // Used by the window when it is safe (not mid-show, editors committed).
+    if (!installed.isEmpty()) m_fontsPending = true;
     emit fontDownloadChanged();
-    if (!installed.isEmpty()) applyArrivedFonts();
     QString message;
     if (cancelled) message = tr("Font download cancelled");
     else {
@@ -109,14 +97,19 @@ void Backend::fontDownloadDoneWith(const QStringList &installed, const QVariantM
 // no undo step, no "unsaved changes", and every undo snapshot gets them too,
 // so Undo never brings the fallbacks back.
 void Backend::applyArrivedFonts() {
+    if (!m_fontsPending) return;
+    m_fontsPending = false;
+    emit fontDownloadChanged();
     if (qEnvironmentVariableIsSet("OMASHOW_NO_FONT_SWAP")) { emit importReportChanged(); return; }
-    m_history.rewrite([](Document &d) { FontSwap::apply(d); });
     const auto report = FontSwap::apply(m_document);
     if (report.changed) {
+        // Snapshots are only touched when the deck itself had something to upgrade.
+        m_history.rewrite([](Document &d) { FontSwap::apply(d); });
         applyActiveShow();
         ++m_revision;
         emit documentChanged();
         emit deckChanged();
+        emit selectionChanged();
     }
     emit importReportChanged();
 }

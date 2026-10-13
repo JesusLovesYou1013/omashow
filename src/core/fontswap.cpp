@@ -1,6 +1,8 @@
 #include "core/fontswap.h"
 #include "core/fontdownloader.h"
 
+#include <QSet>
+
 #include <QFile>
 #include <QFont>
 #include <QFontDatabase>
@@ -208,7 +210,7 @@ public:
         for (int i = 0; i < now; ++i)
             if (installed(entry->options[i].family)) return &entry->options[i];
         // FONT-CHECK-2: a deck saved elsewhere with a fallback this computer
-        // lacks (or does not pick): this computer's fallback, sized for it.
+        // lacks: this computer's fallback instead, sized for it.
         if (now == entry->options.size() && !installed(current))
             if (const auto *fb = FontSwap::fallback(entry->name); fb && fb->family.compare(current, Qt::CaseInsensitive) != 0) return fb;
         return nullptr;
@@ -307,7 +309,7 @@ private:
     // Moves what an earlier import swapped to a lesser match on to the best
     // one now installed, where the size is still the one the swap set.
     void upgrade(SceneObject &o, qreal boxBefore) {
-        if (!o.origFont.isEmpty()) if (const auto *opt = better(o.origFont, o.fontFamily)) {
+        if (!o.origFont.isEmpty()) if (const auto *opt = styled(better(o.origFont, o.fontFamily), o.origFont, boxStyle(o))) {
             const bool untouched = qFuzzyCompare(o.fontScale, 1.0) ? same(o.fontSize, o.origFontSize) : same(o.fontSize, o.origFontSize * o.fontScale);
             if (untouched) {
                 const qreal scale = scales(opt) ? opt->size : 1.0;
@@ -542,8 +544,17 @@ QVariantList rowsFor(const QStringList &offices) {
     for (const auto &office : offices) {
         const auto opts = FontSwap::options(office);
         if (opts.isEmpty() || installed(office) || installed(opts.first().family)) continue;
-        byFamily[opts.first().family].append(table().value(office.toLower()).name);
-        option.insert(opts.first().family, opts.first());
+        // FONT-CHECK-2: the best match when OmaShow can fetch it, else the
+        // first that it can (Aptos: Intos has no pinned files, Zalando Sans
+        // has); none when a downloadable one is already here.
+        const FontSwap::Option *want = &opts.first();
+        if (!FontDownloader::downloadable(want->family))
+            for (const auto &o : opts) if (FontDownloader::downloadable(o.family)) { want = &o; break; }
+        bool better = false;
+        for (const auto &o : opts) { if (&o == want) break; if (installed(o.family)) better = true; }
+        if (better || (want != &opts.first() && installed(want->family))) continue;
+        byFamily[want->family].append(table().value(office.toLower()).name);
+        option.insert(want->family, *want);
     }
     QVariantList rows;
     for (auto it = byFamily.cbegin(); it != byFamily.cend(); ++it) {
@@ -557,7 +568,12 @@ QVariantList rowsFor(const QStringList &offices) {
 
 QVariantList FontSwap::needed(const Document &document) {
     QStringList offices;
-    const auto note = [&](const QString &family) { if (isOffice(family)) offices.append(family); };
+    QSet<QString> seen;
+    const auto note = [&](const QString &family) {
+        if (family.isEmpty() || seen.contains(family)) return;
+        seen.insert(family);
+        if (isOffice(family)) offices.append(family);
+    };
     eachObject(document, [&](const SceneObject &o) {
         note(o.origFont.isEmpty() ? o.fontFamily : o.origFont);
         for (const auto &run : o.runs) note(run.origFont.isEmpty() ? run.fontFamily : run.origFont);

@@ -133,6 +133,7 @@ int captureInterface(QQmlApplicationEngine &engine, Backend &backend, Presenter 
         qInfo().noquote() << "ui-shot fontcheck: shown" << (check && check->property("visible").toBool());
         qInfo().noquote() << "ui-shot fontcheck: swaps" << json(backend.fontSwaps());
         save(window, QStringLiteral("fontcheck"));
+        if (qEnvironmentVariableIsSet("OMASHOW_UI_SHOT_SAVE")) backend.saveTo(outDir + QStringLiteral("/before.omashow"));
         const QString source = check ? check->property("source").toString() : QString();
         if (check && mode == QLatin1String("hide")) {
             if (auto *box = check->findChild<QObject *>(QStringLiteral("fontCheckHide"))) box->setProperty("checked", true);
@@ -158,7 +159,7 @@ int captureInterface(QQmlApplicationEngine &engine, Backend &backend, Presenter 
             QTimer::singleShot(400000, &wait, &QEventLoop::quit);
             QMetaObject::invokeMethod(check->findChild<QObject *>(QStringLiteral("fontCheckDownload")), "clicked");
             wait.exec();
-            qInfo().noquote() << "ui-shot fontcheck: dialog state" << check->property("state").toString() << "visible" << check->property("visible").toBool();
+            qInfo().noquote() << "ui-shot fontcheck: dialog state" << check->property("phase").toString() << "visible" << check->property("visible").toBool();
             qInfo().noquote() << "ui-shot fontcheck: swaps after" << json(backend.fontSwaps());
             qInfo().noquote() << "ui-shot fontcheck: needed after" << json(backend.fontsToInstall());
             qInfo().noquote() << "ui-shot fontcheck: modified" << backend.modified() << "canUndo" << backend.canUndo();

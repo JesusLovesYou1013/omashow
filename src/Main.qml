@@ -407,9 +407,9 @@ ApplicationWindow {
         { id: "ribbonSnap", tab: "view", group: "guides", kind: "toggle", label: qsTr("Snap to guides"), also: "align magnet", checked: () => backend.snapEnabled, run: () => backend.snapEnabled = !backend.snapEnabled },
         { id: "reducedMotionItem", tab: "view", group: "access", kind: "toggle", label: qsTr("Less movement"), also: "reduced motion animation accessibility vestibular allow movement again", checked: () => backend.reducedMotion, run: () => backend.reducedMotion = !backend.reducedMotion },
         { id: "highContrastItem", tab: "view", group: "access", kind: "toggle", label: qsTr("Stronger contrast"), also: "high contrast accessibility legible ordinary", checked: () => backend.highContrast, run: () => backend.highContrast = !backend.highContrast },
-        { id: "extraFontsPackItem", tab: "view", group: "fonts", kind: "toggle", label: qsTr("Extra fonts pack"), also: "office windows fonts free matches install calibri aptos cambria",
-          tip: qsTr("Offer free stand-ins for every Windows and Office font"), checked: () => backend.extraFontsPack,
-          run: () => { backend.extraFontsPack = !backend.extraFontsPack; if (backend.extraFontsPack) fontCheckDialog.showPack() } },
+        { id: "fontAutoDownloadItem", tab: "view", group: "fonts", kind: "toggle", label: qsTr("Download missing free fonts"), also: "office windows fonts free matches download calibri aptos cambria automatic",
+          tip: qsTr("When a presentation uses Office fonts, fetch their free look-alikes without asking (only OmaShow uses them)"), checked: () => backend.fontAutoDownload,
+          run: () => { backend.fontAutoDownload = !backend.fontAutoDownload } },
         // ── Animate (ANIM-001): the only place an animation is chosen, timed or ordered ──
         { id: "animPreview", tab: "animate", group: "preview", label: qsTr("Preview"), icon: "play", also: "play animation build preview slide",
           tip: qsTr("Play the chosen animation, or the whole slide when none is chosen"), on: () => backend.builds.length > 0,
@@ -860,7 +860,26 @@ ApplicationWindow {
     FontsDialog { id: fontsDialog }
     // FONT-CHECK-1: say which free fonts an opened PowerPoint deck needs.
     FontCheckDialog { id: fontCheckDialog }
-    Connections { target: backend; function onFontCheckRequested(source) { Qt.callLater(() => fontCheckDialog.check(source)) } }
+    // FONT-CHECK-2: never in the middle of a show: a check or arrived fonts
+    // wait until it ends; editors are committed before fonts are applied.
+    property var pendingFontCheck: null
+    Connections {
+        target: backend
+        function onFontCheckRequested(source, rows) {
+            if (presenter.running) win.pendingFontCheck = { source: source, rows: rows }
+            else Qt.callLater(() => fontCheckDialog.check(source, rows))
+        }
+        function onFontDownloadChanged() { if (backend.fontsPending && !presenter.running) Qt.callLater(win.applyArrivedFonts) }
+    }
+    Connections {
+        target: presenter
+        function onStateChanged() {
+            if (presenter.running) return
+            if (win.pendingFontCheck) { const p = win.pendingFontCheck; win.pendingFontCheck = null; fontCheckDialog.check(p.source, p.rows) }
+            if (backend.fontsPending) win.applyArrivedFonts()
+        }
+    }
+    function applyArrivedFonts() { if (!backend.fontsPending || presenter.running) return; win.commitEditors(); backend.applyArrivedFonts() }
     MediaOptimisation { id: mediaOptimisation }
     Connections { target: backend; function onMediaOptimisationRequested() { win.commitEditors(); mediaOptimisation.show() } }
     MediaPreflight { id: mediaPreflight; onEditRequested: win.workspace=0 }
