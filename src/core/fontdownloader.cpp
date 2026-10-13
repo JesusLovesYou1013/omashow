@@ -333,7 +333,7 @@ void FontDownloader::settle(const QString &family) {
         }
     }
     if (!QFontDatabase::hasFamily(family) && !loadFamily(family)) {
-        setAside(target);
+        QDir(target).removeRecursively();   // ours, verified yet unusable: not kept
         m_failed.insert(family, tr("not a usable font"));
         emit familyFailed(family, m_failed.value(family).toString(), false);
         return;

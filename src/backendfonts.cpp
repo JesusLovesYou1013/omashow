@@ -1,6 +1,7 @@
 // Free matches for Office fonts: what was swapped, what is worth fetching,
 // and fetching it into OmaShow's own font folder once the person says yes
 // (FONT-CHECK-2: no packages, no password, nothing system-wide).
+#include <QTimer>
 #include "backend.h"
 #include "core/fontdownloader.h"
 #include "core/fontsandbox.h"
@@ -149,7 +150,11 @@ bool Backend::downloadPack() {
     m_packFailed.clear();
     m_packStatus = tr("Extra fonts pack: %1 of %2 fonts ready").arg(packReady()).arg(packTotal());
     m_packLeft = QSet<QString>(families.cbegin(), families.cend());
-    if (families.isEmpty()) { emit fontDownloadChanged(); emit packFinished(packReady(), packTotal(), {}, false); return true; }
+    if (families.isEmpty()) {
+        m_packStatus = tr("Extra fonts pack: all %1 fonts ready").arg(packTotal());
+        QTimer::singleShot(8000, this, [this] { if (m_packFamilies.isEmpty() && packReady() == packTotal()) { m_packStatus.clear(); emit fontDownloadChanged(); } });
+        emit fontDownloadChanged(); emit packFinished(packReady(), packTotal(), {}, false); return true;
+    }
     m_fontDownloader->add(families, false);
     emit fontDownloadChanged();
     return true;
@@ -180,7 +185,7 @@ void Backend::familyLost(const QString &family, const QString &why, bool network
     const QVariantMap entry{{"why", why}, {"network", network}, {"cancelled", why == FontDownloader::cancelledReason()}};
     if (m_deckLeft.remove(family)) m_deckFailed.insert(family, entry);
     if (m_packLeft.remove(family)) m_packFailed.insert(family, entry);
-    // Bursts (a cancel, an outage) settle once, after the last of them.
+    // Queued: a burst (a cancel, an outage) is settled after its signals, not inside them.
     QMetaObject::invokeMethod(this, [this] { emit fontDownloadChanged(); runFinished({}, {}, false, false); }, Qt::QueuedConnection);
 }
 
@@ -231,6 +236,9 @@ void Backend::runFinished(const QStringList &, const QVariantMap &, bool, bool) 
                   : offline ? tr("Extra fonts pack: %1 of %2 fonts ready; couldn't reach the font server").arg(ready).arg(total)
                   : failed.isEmpty() ? tr("Extra fonts pack paused: %1 of %2 fonts ready").arg(ready).arg(total)
                   : tr("Extra fonts pack: %1 of %2 fonts ready, %3 not installed").arg(ready).arg(total).arg(failed.size());
+        // "All ready" goes after a while; anything less stays to be clicked.
+        if (ready == total)
+            QTimer::singleShot(8000, this, [this] { if (m_packFamilies.isEmpty() && packReady() == packTotal()) { m_packStatus.clear(); emit fontDownloadChanged(); } });
         emit fontDownloadChanged();
         emit packFinished(ready, total, failed, offline);
     }
