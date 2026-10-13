@@ -143,13 +143,81 @@ int captureInterface(QQmlApplicationEngine &engine, Backend &backend, Presenter 
             settle(300);
             qInfo().noquote() << "ui-shot fontcheck: hidden for" << source << backend.fontCheckHidden(source);
         }
+        // FONT-CHECK-3 conditions (OMASHOW_UI_SHOT_FONT_COND, with MODE=download):
+        // show: a rehearsal runs while the fonts arrive (deck untouched until it ends);
+        // editor: a text box is being typed in (typing kept, then redrawn);
+        // undo: an edit is made first; undo after arrival undoes the edit only.
+        const QString cond = qEnvironmentVariable("OMASHOW_UI_SHOT_FONT_COND");
+        const std::function<QQuickItem *(QQuickItem *, const QString &)> findIn = [&](QQuickItem *item, const QString &name) -> QQuickItem * {
+            if (!item) return nullptr;
+            if (item->objectName() == name) return item;
+            for (QQuickItem *child : item->childItems()) if (QQuickItem *f = findIn(child, name)) return f;
+            return nullptr;
+        };
+        QQuickItem *condCanvas = findIn(window->contentItem(), QStringLiteral("editCanvas"));
+        QQuickItem *condEditor = nullptr;
+        QString condTextId;
+        // With MODE=pack the opening deck is first shown on fallbacks (its
+        // popup closed), so the pack's fonts arrive into a deck on screen.
+        if (check && mode == QLatin1String("pack")) { QMetaObject::invokeMethod(check, "close"); settle(300); }
+        if (check && (mode == QLatin1String("download") || mode == QLatin1String("pack")) && !cond.isEmpty()) {
+            for (const QVariant &object : backend.slideObjects())
+                if (object.toMap().value(QStringLiteral("text")).toBool()) { condTextId = object.toMap().value(QStringLiteral("id")).toString(); break; }
+            if (cond == QLatin1String("show")) {
+                presenter.start(false, true);
+                settle(300);
+                qInfo().noquote() << "ui-shot fontcheck: cond show running" << presenter.property("running").toBool();
+            } else if (cond == QLatin1String("editor") && condCanvas) {
+                backend.select(condTextId);
+                settle(100);
+                QMetaObject::invokeMethod(condCanvas, "beginTextEdit");
+                settle(200);
+                for (QQuickItem *k : condCanvas->findChildren<QQuickItem *>())
+                    if (QByteArray(k->metaObject()->className()).contains("TextEdit") && k->isVisible()) { condEditor = k; break; }
+                if (condEditor) {
+                    QMetaObject::invokeMethod(condEditor, "deselect");
+                    const int at = condEditor->property("length").toInt();
+                    QMetaObject::invokeMethod(condEditor, "insert", Q_ARG(int, at), Q_ARG(QString, QStringLiteral(" TYPED-WHILE-DOWNLOADING")));
+                }
+                qInfo().noquote() << "ui-shot fontcheck: cond editor open" << condCanvas->property("editingText").toBool() << "editor found" << bool(condEditor);
+            } else if (cond == QLatin1String("undo")) {
+                backend.select(condTextId);
+                backend.nudgeSelected(40, 0);
+                qInfo().noquote() << "ui-shot fontcheck: cond undo nudged" << condTextId << "canUndo" << backend.canUndo();
+            }
+            save(window, QStringLiteral("cond-before"));
+        }
+        const auto objectText = [&] {
+            if (condCanvas && condCanvas->property("editingText").toBool()) return QVariantMap();   // don't disturb an open editor
+            backend.select(condTextId);
+            return backend.property("selection").toMap();
+        };
+        const auto condAfter = [&] {
+                if (cond == QLatin1String("show")) {
+                    qInfo().noquote() << "ui-shot fontcheck: cond show still running" << presenter.property("running").toBool() << "pending" << backend.fontsPending();
+                    save(window, QStringLiteral("cond-during-show"));
+                    QMetaObject::invokeMethod(&presenter, "stop");
+                    settle(600);
+                    qInfo().noquote() << "ui-shot fontcheck: cond show ended; pending" << backend.fontsPending() << "swaps" << json(backend.fontSwaps());
+                } else if (cond == QLatin1String("editor")) {
+                    settle(300);
+                    const bool stillOpen = condCanvas && condCanvas->property("editingText").toBool();
+                    const QString plain = stillOpen && condEditor ? condEditor->property("text").toString() : objectText().value(QStringLiteral("editHtml")).toString();
+                    qInfo().noquote() << "ui-shot fontcheck: cond editor open after" << stillOpen
+                                      << "typed text kept" << plain.contains(QStringLiteral("TYPED-WHILE-DOWNLOADING"));
+                } else if (cond == QLatin1String("undo")) {
+                    const qreal x = objectText().value(QStringLiteral("x")).toReal();
+                    backend.undo();
+                    settle(300);
+                    qInfo().noquote() << "ui-shot fontcheck: cond undo x before" << x << "after undo" << objectText().value(QStringLiteral("x")).toReal()
+                                      << "swaps after undo" << json(backend.fontSwaps()) << "canUndo" << backend.canUndo();
+                }
+        };
         // FONT-CHECK-3 pack (OMASHOW_UI_SHOT_FONTCHECK=pack): turn on the Extra
         // fonts pack, photograph its offer, download it. OMASHOW_UI_SHOT_DECK_MS:
         // that long into the pack, ask for the open deck's own fonts (they must
         // jump the queue). OMASHOW_UI_SHOT_CANCEL_MS cancels the pack.
         if (check && mode == QLatin1String("pack")) {
-            QMetaObject::invokeMethod(check, "close");
-            settle(200);
             backend.setExtraFontsPack(true);
             QMetaObject::invokeMethod(check, "showPack");
             settle(400);
@@ -191,57 +259,12 @@ int captureInterface(QQmlApplicationEngine &engine, Backend &backend, Presenter 
             QMetaObject::invokeMethod(check->findChild<QObject *>(QStringLiteral("fontCheckDownload")), "clicked");
             wait.exec();
             qInfo().noquote() << "ui-shot fontcheck: dialog state" << check->property("phase").toString() << "visible" << check->property("visible").toBool();
+            if (!cond.isEmpty()) { QMetaObject::invokeMethod(check, "close"); settle(300); condAfter(); }
             qInfo().noquote() << "ui-shot fontcheck: swaps after" << json(backend.fontSwaps());
             qInfo().noquote() << "ui-shot fontcheck: status" << backend.property("status").toString() << "| pack status" << backend.packStatus();
             save(window, QStringLiteral("pack-after"));
             return 0;
         }
-        // FONT-CHECK-3 conditions (OMASHOW_UI_SHOT_FONT_COND, with MODE=download):
-        // show: a rehearsal runs while the fonts arrive (deck untouched until it ends);
-        // editor: a text box is being typed in (typing kept, then redrawn);
-        // undo: an edit is made first; undo after arrival undoes the edit only.
-        const QString cond = qEnvironmentVariable("OMASHOW_UI_SHOT_FONT_COND");
-        const std::function<QQuickItem *(QQuickItem *, const QString &)> findIn = [&](QQuickItem *item, const QString &name) -> QQuickItem * {
-            if (!item) return nullptr;
-            if (item->objectName() == name) return item;
-            for (QQuickItem *child : item->childItems()) if (QQuickItem *f = findIn(child, name)) return f;
-            return nullptr;
-        };
-        QQuickItem *condCanvas = findIn(window->contentItem(), QStringLiteral("editCanvas"));
-        QQuickItem *condEditor = nullptr;
-        QString condTextId;
-        if (check && mode == QLatin1String("download") && !cond.isEmpty()) {
-            for (const QVariant &object : backend.slideObjects())
-                if (object.toMap().value(QStringLiteral("text")).toBool()) { condTextId = object.toMap().value(QStringLiteral("id")).toString(); break; }
-            if (cond == QLatin1String("show")) {
-                presenter.start(false, true);
-                settle(300);
-                qInfo().noquote() << "ui-shot fontcheck: cond show running" << presenter.property("running").toBool();
-            } else if (cond == QLatin1String("editor") && condCanvas) {
-                backend.select(condTextId);
-                settle(100);
-                QMetaObject::invokeMethod(condCanvas, "beginTextEdit");
-                settle(200);
-                for (QQuickItem *k : condCanvas->findChildren<QQuickItem *>())
-                    if (QByteArray(k->metaObject()->className()).contains("TextEdit") && k->isVisible()) { condEditor = k; break; }
-                if (condEditor) {
-                    QMetaObject::invokeMethod(condEditor, "deselect");
-                    const int at = condEditor->property("length").toInt();
-                    QMetaObject::invokeMethod(condEditor, "insert", Q_ARG(int, at), Q_ARG(QString, QStringLiteral(" TYPED-WHILE-DOWNLOADING")));
-                }
-                qInfo().noquote() << "ui-shot fontcheck: cond editor open" << condCanvas->property("editingText").toBool() << "editor found" << bool(condEditor);
-            } else if (cond == QLatin1String("undo")) {
-                backend.select(condTextId);
-                backend.nudgeSelected(40, 0);
-                qInfo().noquote() << "ui-shot fontcheck: cond undo nudged" << condTextId << "canUndo" << backend.canUndo();
-            }
-            save(window, QStringLiteral("cond-before"));
-        }
-        const auto objectText = [&] {
-            if (condCanvas && condCanvas->property("editingText").toBool()) return QVariantMap();   // don't disturb an open editor
-            backend.select(condTextId);
-            return backend.property("selection").toMap();
-        };
         if (check && mode == QLatin1String("download") && check->property("visible").toBool()) {
             QEventLoop wait;
             bool shotProgress = false;
@@ -265,25 +288,7 @@ int captureInterface(QQmlApplicationEngine &engine, Backend &backend, Presenter 
             qInfo().noquote() << "ui-shot fontcheck: needed after" << json(backend.fontsToInstall());
             qInfo().noquote() << "ui-shot fontcheck: modified" << backend.modified() << "canUndo" << backend.canUndo()
                               << "revision" << backend.revision() << "deck held" << backend.fontGate() << "show running" << presenter.property("running").toBool();
-            if (cond == QLatin1String("show")) {
-                qInfo().noquote() << "ui-shot fontcheck: cond show still running" << presenter.property("running").toBool() << "pending" << backend.fontsPending();
-                save(window, QStringLiteral("cond-during-show"));
-                QMetaObject::invokeMethod(&presenter, "stop");
-                settle(600);
-                qInfo().noquote() << "ui-shot fontcheck: cond show ended; pending" << backend.fontsPending() << "swaps" << json(backend.fontSwaps());
-            } else if (cond == QLatin1String("editor")) {
-                settle(300);
-                const bool stillOpen = condCanvas && condCanvas->property("editingText").toBool();
-                const QString plain = stillOpen && condEditor ? condEditor->property("text").toString() : objectText().value(QStringLiteral("editHtml")).toString();
-                qInfo().noquote() << "ui-shot fontcheck: cond editor open after" << stillOpen
-                                  << "typed text kept" << plain.contains(QStringLiteral("TYPED-WHILE-DOWNLOADING"));
-            } else if (cond == QLatin1String("undo")) {
-                const qreal x = objectText().value(QStringLiteral("x")).toReal();
-                backend.undo();
-                settle(300);
-                qInfo().noquote() << "ui-shot fontcheck: cond undo x before" << x << "after undo" << objectText().value(QStringLiteral("x")).toReal()
-                                  << "swaps after undo" << json(backend.fontSwaps()) << "canUndo" << backend.canUndo();
-            }
+            condAfter();
             save(window, QStringLiteral("fontcheck-after"));
             if (qEnvironmentVariableIsSet("OMASHOW_UI_SHOT_SAVE")) backend.saveTo(outDir + QStringLiteral("/after.omashow"));
             if (check->property("visible").toBool()) QMetaObject::invokeMethod(check, "close");
