@@ -48,6 +48,20 @@ bool looksMono(const QString &family) {
 
 } // namespace
 
+void Fonts::loadBundled() {
+    static bool done = false;
+    if (done) return;
+    done = true;
+    for (const auto &path : bundledFiles(QStringLiteral("Inter")))
+        if (!path.isEmpty()) QFontDatabase::addApplicationFont(path);
+}
+
+QStringList Fonts::bundledFiles(const QString &family) {
+    if (family.compare(QLatin1String("Inter"), Qt::CaseInsensitive) != 0) return {};
+    return {QStringLiteral(":/fonts/Inter-Regular.ttf"), QStringLiteral(":/fonts/Inter-Bold.ttf"),
+            QStringLiteral(":/fonts/Inter-Italic.ttf"), QStringLiteral(":/fonts/Inter-BoldItalic.ttf")};
+}
+
 QMap<QString, int> Fonts::families(const Document &document) {
     QMap<QString, int> out;
     Document copy = document;

@@ -260,8 +260,22 @@ bool shipsWithOffice(const QString &family) {
 
 // The installed files of exactly this family, by style slot.
 Family find(const QString &family) {
-    Family out{family, {}};
+    Family out{family, {}, {}};
     if (family.isEmpty() || shipsWithOffice(family)) return out;
+    // A family OmaShow carries itself is embedded from its own copy, so it is
+    // carried even where it is not installed.
+    const auto bundled = Fonts::bundledFiles(family);
+    if (!bundled.isEmpty()) {
+        for (int slot = 0; slot < 4 && slot < bundled.size(); ++slot) {
+            QFile f(bundled[slot]);
+            if (!f.open(QIODevice::ReadOnly)) continue;
+            const QByteArray data = f.readAll();
+            const QString why = refusal(data);
+            if (why.isEmpty()) out.styles[slot] = {bundled[slot], data};
+            else out.refused = why;
+        }
+        return out;
+    }
     QProcess fc;
     // Escape what fontconfig patterns treat specially (a hyphen starts the size).
     QString escaped;

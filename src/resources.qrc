@@ -1,4 +1,11 @@
 <RCC>
+    <qresource prefix="/fonts">
+        <file alias="Inter-Regular.ttf">fonts/inter/Inter-Regular.ttf</file>
+        <file alias="Inter-Bold.ttf">fonts/inter/Inter-Bold.ttf</file>
+        <file alias="Inter-Italic.ttf">fonts/inter/Inter-Italic.ttf</file>
+        <file alias="Inter-BoldItalic.ttf">fonts/inter/Inter-BoldItalic.ttf</file>
+        <file alias="Inter-LICENSE.txt">fonts/inter/LICENSE.txt</file>
+    </qresource>
     <qresource prefix="/">
         <file alias="StartCentre.qml">StartCentre.qml</file>
         <file alias="SlideSizeDialog.qml">SlideSizeDialog.qml</file>

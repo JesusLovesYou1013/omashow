@@ -1,5 +1,7 @@
 // OmaShow — native presentations for Omarchy.
 
+#include "core/fonts.h"
+
 #include <QGuiApplication>
 #include <QFont>
 #include <QIcon>
@@ -379,6 +381,7 @@ int main(int argc, char *argv[]) {
     if (!headless)
         QQuickWindow::setDefaultAlphaBuffer(true);
     QGuiApplication app(argc, argv);
+    Fonts::loadBundled();   // Inter travels with OmaShow; draw it the same everywhere
     Workers::Session workerSession;
 
     // The identity trio. setDesktopFileName is what becomes the Wayland app_id,
