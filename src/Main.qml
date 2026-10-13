@@ -407,7 +407,7 @@ ApplicationWindow {
         { id: "ribbonSnap", tab: "view", group: "guides", kind: "toggle", label: qsTr("Snap to guides"), also: "align magnet", checked: () => backend.snapEnabled, run: () => backend.snapEnabled = !backend.snapEnabled },
         { id: "reducedMotionItem", tab: "view", group: "access", kind: "toggle", label: qsTr("Less movement"), also: "reduced motion animation accessibility vestibular allow movement again", checked: () => backend.reducedMotion, run: () => backend.reducedMotion = !backend.reducedMotion },
         { id: "highContrastItem", tab: "view", group: "access", kind: "toggle", label: qsTr("Stronger contrast"), also: "high contrast accessibility legible ordinary", checked: () => backend.highContrast, run: () => backend.highContrast = !backend.highContrast },
-        { id: "fontAutoDownloadItem", tab: "view", group: "fonts", kind: "toggle", label: qsTr("Download missing free fonts"), also: "office windows fonts free matches download calibri aptos cambria automatic",
+        { id: "fontAutoDownloadItem", tab: "view", group: "fonts", kind: "toggle", label: qsTr("Always download missing free fonts"), also: "office windows fonts free matches download calibri aptos cambria automatic",
           tip: qsTr("When a presentation uses Office fonts, fetch their free look-alikes without asking (only OmaShow uses them)"), checked: () => backend.fontAutoDownload,
           run: () => { backend.fontAutoDownload = !backend.fontAutoDownload } },
         // ── Animate (ANIM-001): the only place an animation is chosen, timed or ordered ──
@@ -866,6 +866,7 @@ ApplicationWindow {
     Connections {
         target: backend
         function onFontCheckRequested(source, rows) {
+            win.pendingFontCheck = null   // a newer deck replaces any held check
             if (presenter.running) win.pendingFontCheck = { source: source, rows: rows }
             else Qt.callLater(() => fontCheckDialog.check(source, rows))
         }

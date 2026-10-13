@@ -84,9 +84,6 @@ VerticalFix verticalFix(const SceneObject &o, qreal size);
 // Office family it names (swapped or not) when that match is not installed.
 // {family, offices, package, googleFonts, github, metric}
 QVariantList needed(const Document &document);
-// The "Extra fonts pack": the best free match of every Office family in the
-// table that is not installed here.
-QVariantList pack();
 // What has been swapped in this deck: {office, free, metric, size, uses}.
 QVariantList swapped(const Document &document);
 

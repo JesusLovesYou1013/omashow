@@ -572,7 +572,7 @@ QVariantList FontSwap::needed(const Document &document) {
     const auto note = [&](const QString &family) {
         if (family.isEmpty() || seen.contains(family)) return;
         seen.insert(family);
-        if (isOffice(family)) offices.append(family);
+        if (!installed(family) && isOffice(family)) offices.append(family);
     };
     eachObject(document, [&](const SceneObject &o) {
         note(o.origFont.isEmpty() ? o.fontFamily : o.origFont);
@@ -586,12 +586,6 @@ QVariantList FontSwap::needed(const Document &document) {
     return rowsFor(offices);
 }
 
-QVariantList FontSwap::pack() {
-    QStringList offices;
-    for (const auto &entry : table()) offices.append(entry.name);
-    offices.sort(Qt::CaseInsensitive);
-    return rowsFor(offices);
-}
 
 FontSwap::VerticalFix FontSwap::verticalFix(const SceneObject &o, qreal size) {
     VerticalFix fix;
