@@ -24,5 +24,13 @@ QString dir();
 // Load every font file under dir(); returns the number of files loaded.
 // Safe to call more than once: a file already loaded is skipped.
 int load();
+// Load one font file that belongs to the family folder <folder> (a map name
+// without spaces); returns the families inside it (empty: not a font).
+QStringList loadFile(const QString &path, const QString &folder);
+// The map's family is usable: installed, or loaded under another internal
+// name (google/fonts "Fjord One" is "Fjord" inside its file; "Nanum Gothic"
+// is "NanumGothic"). Such names get a QFont substitution, so text set in the
+// map's name draws with the file's family.
+bool available(const QString &family);
 
 } // namespace FontSandbox
