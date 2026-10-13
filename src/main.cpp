@@ -3,6 +3,7 @@
 #include "core/fonts.h"
 #include "core/fontsandbox.h"
 #include <QElapsedTimer>
+#include <QFontInfo>
 
 #include <QGuiApplication>
 #include <QFont>
@@ -135,6 +136,16 @@ int captureInterface(QQmlApplicationEngine &engine, Backend &backend, Presenter 
                           << "deck held" << backend.fontGate() << "show running" << presenter.property("running").toBool();
         qInfo().noquote() << "ui-shot fontcheck: swaps" << json(backend.fontSwaps());
         save(window, QStringLiteral("fontcheck"));
+        // FONT-CHECK-3: "Use fallback fonts" on the loading state, that long in.
+        if (const int ms = qEnvironmentVariableIntValue("OMASHOW_UI_SHOT_GATE_SKIP_MS")) {
+            settle(ms);
+            QObject *skip = window->findChild<QObject *>(QStringLiteral("fontGateFallback"));
+            qInfo().noquote() << "ui-shot fontcheck: gate skip at" << ms << "ms; held" << backend.fontGate() << "button" << bool(skip);
+            if (skip) QMetaObject::invokeMethod(skip, "clicked");
+            settle(1500);
+            qInfo().noquote() << "ui-shot fontcheck: after skip held" << backend.fontGate() << "show running" << presenter.property("running").toBool();
+            save(window, QStringLiteral("gate-skipped"));
+        }
         if (qEnvironmentVariableIsSet("OMASHOW_UI_SHOT_SAVE")) backend.saveTo(outDir + QStringLiteral("/before.omashow"));
         const QString source = check ? check->property("source").toString() : QString();
         if (check && mode == QLatin1String("hide")) {
@@ -223,7 +234,13 @@ int captureInterface(QQmlApplicationEngine &engine, Backend &backend, Presenter 
             settle(400);
             {   // every pack family usable under its map name (aliases included)
                 QStringList missing;
-                for (const auto &r : backend.fontPack()) { const auto f = r.toMap().value("family").toString(); if (!FontSandbox::available(f)) missing << f; }
+                for (const auto &r : backend.fontPack()) {
+                    const auto f = r.toMap().value("family").toString();
+                    // What a text set in the map's name actually draws with.
+                    const auto drawn = QFontInfo(QFont(f)).family();
+                    if (!FontSandbox::available(f) || (drawn.compare(f, Qt::CaseInsensitive) && drawn.compare(QFont::substitute(f), Qt::CaseInsensitive))) missing << f + QStringLiteral("->") + drawn;
+                    else if (drawn.compare(f, Qt::CaseInsensitive)) qInfo().noquote() << "ui-shot fontcheck: alias" << f << "draws as" << drawn;
+                }
                 qInfo().noquote() << "ui-shot fontcheck: pack families not usable" << missing.size() << missing.join(QLatin1Char(','));
             }
             qInfo().noquote() << "ui-shot fontcheck: pack" << backend.packReady() << "of" << backend.packTotal() << "ready," << qRound(backend.packBytes() / 1048576) << "MB";
