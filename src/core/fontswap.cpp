@@ -62,19 +62,16 @@ bool installed(const QString &family) { return !family.isEmpty() && QFontDatabas
 // is restored from what was stored, not divided back with rounding.
 bool same(qreal a, qreal b) { return std::abs(a - b) <= 1e-6 * qMax<qreal>(1.0, std::abs(a)); }
 
-// Points per slide unit of the deck being reverted (PowerPoint's slide is
-// 960 pt wide as written), for rounding edited sizes the way PowerPoint stores
-// them.
-qreal g_ptPerUnit = 0.5;
-
 // A size untouched since the swap goes back to exactly what was read; one
 // changed in OmaShow is divided by the factor and rounded to PowerPoint's half
 // point (the field shows sizes in half points too).
-qreal unscale(qreal now, qreal before, qreal scale) {
+// ptPerUnit: points per slide unit of the deck being saved (its PowerPoint
+// slide is 960 pt wide as written).
+qreal unscale(qreal now, qreal before, qreal scale, qreal ptPerUnit) {
     if (before > 0 && same(now, before * scale)) return before;
-    if (g_ptPerUnit <= 0) return now / scale;
-    const qreal points = std::max<qreal>(1.0, std::round(now / scale * g_ptPerUnit * 2) / 2);
-    return points / g_ptPerUnit;
+    if (ptPerUnit <= 0) return now / scale;
+    const qreal points = std::max<qreal>(1.0, std::round(now / scale * ptPerUnit * 2) / 2);
+    return points / ptPerUnit;
 }
 
 // Whether a family is still the free match that stood in for an Office
@@ -364,12 +361,12 @@ FontSwap::Report FontSwap::apply(Document &document) {
 }
 
 void FontSwap::revert(Document &document) {
-    g_ptPerUnit = 960.0 / qMax<qreal>(1.0, document.size.width());
-    eachObject(document, [](SceneObject &o) {
+    const qreal ptPerUnit = 960.0 / qMax<qreal>(1.0, document.size.width());
+    eachObject(document, [ptPerUnit](SceneObject &o) {
         bool boxSwapped = false;
         if (!o.origFont.isEmpty() && stillSwapped(o.origFont, o.fontFamily)) {
             boxSwapped = true;
-            if (!qFuzzyCompare(o.fontScale, 1.0)) o.fontSize = unscale(o.fontSize, o.origFontSize, o.fontScale);
+            if (!qFuzzyCompare(o.fontScale, 1.0)) o.fontSize = unscale(o.fontSize, o.origFontSize, o.fontScale, ptPerUnit);
             if (o.origWeight && o.fontWeight == namedWeight(o.origFont)) o.fontWeight = o.origWeight;
             o.fontFamily = o.origFont;
         } else if (const auto office = officeFor(o.fontFamily); !office.isEmpty()) {
@@ -379,9 +376,9 @@ void FontSwap::revert(Document &document) {
             if (!run.fontFamily.isEmpty()) {
                 if (!run.origFont.isEmpty() && stillSwapped(run.origFont, run.fontFamily)) {
                     if (!qFuzzyCompare(run.fontScale, 1.0)) {
-                        if (run.origFontSize > 0) run.fontSize = unscale(run.fontSize, run.origFontSize, run.fontScale);
+                        if (run.origFontSize > 0) run.fontSize = unscale(run.fontSize, run.origFontSize, run.fontScale, ptPerUnit);
                         else if (same(run.fontSize, o.fontSize * run.fontScale)) run.fontSize = 0;   // took the box's
-                        else run.fontSize /= run.fontScale;
+                        else run.fontSize = unscale(run.fontSize, 0, run.fontScale, ptPerUnit);
                     }
                     if (run.origWeight && run.weight == namedWeight(run.origFont)) run.weight = run.origWeight == 1 ? 0 : run.origWeight;
                     run.fontFamily = run.origFont;
@@ -389,7 +386,7 @@ void FontSwap::revert(Document &document) {
                     run.fontFamily = office;
                 }
             } else if (boxSwapped && !qFuzzyCompare(run.fontScale, 1.0) && run.fontSize > 0) {
-                run.fontSize = unscale(run.fontSize, run.origFontSize, run.fontScale);
+                run.fontSize = unscale(run.fontSize, run.origFontSize, run.fontScale, ptPerUnit);
             }
             run.origFont.clear(); run.origFontSize = 0; run.fontScale = 1; run.origWeight = 0;
         }
@@ -402,9 +399,9 @@ void FontSwap::revert(Document &document) {
                     const qreal scale = style.value(QStringLiteral("fontScale")).toDouble();
                     const qreal now = style.value(QStringLiteral("fontSize")).toDouble();
                     if (style.contains(QStringLiteral("origFontSize")))
-                        style.insert(QStringLiteral("fontSize"), unscale(now, style.value(QStringLiteral("origFontSize")).toDouble(), scale));
+                        style.insert(QStringLiteral("fontSize"), unscale(now, style.value(QStringLiteral("origFontSize")).toDouble(), scale, ptPerUnit));
                     else if (same(now, o.fontSize * scale)) style.remove(QStringLiteral("fontSize"));
-                    else style.insert(QStringLiteral("fontSize"), now / scale);
+                    else style.insert(QStringLiteral("fontSize"), unscale(now, 0, scale, ptPerUnit));
                 }
                 if (style.contains(QStringLiteral("origWeight")) && style.value(QStringLiteral("fontWeight")).toInt() == namedWeight(office))
                     style.insert(QStringLiteral("fontWeight"), style.value(QStringLiteral("origWeight")));
@@ -500,6 +497,10 @@ FontSwap::VerticalFix FontSwap::verticalFix(const SceneObject &o, qreal size) {
     for (const auto &option : entry->options)
         if (option.family.compare(o.fontFamily, Qt::CaseInsensitive) == 0) { metric = option.metric; break; }
     if (!metric) return fix;
+    // Worked out from the box's font: a stretch in another family or a larger
+    // size sets its own lines, so such a box is left as it was.
+    for (const auto &run : o.runs)
+        if (!run.fontFamily.isEmpty() || run.fontSize > o.fontSize + 1e-6) return fix;
     struct Em { qreal ascent, descent, leading; };
     static thread_local QHash<QString, Em> cache;
     const QString key = o.fontFamily + QLatin1Char('|') + QString::number(o.fontWeight) + QLatin1Char('|') + QString::number(o.italic);

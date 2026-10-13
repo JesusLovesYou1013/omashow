@@ -330,7 +330,7 @@ TextLayout::Metrics TextLayout::measure(const SceneObject &o) {
     // wrap, so shrinking it has to watch its width too.
     const auto fits = [&o](qreal size) {
         const auto room = contentSize(o, size);
-        return room.height() <= o.rect.height() &&
+        return room.height() - FontSwap::verticalFix(o, size).shift <= o.rect.height() &&
                (!maths(o) || room.width() <= o.rect.width());
     };
     if (o.textFit == 1 && !fits(o.fontSize)) {
