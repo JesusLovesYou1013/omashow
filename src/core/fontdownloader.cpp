@@ -159,11 +159,10 @@ bool FontDownloader::loadFamily(const QString &family) {
     QDirIterator it(familyDir(family), {QStringLiteral("*.ttf"), QStringLiteral("*.otf")}, QDir::Files);
     bool any = false;
     while (it.hasNext()) {
-        const int id = QFontDatabase::addApplicationFont(it.next());
-        if (id < 0 || QFontDatabase::applicationFontFamilies(id).isEmpty()) return false;
+        if (FontSandbox::loadFile(it.next(), folderName(family)).isEmpty()) return false;
         any = true;
     }
-    return any;
+    return any && FontSandbox::available(family);
 }
 
 bool FontDownloader::add(const QStringList &families, bool front) {
@@ -189,7 +188,7 @@ bool FontDownloader::add(const QStringList &families, bool front) {
         if (m_installed.contains(family) || m_failed.contains(family)) { m_failed.remove(family); }
         const auto sources = sourcesOf(family);
         if (sources.isEmpty()) { m_failed.insert(family, tr("no download is listed for it")); emit familyFailed(family, m_failed.value(family).toString(), false); continue; }
-        if (complete(family) && (QFontDatabase::hasFamily(family) || loadFamily(family))) {
+        if (complete(family) && (FontSandbox::available(family) || loadFamily(family))) {
             // Complete on disk (an earlier run, or another OmaShow): just use it.
             if (!m_installed.contains(family)) m_installed.append(family);
             QTimer::singleShot(0, this, [this, family] { emit familyReady(family); });
@@ -332,7 +331,7 @@ void FontDownloader::settle(const QString &family) {
         return;
         }
     }
-    if (!QFontDatabase::hasFamily(family) && !loadFamily(family)) {
+    if (!FontSandbox::available(family) && !loadFamily(family)) {
         QDir(target).removeRecursively();   // ours, verified yet unusable: not kept
         m_failed.insert(family, tr("not a usable font"));
         emit familyFailed(family, m_failed.value(family).toString(), false);

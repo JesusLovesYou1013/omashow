@@ -1,3 +1,4 @@
+#include "core/fontsandbox.h"
 #include "core/fontswap.h"
 #include "core/fontdownloader.h"
 
@@ -71,7 +72,7 @@ const QHash<QString, Entry> &table() {
     return loaded;
 }
 
-bool installed(const QString &family) { return !family.isEmpty() && QFontDatabase::hasFamily(family); }
+bool installed(const QString &family) { return FontSandbox::available(family); }
 
 // Sizes written back must be the ones read: a size untouched since the swap
 // is restored from what was stored, not divided back with rounding.
