@@ -2,7 +2,10 @@
 // is worth installing, and installing it once the person has said yes.
 #include "backend.h"
 #include "core/fontswap.h"
+#include "core/fontsandbox.h"
 
+#include <QCryptographicHash>
+#include <QDesktopServices>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -15,6 +18,7 @@
 #include <QRegularExpression>
 #include <QSettings>
 #include <QStandardPaths>
+#include <QUrl>
 #include <QUrlQuery>
 #include <functional>
 #include <memory>
@@ -25,10 +29,9 @@ QString fontSettingsPath() {
     return QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation) + "/view.ini";
 }
 
-// The person's own font folder: fontconfig reads it, nothing system-wide.
-QString userFontDir() {
-    return QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) + "/fonts/omashow";
-}
+// OmaShow's own font folder (FONT-CHECK-1): fontconfig does not read it, so
+// fonts put there reach OmaShow only, never the rest of the system.
+QString userFontDir() { return FontSandbox::dir(); }
 
 QString installMode() {
     const auto mode = qEnvironmentVariable("OMASHOW_FONT_INSTALL").trimmed().toLower();
@@ -88,6 +91,41 @@ QVariantList Backend::fontSwaps() const { return FontSwap::swapped(m_document); 
 QVariantList Backend::fontsToInstall() const { return FontSwap::needed(m_document); }
 QVariantList Backend::fontPack() const { return FontSwap::pack(); }
 QString Backend::fontInstallMode() const { return installMode(); }
+QString Backend::fontSandboxDir() const { return FontSandbox::dir(); }
+
+// FONT-CHECK-1: the font check on opening a deck, hidden per document.
+namespace {
+QString fontCheckKey(const QString &source) {
+    return QStringLiteral("fontCheckHidden/") + QString::fromLatin1(QCryptographicHash::hash(QFileInfo(source).absoluteFilePath().toUtf8(), QCryptographicHash::Sha1).toHex());
+}
+}
+bool Backend::fontCheckHidden(const QString &source) const {
+    if (source.isEmpty()) return false;
+    QSettings settings(fontSettingsPath(), QSettings::IniFormat);
+    return settings.value(fontCheckKey(source), false).toBool();
+}
+void Backend::setFontCheckHidden(const QString &source, bool hidden) {
+    if (source.isEmpty()) return;
+    QSettings settings(fontSettingsPath(), QSettings::IniFormat);
+    if (hidden) settings.setValue(fontCheckKey(source), true); else settings.remove(fontCheckKey(source));
+    settings.sync();
+}
+bool Backend::openFontSandbox() {
+    const auto dir = FontSandbox::dir();
+    // Made only when asked for: opening the folder is the one thing that creates it.
+    if (!QDir().mkpath(dir)) return false;
+    return QDesktopServices::openUrl(QUrl::fromLocalFile(dir));
+}
+int Backend::reloadFontSandbox() {
+    const int added = FontSandbox::load();
+    if (added > 0 && !qEnvironmentVariableIsSet("OMASHOW_NO_FONT_SWAP")) {
+        m_history.begin(m_document, tr("Use installed free fonts"));
+        const auto report = FontSwap::apply(m_document);
+        if (report.changed) { m_history.commit(); touch(); } else m_history.abandon();
+    }
+    emit importReportChanged();
+    return added;
+}
 
 bool Backend::extraFontsPack() const {
     QSettings settings(fontSettingsPath(), QSettings::IniFormat);
@@ -227,7 +265,6 @@ bool Backend::installFonts(const QVariantList &rows) {
     QPointer<Backend> self(this);
     chain->finished = [self, installed, failed, dir] {
         if (!self) return;
-        if (QFileInfo::exists(dir)) QProcess::startDetached(QStringLiteral("fc-cache"), {QStringLiteral("-f"), dir});
         self->fontInstallDone(failed->isEmpty(), *installed, *failed);
     };
     setStatus(tr("Installing %1…").arg(families.join(QStringLiteral(", "))));

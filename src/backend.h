@@ -156,6 +156,12 @@ public:
     Q_INVOKABLE QVariantList fontsToInstall() const;
     Q_INVOKABLE QVariantList fontPack() const;
     Q_INVOKABLE QString fontInstallMode() const;
+    // FONT-CHECK-1: OmaShow's own font folder and the per-document font check.
+    Q_INVOKABLE QString fontSandboxDir() const;
+    Q_INVOKABLE bool fontCheckHidden(const QString &source) const;
+    Q_INVOKABLE void setFontCheckHidden(const QString &source, bool hidden);
+    Q_INVOKABLE bool openFontSandbox();
+    Q_INVOKABLE int reloadFontSandbox();
     Q_INVOKABLE bool installFonts(const QVariantList &rows);
     bool extraFontsPack() const;
     void setExtraFontsPack(bool on);
