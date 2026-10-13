@@ -72,6 +72,9 @@ Result fromBytes(const QByteArray &raw, Kind kind) {
         result.ok = read.ok;
         result.error = read.error;
         result.document = read.document;
+        // FONT-CHECK-2: a saved deck naming Office fonts (or a fallback from
+        // another computer) gets this computer's best free match too.
+        if (result.ok && !qEnvironmentVariableIsSet("OMASHOW_NO_FONT_SWAP")) FontSwap::apply(result.document);
     } else if (kind == PowerPoint) {
         const auto read = Pptx::read(raw);
         result.ok = read.ok;
