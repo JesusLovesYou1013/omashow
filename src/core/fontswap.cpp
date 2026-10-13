@@ -587,7 +587,7 @@ const FontSwap::Option *FontSwap::fallback(const QString &officeFamily) {
     if (const auto it = measured.constFind(key); it != measured.cend()) return it->get();
     std::shared_ptr<Option> result;
     const auto entry = table().constFind(key);
-    if (entry != table().cend() && entry->xHeight > 0 && entry->sentence > 0) {
+    if (entry != table().cend() && entry->sentence > 0) {
         // fontconfig's choice for the generic class of the Office family.
         const QChar kind = entry->kind;
         QFont probe(kind == QLatin1Char('m') ? QStringLiteral("monospace")
@@ -597,29 +597,30 @@ const FontSwap::Option *FontSwap::fallback(const QString &officeFamily) {
         probe.setStyleHint(kind == QLatin1Char('m') ? QFont::Monospace : kind == QLatin1Char('r') ? QFont::Serif
                            : kind == QLatin1Char('h') ? QFont::Cursive : QFont::SansSerif);
         const QString family = QFontInfo(probe).family();
-        if (!family.isEmpty() && installed(family)) {
+        if (!family.isEmpty() && installed(family)) do {
             QFont font(family);
             font.setPixelSize(1000);
             if (entry->weight) font.setWeight(QFont::Weight(entry->weight));
             const QFontMetricsF m(font);
             const qreal width = m.horizontalAdvance(kSentence) / 1000;
+            if (width <= 0) break;
             // Sized by width (Daniel): the fallback sets the same sentence
             // as wide as the Office font, so lines break where PowerPoint's do.
-            // A weighted advance over a representative sample (map "xm"[2]).
+            // The advance of the map's measuring sentence (map "xm"[2]).
             const qreal sameSize = width / entry->sentence;
-            qreal size = width > 0 ? entry->sentence / width : 1;
+            qreal size = entry->sentence / width;
             size = qBound<qreal>(0.6, size, 1.6);
             result = std::make_shared<Option>();
             result->family = family;
             result->fallback = true;
-            // Within 1.5%: drawn at the Office size.
-            const bool sameWidth = std::abs(sameSize - 1) <= 0.015;
+            // Within 0.3%: drawn at the Office size.
+            const bool sameWidth = std::abs(sameSize - 1) <= 0.003;
             result->size = sameWidth ? 1.0 : std::round(size * 1000) / 1000;
             result->width = sameSize * result->size;
             const qreal free = (m.ascent() + m.descent() + qMax<qreal>(0, m.leading())) / 1000;
             if (entry->ascent > 0 && free > 0)
                 result->line = (entry->ascent + entry->descent + entry->gap) / (result->size * free);
-        }
+        } while (false);
     }
     measured.insert(key, result);
     return result.get();
