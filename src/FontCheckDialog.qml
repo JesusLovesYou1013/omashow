@@ -36,7 +36,8 @@ Sheet {
         if (backend.fontAutoDownload) { backend.downloadFonts(fetchable.map(r => r.family)); return }
         if (backend.fontCheckHidden(src)) return
         source = src; rows = needed
-        phase = "offer"; failed = {}; details = false; hideAgain.checked = false
+        // A short list is shown at once (each free font and the Office font it replaces).
+        phase = "offer"; failed = {}; details = needed.length <= 4; hideAgain.checked = false
         open()
     }
     function download(families) {
