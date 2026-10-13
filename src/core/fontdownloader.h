@@ -5,8 +5,12 @@
 // google/fonts at one pinned commit, each with its size and sha256, checked
 // before anything parses the file. A family is built in <sandbox>.staging/
 // <Family>/ and moved into the sandbox with one directory rename once every
-// file is verified, so a family folder in the sandbox always means complete
-// (and nothing half-made is ever in the folder other apps may share).
+// file is verified (and nothing half-made is ever in the folder other apps may
+// share). Each OmaShow process stages under its own <pid>/ there, and only
+// leftovers of dead processes are cleaned. "Complete" is checked, not
+// assumed: every listed file present at its listed size. A same-named folder
+// that isn't (FONT-CHECK-2 left empty ones; or one filled by hand) is moved
+// aside to <sandbox>.set-aside/, never deleted.
 //
 // One queue for everything (a deck's fonts and the Extra fonts pack); a deck
 // can move its families to the front. Four files at a time; a file that sends
@@ -36,8 +40,10 @@ public:
 
     static bool downloadable(const QString &family);
     static qint64 bytesFor(const QStringList &families);
-    // Its folder is in the sandbox (complete by construction).
+    // Every listed file is in its sandbox folder at its listed size.
     static bool complete(const QString &family);
+    // The reason given to a family dropped or cancelled (not a failure).
+    static QString cancelledReason();
 
     bool running() const { return m_running; }
     // Queue these families (front: ahead of everything queued, also moving
@@ -72,5 +78,7 @@ private:
     QStringList m_installed;
     QVariantMap m_failed;
     int m_networkFails = 0;
+    QTimer *m_progressTick = nullptr;   // progress at most 4 times a second
+    void tick();
     bool m_running = false, m_cancelled = false, m_allNetwork = true;
 };
