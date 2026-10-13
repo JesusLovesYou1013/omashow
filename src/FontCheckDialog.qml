@@ -59,15 +59,10 @@ Sheet {
     function check(src, needed) {
         // The deck waits (backend.fontGate) until this resolves: every way out
         // ends in backend.finishFontGate(), which displays it already correct.
+        // backend.gateOpen has already taken every exit without a popup
+        // (pack on, always-download, hidden for this deck, nothing to fetch).
         const fetchable = needed.filter(r => r.downloadable)
         if (!src || fetchable.length === 0) { backend.finishFontGate(); return }
-        // Pack on (Daniel): never this popup. Its fonts come with the pack,
-        // ahead of the rest if it is still running; nothing to do if complete.
-        if (backend.fontAutoDownload || backend.extraFontsPack) {
-            if (!backend.downloadFonts(fetchable.map(r => r.family))) backend.finishFontGate()
-            return
-        }
-        if (backend.fontCheckHidden(src)) { backend.finishFontGate(); return }
         if (visible && mode === "pack") { heldDeck = { source: src, rows: needed }; return }   // shown when the pack view closes
         mode = "deck"; source = src; rows = needed
         // A short list is shown at once (each free font and the Office font it replaces).

@@ -326,6 +326,7 @@ void Backend::gateOpen(Gate gate) {
   }
   m_gate = gate;
   m_gate.active = true;
+  m_gate.id = ++m_gateIds;
   m_gate.silent = silent;
   setStatus(tr("Checking fonts for %1…").arg(QFileInfo(gate.source).fileName()));
   emit fontGateChanged();
