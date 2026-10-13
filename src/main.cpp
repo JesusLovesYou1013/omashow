@@ -152,6 +152,11 @@ int captureInterface(QQmlApplicationEngine &engine, Backend &backend, Presenter 
             backend.setExtraFontsPack(true);
             QMetaObject::invokeMethod(check, "showPack");
             settle(400);
+            {   // every pack family usable under its map name (aliases included)
+                QStringList missing;
+                for (const auto &r : backend.fontPack()) { const auto f = r.toMap().value("family").toString(); if (!FontSandbox::available(f)) missing << f; }
+                qInfo().noquote() << "ui-shot fontcheck: pack families not usable" << missing.size() << missing.join(QLatin1Char(','));
+            }
             qInfo().noquote() << "ui-shot fontcheck: pack" << backend.packReady() << "of" << backend.packTotal() << "ready," << qRound(backend.packBytes() / 1048576) << "MB";
             save(window, QStringLiteral("pack-offer"));
             QElapsedTimer clock; clock.start();
