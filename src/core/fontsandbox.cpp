@@ -41,8 +41,13 @@ QStringList FontSandbox::loadFile(const QString &path, const QString &folder) {
     // ("Fjord One" -> "Fjord"): text set in the map's name draws with it.
     // Done here, on the loading (main) thread, never from a lookup.
     const QString mapName = FontDownloader::familyForFolder(folder);
-    if (!mapName.isEmpty() && !families.contains(mapName, Qt::CaseInsensitive) && QFont::substitute(mapName) == mapName)
+    // The Regular file decides (Nanum Gothic's ExtraBold file declares
+    // "NanumGothic ExtraBold"); any file only until the Regular one loads.
+    const bool regular = QFileInfo(path).completeBaseName().contains(QLatin1String("Regular"), Qt::CaseInsensitive);
+    if (!mapName.isEmpty() && !families.contains(mapName, Qt::CaseInsensitive) && (regular || QFont::substitute(mapName) == mapName)) {
+        QFont::removeSubstitutions(mapName);
         QFont::insertSubstitution(mapName, families.first());
+    }
     return families;
 }
 

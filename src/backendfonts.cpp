@@ -222,7 +222,11 @@ void Backend::finishDeck() {
     emit fontDownloadChanged();
     emit fontDownloadFinished(installed, failed, offline, cancelled);
     // A deck held for a silent download is shown now, with whatever came.
-    if (m_gate.active && m_gate.silent) QMetaObject::invokeMethod(this, &Backend::finishFontGate, Qt::QueuedConnection);
+    // (only the deck that was waiting: never a newer one)
+    if (m_gate.active && m_gate.silent) {
+        const int id = m_gate.id;
+        QMetaObject::invokeMethod(this, [this, id] { if (m_gate.active && m_gate.id == id) finishFontGate(); }, Qt::QueuedConnection);
+    }
 }
 
 // Each group ends when its last family is in (or failed).

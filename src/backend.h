@@ -858,8 +858,10 @@ private:
         QString source, kind, original;
         QStringList warnings;
         bool foreign = false, recovery = false, silent = false;
+        int id = 0;
     } m_gate;
-    bool m_gateHandled = false;   // the opening deck's check is done: no second popup
+    bool m_gateHandled = false;
+    int m_gateIds = 0;   // the opening deck's check is done: no second popup
     // Every open comes through here: held behind the font check if needed.
     void gateOpen(Gate gate);
     void completeOpen(const Gate &gate);
