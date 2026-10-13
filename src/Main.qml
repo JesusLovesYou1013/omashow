@@ -407,6 +407,9 @@ ApplicationWindow {
         { id: "ribbonSnap", tab: "view", group: "guides", kind: "toggle", label: qsTr("Snap to guides"), also: "align magnet", checked: () => backend.snapEnabled, run: () => backend.snapEnabled = !backend.snapEnabled },
         { id: "reducedMotionItem", tab: "view", group: "access", kind: "toggle", label: qsTr("Less movement"), also: "reduced motion animation accessibility vestibular allow movement again", checked: () => backend.reducedMotion, run: () => backend.reducedMotion = !backend.reducedMotion },
         { id: "highContrastItem", tab: "view", group: "access", kind: "toggle", label: qsTr("Stronger contrast"), also: "high contrast accessibility legible ordinary", checked: () => backend.highContrast, run: () => backend.highContrast = !backend.highContrast },
+        { id: "extraFontsPackItem", tab: "view", group: "fonts", kind: "toggle", label: qsTr("Extra fonts pack"), also: "office windows fonts free matches download pack calibri aptos cambria",
+          tip: qsTr("Free look-alikes for every Office font, in OmaShow's own font folder (%1 of %2 ready)").arg(backend.packReady).arg(backend.packTotal), checked: () => backend.extraFontsPack,
+          run: () => { backend.extraFontsPack = !backend.extraFontsPack; if (backend.extraFontsPack) fontCheckDialog.showPack() } },
         { id: "fontAutoDownloadItem", tab: "view", group: "fonts", kind: "toggle", label: qsTr("Always download missing free fonts"), also: "office windows fonts free matches download calibri aptos cambria automatic",
           tip: qsTr("When a presentation uses Office fonts, fetch their free look-alikes without asking (only OmaShow uses them)"), checked: () => backend.fontAutoDownload,
           run: () => { backend.fontAutoDownload = !backend.fontAutoDownload } },
@@ -1524,6 +1527,13 @@ ApplicationWindow {
                     // What just happened, for anything reading the window aloud.
                     Accessible.role: Accessible.StaticText
                     Accessible.name: text
+                    // The pack's progress lives here; a click opens it.
+                    MouseArea {
+                        anchors.fill: parent
+                        enabled: backend.packRunning || parent.text.startsWith(qsTr("Extra fonts pack"))
+                        cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                        onClicked: fontCheckDialog.showPack()
+                    }
                 }
                 StatusText { visible: showGuard.engaged; text: showGuard.state; color: Theme.success }
 
