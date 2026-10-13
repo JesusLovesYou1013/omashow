@@ -169,7 +169,7 @@ QString columnLetters(int index) {
 namespace Embed {
 
 struct Face { QString file; QByteArray data; };
-struct Family { QString name; Face styles[4]; }; // regular, bold, italic, bold italic
+struct Family { QString name; Face styles[4]; QString refused; }; // regular, bold, italic, bold italic; why not carried
 
 quint16 be16(const QByteArray &d, int at) { return at + 2 <= d.size() ? quint16((uchar(d[at]) << 8) | uchar(d[at + 1])) : 0; }
 quint32 be32(const QByteArray &d, int at) { return (quint32(be16(d, at)) << 16) | be16(d, at + 2); }
@@ -188,23 +188,31 @@ int table(const QByteArray &d, const char *tag) {
     return -1;
 }
 
-// TrueType outlines, not a collection, and fsType neither "restricted" (2) nor "no subsetting/bitmap only" (0x200).
-bool embeddable(const QByteArray &d) {
-    if (d.size() < 12 || be32(d, 0) != 0x00010000u) return false;
-    if (table(d, "glyf") < 0 || table(d, "head") < 0 || table(d, "name") < 0) return false;
+// Why a font file cannot be carried, or empty when it can: static TrueType
+// outlines (no collection, no variable font, which would arrive without a
+// real bold), and a licence that allows editable embedding. Preview-and-print
+// (fsType 4) would make PowerPoint open the deck read-only, so it is refused too.
+QString refusal(const QByteArray &d) {
+    if (d.size() < 12 || be32(d, 0) != 0x00010000u) return QStringLiteral("not plain TrueType");
+    if (table(d, "glyf") < 0 || table(d, "head") < 0 || table(d, "name") < 0) return QStringLiteral("not plain TrueType");
+    if (table(d, "fvar") >= 0) return QStringLiteral("a variable font");
     const int os2 = table(d, "OS/2");
-    if (os2 < 0) return false;
+    if (os2 < 0) return QStringLiteral("not plain TrueType");
     const quint16 fsType = be16(d, os2 + 8);
-    return !(fsType & 0x0002) && !(fsType & 0x0200);
+    if ((fsType & 0x0002) || (fsType & 0x0200)) return QStringLiteral("its licence does not allow embedding");
+    if ((fsType & 0x000E) == 0x0004) return QStringLiteral("its licence allows only preview and print");
+    return QString();
 }
 
 // A name (1 family, 2 style, 4 full, 5 version) in UTF-16LE, Windows Unicode record.
 QByteArray name(const QByteArray &d, int id) {
     const int t = table(d, "name");
     const int count = be16(d, t + 2), strings = t + be16(d, t + 4);
+    // US English first, so the EOT's family matches the typeface the slides name.
+    for (int pass = 0; pass < 2; ++pass)
     for (int i = 0; i < count; ++i) {
         const int r = t + 6 + 12 * i;
-        if (be16(d, r) == 3 && be16(d, r + 2) == 1 && be16(d, r + 6) == id) {
+        if (be16(d, r) == 3 && be16(d, r + 2) == 1 && be16(d, r + 6) == id && (pass || be16(d, r + 4) == 0x409)) {
             QByteArray s = d.mid(strings + be16(d, r + 10), be16(d, r + 8));
             for (int k = 0; k + 1 < s.size(); k += 2) std::swap(s[k], s[k + 1]);
             return s;
@@ -255,12 +263,18 @@ Family find(const QString &family) {
     Family out{family, {}};
     if (family.isEmpty() || shipsWithOffice(family)) return out;
     QProcess fc;
-    fc.start(QStringLiteral("fc-list"), {QStringLiteral(":family=%1").arg(family), QStringLiteral("file"), QStringLiteral("weight"), QStringLiteral("slant")},
+    // Escape what fontconfig patterns treat specially (a hyphen starts the size).
+    QString escaped;
+    for (const QChar c : family) { if (c == QLatin1Char('-') || c == QLatin1Char(':') || c == QLatin1Char(',') || c == QLatin1Char('\\')) escaped += QLatin1Char('\\'); escaped += c; }
+    fc.start(QStringLiteral("fc-list"), {QStringLiteral(":family=%1").arg(escaped), QStringLiteral("file"), QStringLiteral("weight"), QStringLiteral("slant")},
              QIODevice::ReadOnly);
     if (!fc.waitForFinished(5000)) return out;
     // "/path/X.ttf: :weight=200:slant=0" -- weight 80 regular, 200 bold; slant 0 upright.
     static const QRegularExpression line(QStringLiteral("^(.*): :?(?:slant=(\\d+):)?weight=(\\d+)(?::slant=(\\d+))?"), QRegularExpression::MultilineOption);
-    for (auto it = line.globalMatch(QString::fromUtf8(fc.readAllStandardOutput())); it.hasNext();) {
+    static const QRegularExpression range(QStringLiteral("weight=\\["));
+    const QString listing = QString::fromUtf8(fc.readAllStandardOutput());
+    if (range.match(listing).hasMatch()) out.refused = QStringLiteral("a variable font");
+    for (auto it = line.globalMatch(listing); it.hasNext();) {
         const auto m = it.next();
         const QString file = m.captured(1);
         const int weight = m.captured(3).toInt();
@@ -271,7 +285,8 @@ Family find(const QString &family) {
         QFile f(file);
         if (!f.open(QIODevice::ReadOnly)) continue;
         const QByteArray data = f.readAll();
-        if (!embeddable(data)) continue;
+        const QString why = refusal(data);
+        if (!why.isEmpty()) { out.refused = why; continue; }
         out.styles[slot] = {file, data};
     }
     return out;
@@ -295,6 +310,7 @@ struct Writer {
     QHash<QString, QString> mediaByIdentity;
     int mediaCount = 0, chartCount = 0, commentCount = 0;
     QStringList embedded;    // families carried inside the deck
+    QStringList notCarried;  // "Family (why)" for installed families that could not be
 
     explicit Writer(const Document &document) : doc(document) {
         e = 12192000.0 / qMax(1.0, doc.size.width());
@@ -1827,9 +1843,18 @@ struct Writer {
         {
             static const char *slotTag[4] = {"p:regular", "p:bold", "p:italic", "p:boldItalic"};
             QVector<Embed::Family> carried;
+            qint64 budget = 20 * 1024 * 1024;   // whole files are carried; keep decks mailable
             for (const auto &family : Fonts::families(doc).keys()) {
                 auto f = Embed::find(family);
-                if (!f.styles[0].file.isEmpty() || !f.styles[1].file.isEmpty()) carried.append(f);
+                qint64 size = 0;
+                for (const auto &face : f.styles) size += face.data.size();
+                if (f.styles[0].file.isEmpty() && f.styles[1].file.isEmpty()) {
+                    if (!f.refused.isEmpty()) notCarried.append(QStringLiteral("%1 (%2)").arg(family, f.refused));
+                    continue;
+                }
+                if (size > budget) { notCarried.append(QStringLiteral("%1 (too large to carry)").arg(family)); continue; }
+                budget -= size;
+                carried.append(f);
             }
             if (!carried.isEmpty()) {
                 x.start("p:embeddedFontLst");
@@ -1915,18 +1940,17 @@ QByteArray bytes(const Document &document, QStringList *warnings, const std::sha
     Writer writer(document);
     writer.job = job;
     const auto out = writer.run();
-    if (warnings) {
-        *warnings = writer.warnings.lines();
-        for (const auto &f : writer.embedded) warnings->append(QStringLiteral("embedded:") + f);
-    }
+    if (warnings) *warnings = writer.warnings.lines();
     return out;
 }
 
 Report write(const Document &document, const QString &path, const std::shared_ptr<Workers::Job> &job) {
     Report report;
     if (document.slides.isEmpty()) { report.error = QStringLiteral("The deck has no slides to write."); return report; }
-    QStringList warnings;
-    const auto data = bytes(document, &warnings, job);
+    Writer writer(document);
+    writer.job = job;
+    const auto data = writer.run();
+    const QStringList warnings = writer.warnings.lines();
     if (job && job->canceled) { report.error = QStringLiteral("Cancelled."); return report; }
     if (data.isEmpty()) { report.error = QStringLiteral("The deck could not be written as PowerPoint."); return report; }
     QSaveFile file(path);
@@ -1941,11 +1965,14 @@ Report write(const Document &document, const QString &path, const std::shared_pt
     // The deck names its typefaces and cannot carry them: say which, so the
     // person it goes to can be told.
     QStringList needed;
-    for (const auto &family : Fonts::families(document).keys())
-        if (!warnings.contains(QStringLiteral("embedded:") + family) && !Embed::shipsWithOffice(family)) needed.append(family);
-    for (const auto &w : warnings) if (w.startsWith(QLatin1String("embedded:"))) report.lines.removeAll(w);
-    QStringList carried;
-    for (const auto &w : warnings) if (w.startsWith(QLatin1String("embedded:"))) carried.append(w.mid(9));
+    for (const auto &family : Fonts::families(document).keys()) {
+        if (writer.embedded.contains(family) || Embed::shipsWithOffice(family)) continue;
+        bool refused = false;
+        for (const auto &n : writer.notCarried) refused |= n.startsWith(family + QLatin1String(" ("));
+        if (!refused) needed.append(family);
+    }
+    const QStringList &carried = writer.embedded;
+    if (!writer.notCarried.isEmpty()) report.lines.append(QStringLiteral("Could not carry the typefaces %1; anyone opening it needs them installed.").arg(writer.notCarried.join(QStringLiteral(", "))));
     if (!carried.isEmpty()) report.lines.append(QStringLiteral("Carries the typefaces %1 inside the deck.").arg(carried.join(QStringLiteral(", "))));
     if (!needed.isEmpty()) report.lines.append(QStringLiteral("It asks for the typefaces %1, which are not installed here to carry; anyone opening it needs them installed to see it as designed.").arg(needed.join(QStringLiteral(", "))));
     return report;
