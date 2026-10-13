@@ -224,6 +224,9 @@ struct DeckTheme {
     // Theme font slot → the Office family it named before a free match stood
     // in for it on PowerPoint import.
     QMap<QString, QString> fontOrigins;
+    // Office family → the installed fallback that stood in for it (no mapped
+    // free match was installed), so saving knows it was not chosen by hand.
+    QMap<QString, QString> fontFallbacks;
 };
 
 struct MasterFields {

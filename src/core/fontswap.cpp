@@ -8,7 +8,10 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QFontInfo>
 #include <QMap>
+#include <QMutex>
+#include <memory>
 #include <QVariantMap>
 #include <cmath>
 
@@ -17,7 +20,9 @@ namespace {
 struct Entry {
     QString name;                  // as the table spells it
     int weight = 0;
-    qreal ascent = -1, descent = 0, gap = 0;   // em, as Qt would read the Office font
+    qreal ascent = -1, descent = 0, gap = 0;   // em, as PowerPoint lays the Office font out
+    qreal xHeight = 0, capHeight = 0, sentence = 0;   // em; sentence: width of kSentence
+    QChar kind = QLatin1Char('s');           // s sans, r serif, m mono, h script, d decorative
     QVector<FontSwap::Option> options;
 };
 
@@ -32,6 +37,10 @@ const QHash<QString, Entry> &table() {
             Entry e;
             e.name = it.key();
             e.weight = json.value(QStringLiteral("wt")).toInt();
+            if (const auto xm = json.value(QStringLiteral("xm")).toArray(); xm.size() == 3) {
+                e.xHeight = xm[0].toDouble(); e.capHeight = xm[1].toDouble(); e.sentence = xm[2].toDouble();
+            }
+            if (const auto c = json.value(QStringLiteral("c")).toString(); c.size() == 1) e.kind = c.at(0);
             if (const auto va = json.value(QStringLiteral("va")).toArray(); va.size() == 3 && va[0].toDouble() > 0) {
                 e.ascent = va[0].toDouble(); e.descent = va[1].toDouble(); e.gap = va[2].toDouble();
             }
@@ -76,10 +85,24 @@ qreal unscale(qreal now, qreal before, qreal scale, qreal ptPerUnit) {
 
 // Whether a family is still the free match that stood in for an Office
 // family, rather than one chosen since.
-bool stillSwapped(const QString &office, const QString &family) {
+// fallbacks: the deck's record of fallbacks used (theme.fontFallbacks).
+bool stillSwapped(const QString &office, const QString &family, const QMap<QString, QString> *fallbacks = nullptr) {
     for (const auto &option : FontSwap::options(office))
         if (option.family.compare(family, Qt::CaseInsensitive) == 0) return true;
-    return false;
+    if (fallbacks) return fallbacks->value(office).compare(family, Qt::CaseInsensitive) == 0 && !family.isEmpty();
+    // Drawing (no deck at hand): the fallback this computer would pick.
+    const auto *fb = FontSwap::fallback(office);
+    return fb && fb->family.compare(family, Qt::CaseInsensitive) == 0;
+}
+
+// The option (table or fallback) a family stands in with, or null.
+const FontSwap::Option *optionFor(const QString &office, const QString &family) {
+    const auto entry = table().constFind(office.toLower());
+    if (entry != table().cend())
+        for (const auto &option : entry->options)
+            if (option.family.compare(family, Qt::CaseInsensitive) == 0) return &option;
+    const auto *fb = FontSwap::fallback(office);
+    return fb && fb->family.compare(family, Qt::CaseInsensitive) == 0 ? fb : nullptr;
 }
 
 template <typename F>
@@ -99,8 +122,7 @@ QVariantList tallyList(const Tally &tally) {
     for (auto it = tally.cbegin(); it != tally.cend(); ++it)
         for (auto f = it->cbegin(); f != it->cend(); ++f) {
             bool metric = false; qreal size = 1;
-            for (const auto &o : FontSwap::options(it.key()))
-                if (o.family == f.key()) { metric = o.metric; size = o.size; break; }
+            if (const auto *o = optionFor(it.key(), f.key())) { metric = o->metric; size = o->size; }
             rows.append(QVariantMap{{QStringLiteral("office"), it.key()}, {QStringLiteral("free"), f.key()},
                                     {QStringLiteral("metric"), metric}, {QStringLiteral("size"), metric ? 1.0 : size},
                                     {QStringLiteral("uses"), f.value()}});
@@ -112,6 +134,7 @@ class Swapper {
 public:
     FontSwap::Report report;
     Tally tally;
+    QMap<QString, QString> *fallbacks = nullptr;   // the deck's record of fallbacks used
 
     const FontSwap::Option *pick(const QString &family) {
         if (family.isEmpty()) return nullptr;
@@ -124,6 +147,8 @@ public:
             if (entry != table().cend())
                 for (const auto &option : entry->options)
                     if (installed(option.family)) { chosen = &option; break; }
+            // None installed: an installed fallback, sized to match.
+            if (!chosen && entry != table().cend()) chosen = FontSwap::fallback(family);
         }
         cache.insert(key, chosen);
         return chosen;
@@ -138,12 +163,26 @@ public:
         int now = -1;
         for (int i = 0; i < entry->options.size(); ++i)
             if (entry->options[i].family.compare(current, Qt::CaseInsensitive) == 0) now = i;
+        // A fallback stands in: any table match installed since is better.
+        if (now < 0 && fallbacks && fallbacks->value(entry->name).compare(current, Qt::CaseInsensitive) == 0) now = entry->options.size();
         if (now <= 0) return nullptr;   // the best already, or chosen by hand since
         for (int i = 0; i < now; ++i)
             if (installed(entry->options[i].family)) return &entry->options[i];
         return nullptr;
     }
-    void count(const QString &office, const QString &free) { ++tally[office][free]; ++report.changed; }
+    void count(const QString &office, const QString &free) {
+        ++tally[office][free]; ++report.changed;
+        if (fallbacks) {
+            const auto *fb = FontSwap::fallback(office);
+            // Only when no table match is what stands in (a fallback can be
+            // the same family as some other Office font's table match).
+            const auto entry = table().constFind(office.toLower());
+            bool tableMatch = false;
+            if (entry != table().cend())
+                for (const auto &option : entry->options) tableMatch |= option.family.compare(free, Qt::CaseInsensitive) == 0;
+            if (fb && fb->family == free && entry != table().cend() && !tableMatch) fallbacks->insert(entry->name, free);
+        }
+    }
 
     void object(SceneObject &o) {
         // The box's size as the deck had it, before any factor of ours.
@@ -343,6 +382,7 @@ QString FontSwap::officeFor(const QString &freeFamily) {
 
 FontSwap::Report FontSwap::apply(Document &document) {
     Swapper swapper;
+    swapper.fallbacks = &document.theme.fontFallbacks;
     eachObject(document, [&](SceneObject &o) { swapper.object(o); });
     for (auto it = document.theme.fonts.begin(); it != document.theme.fonts.end(); ++it) {
         if (document.theme.fontOrigins.contains(it.key())) {
@@ -362,9 +402,10 @@ FontSwap::Report FontSwap::apply(Document &document) {
 
 void FontSwap::revert(Document &document) {
     const qreal ptPerUnit = 960.0 / qMax<qreal>(1.0, document.size.width());
-    eachObject(document, [ptPerUnit](SceneObject &o) {
+    const auto *fallbacks = &document.theme.fontFallbacks;
+    eachObject(document, [ptPerUnit, fallbacks](SceneObject &o) {
         bool boxSwapped = false;
-        if (!o.origFont.isEmpty() && stillSwapped(o.origFont, o.fontFamily)) {
+        if (!o.origFont.isEmpty() && stillSwapped(o.origFont, o.fontFamily, fallbacks)) {
             boxSwapped = true;
             if (!qFuzzyCompare(o.fontScale, 1.0)) o.fontSize = unscale(o.fontSize, o.origFontSize, o.fontScale, ptPerUnit);
             if (o.origWeight && o.fontWeight == namedWeight(o.origFont)) o.fontWeight = o.origWeight;
@@ -374,7 +415,7 @@ void FontSwap::revert(Document &document) {
         }
         for (auto &run : o.runs) {
             if (!run.fontFamily.isEmpty()) {
-                if (!run.origFont.isEmpty() && stillSwapped(run.origFont, run.fontFamily)) {
+                if (!run.origFont.isEmpty() && stillSwapped(run.origFont, run.fontFamily, fallbacks)) {
                     if (!qFuzzyCompare(run.fontScale, 1.0)) {
                         if (run.origFontSize > 0) run.fontSize = unscale(run.fontSize, run.origFontSize, run.fontScale, ptPerUnit);
                         else if (same(run.fontSize, o.fontSize * run.fontScale)) run.fontSize = 0;   // took the box's
@@ -394,7 +435,7 @@ void FontSwap::revert(Document &document) {
             auto &style = cell.style;
             const auto family = style.value(QStringLiteral("fontFamily")).toString();
             const auto office = style.value(QStringLiteral("origFont")).toString();
-            if (!office.isEmpty() && stillSwapped(office, family)) {
+            if (!office.isEmpty() && stillSwapped(office, family, fallbacks)) {
                 if (style.contains(QStringLiteral("fontScale"))) {
                     const qreal scale = style.value(QStringLiteral("fontScale")).toDouble();
                     const qreal now = style.value(QStringLiteral("fontSize")).toDouble();
@@ -416,10 +457,11 @@ void FontSwap::revert(Document &document) {
     auto &theme = document.theme;
     for (auto it = theme.fonts.begin(); it != theme.fonts.end(); ++it) {
         const auto office = theme.fontOrigins.value(it.key());
-        if (!office.isEmpty() && stillSwapped(office, it.value())) it.value() = office;
+        if (!office.isEmpty() && stillSwapped(office, it.value(), &document.theme.fontFallbacks)) it.value() = office;
         else if (const auto back = officeFor(it.value()); !back.isEmpty()) it.value() = back;
     }
     theme.fontOrigins.clear();
+    theme.fontFallbacks.clear();
 }
 
 QVariantList FontSwap::swapped(const Document &document) {
@@ -493,10 +535,12 @@ FontSwap::VerticalFix FontSwap::verticalFix(const SceneObject &o, qreal size) {
     // Only for matches drawn at the Office size (metric-compatible): their
     // lines are meant to land where PowerPoint's do. A scaled match already
     // differs in shape; measured, moving it made it sit worse (Segoe UI).
-    bool metric = false;
-    for (const auto &option : entry->options)
-        if (option.family.compare(o.fontFamily, Qt::CaseInsensitive) == 0) { metric = option.metric; break; }
-    if (!metric) return fix;
+    const auto *option = optionFor(o.origFont, o.fontFamily);
+    // A scaled table match is left alone (measured: moving it made it sit
+    // worse). A fallback gets both: sized down by x-height it would otherwise
+    // sit high by the ascent it lost (measured: 10 px on a 44 pt title).
+    if (!option || (!option->metric && !option->fallback)) return fix;
+    const bool moveBaseline = true;
     // Worked out from the box's font: a stretch in another family or a larger
     // size sets its own lines, so such a box is left as it was.
     for (const auto &run : o.runs)
@@ -518,7 +562,56 @@ FontSwap::VerticalFix FontSwap::verticalFix(const SceneObject &o, qreal size) {
     const qreal officeSize = size / (o.fontScale > 0 ? o.fontScale : 1);
     fix.line = (entry->ascent + entry->descent + entry->gap) * officeSize / (free * size);
     fix.shift = it->ascent * size - entry->ascent * officeSize;
+    if (!moveBaseline) fix.shift = 0;
     if (std::abs(fix.line - 1) < 0.005) fix.line = 1;
     if (std::abs(fix.shift) < 0.25) fix.shift = 0;
     return fix;
+}
+
+namespace {
+const QString kSentence = QStringLiteral("Sphinx of black quartz, judge my vow. The quick brown fox jumps over the lazy dog 0123456789");
+}
+
+const FontSwap::Option *FontSwap::fallback(const QString &officeFamily) {
+    // Measured once per Office family; drawing threads ask too.
+    static QMutex lock;
+    static QHash<QString, std::shared_ptr<Option>> measured;
+    const QString key = officeFamily.toLower();
+    QMutexLocker locker(&lock);
+    if (const auto it = measured.constFind(key); it != measured.cend()) return it->get();
+    std::shared_ptr<Option> result;
+    const auto entry = table().constFind(key);
+    if (entry != table().cend() && entry->xHeight > 0 && entry->sentence > 0) {
+        // fontconfig's choice for the generic class of the Office family.
+        const QChar kind = entry->kind;
+        QFont probe(kind == QLatin1Char('m') ? QStringLiteral("monospace")
+                    : kind == QLatin1Char('r') ? QStringLiteral("serif")
+                    : kind == QLatin1Char('h') ? QStringLiteral("cursive")
+                                               : QStringLiteral("sans-serif"));
+        probe.setStyleHint(kind == QLatin1Char('m') ? QFont::Monospace : kind == QLatin1Char('r') ? QFont::Serif
+                           : kind == QLatin1Char('h') ? QFont::Cursive : QFont::SansSerif);
+        const QString family = QFontInfo(probe).family();
+        if (!family.isEmpty() && installed(family)) {
+            QFont font(family);
+            font.setPixelSize(1000);
+            if (entry->weight) font.setWeight(QFont::Weight(entry->weight));
+            const QFontMetricsF m(font);
+            const qreal xh = m.xHeight() / 1000, cap = m.capHeight() / 1000;
+            const qreal width = m.horizontalAdvance(kSentence) / 1000;
+            qreal size = xh > 0 ? entry->xHeight / xh : (cap > 0 && entry->capHeight > 0 ? entry->capHeight / cap : 1);
+            size = qBound<qreal>(0.6, size, 1.6);
+            const qreal sameSize = width / entry->sentence;
+            result = std::make_shared<Option>();
+            result->family = family;
+            result->fallback = true;
+            result->metric = std::abs(sameSize - 1) <= 0.015;
+            result->size = result->metric ? 1.0 : std::round(size * 1000) / 1000;
+            result->width = sameSize * result->size;
+            const qreal free = (m.ascent() + m.descent() + qMax<qreal>(0, m.leading())) / 1000;
+            if (entry->ascent > 0 && free > 0)
+                result->line = (entry->ascent + entry->descent + entry->gap) / (result->size * free);
+        }
+    }
+    measured.insert(key, result);
+    return result.get();
 }

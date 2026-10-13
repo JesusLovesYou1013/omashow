@@ -34,7 +34,16 @@ struct Option {
     bool metric = false;           // same advance widths at the same size
     qreal size = 1, width = 1, line = 1;
     QString package, googleFonts, github;   // where it can be installed from
+    bool fallback = false;         // not in the table: an installed font measured here
 };
+
+// When none of an Office family's free matches is installed: the installed
+// font drawn instead (fontconfig's choice for the family's generic class),
+// with size and line factors measured here, at runtime, against the Office
+// family's stored metrics the way the table's were (x-height ratio for size;
+// same-size width within 1.5% counts as metric-compatible). Null for a
+// family the table has no metrics for.
+const Option *fallback(const QString &officeFamily);
 
 // The free matches of an Office family, best first; empty when the table does
 // not know the family.

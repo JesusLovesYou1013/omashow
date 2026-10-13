@@ -364,6 +364,12 @@ QJsonObject themeJson(const Document &document) {
             origins[it.key()] = it.value();
         theme["fontOrigins"] = origins;
     }
+    if (!document.theme.fontFallbacks.isEmpty()) {
+        QJsonObject fallbacks;
+        for (auto it = document.theme.fontFallbacks.cbegin(); it != document.theme.fontFallbacks.cend(); ++it)
+            fallbacks[it.key()] = it.value();
+        theme["fontFallbacks"] = fallbacks;
+    }
     return theme;
 }
 
@@ -529,6 +535,9 @@ Bundle::ReadResult Bundle::fromBytes(const QByteArray &raw) {
         const auto origins = theme.value("fontOrigins").toObject();
         for (auto it = origins.begin(); it != origins.end(); ++it)
             if (it.value().isString() && it.value().toString().size() <= 256) document.theme.fontOrigins[it.key()] = it.value().toString();
+        const auto fallbacks = theme.value("fontFallbacks").toObject();
+        for (auto it = fallbacks.begin(); it != fallbacks.end(); ++it)
+            if (it.key().size() <= 256 && it.value().isString() && it.value().toString().size() <= 256) document.theme.fontFallbacks[it.key()] = it.value().toString();
         QSet<QString> masterIds, layoutIds;
         for (const auto &value : design.value("masters").toArray()) {
             const auto json = value.toObject(); Master m;
