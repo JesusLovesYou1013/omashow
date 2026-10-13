@@ -94,9 +94,8 @@ Sheet {
     Connections {
         target: backend
         function onFontDownloadFinished(installed, failedMap, wasOffline, cancelled) {
-            // A silent download (pack on, or always-download) for a held deck.
-            if (backend.fontGate && !(root.visible && root.mode === "deck")) { backend.finishFontGate(); return }
-            if (!root.visible || root.mode !== "deck") return
+            // Only its own download: an older deck's finish never closes a fresh offer.
+            if (!root.visible || root.mode !== "deck" || root.phase !== "progress") return
             if (cancelled) { root.phase = "offer"; return }
             root.failed = failedMap; root.offline = wasOffline
             root.rows = backend.fontsToInstall()

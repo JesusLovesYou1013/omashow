@@ -870,7 +870,7 @@ ApplicationWindow {
         objectName: "fontGateLoading"
         parent: Overlay.overlay; anchors.centerIn: parent
         modal: true; closePolicy: Popup.NoAutoClose
-        visible: backend.fontGate && !fontCheckDialog.visible
+        visible: backend.fontGateSilent
         Overlay.modal: Rectangle { color: Theme.withAlpha(Theme.showBg, .65) }
         background: Rectangle { color: Theme.panelBg; border.color: Theme.border; radius: Theme.rControl }
         ColumnLayout {
@@ -880,6 +880,13 @@ ApplicationWindow {
                 Layout.preferredWidth: 280
                 indeterminate: !backend.fontDownloadRunning || backend.fontDownloadTotal <= 0
                 from: 0; to: Math.max(1, backend.fontDownloadTotal); value: backend.fontDownloadDone
+            }
+            // Never stuck behind a slow connection: open it now with similar fonts.
+            Button {
+                objectName: "fontGateFallback"
+                Layout.alignment: Qt.AlignRight
+                text: qsTr("Use fallback fonts")
+                onClicked: backend.skipFontGate()
             }
         }
     }
