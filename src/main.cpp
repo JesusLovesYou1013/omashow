@@ -178,13 +178,15 @@ int captureInterface(QQmlApplicationEngine &engine, Backend &backend, Presenter 
                     backend.downloadFonts(fams);
                 });
             if (const int ms = qEnvironmentVariableIntValue("OMASHOW_UI_SHOT_CANCEL_MS"))
-                QTimer::singleShot(ms, &backend, [&] { save(window, QStringLiteral("pack-progress")); backend.cancelPack(); });
+                QTimer::singleShot(ms, &backend, [&] { save(window, QStringLiteral("pack-progress")); qInfo().noquote() << "ui-shot fontcheck: pack cancel at" << clock.elapsed() << "ms"; backend.cancelPack(); });
+            if (const int ms = qEnvironmentVariableIntValue("OMASHOW_UI_SHOT_DECK_CANCEL_MS"))
+                QTimer::singleShot(ms, &backend, [&] { qInfo().noquote() << "ui-shot fontcheck: deck cancel at" << clock.elapsed() << "ms"; backend.cancelFontDownload(); });
             QTimer::singleShot(1500000, &wait, &QEventLoop::quit);
             QMetaObject::invokeMethod(check->findChild<QObject *>(QStringLiteral("fontCheckDownload")), "clicked");
             wait.exec();
             qInfo().noquote() << "ui-shot fontcheck: dialog state" << check->property("phase").toString() << "visible" << check->property("visible").toBool();
             qInfo().noquote() << "ui-shot fontcheck: swaps after" << json(backend.fontSwaps());
-            qInfo().noquote() << "ui-shot fontcheck: status" << backend.property("status").toString();
+            qInfo().noquote() << "ui-shot fontcheck: status" << backend.property("status").toString() << "| pack status" << backend.packStatus();
             save(window, QStringLiteral("pack-after"));
             return 0;
         }
