@@ -86,8 +86,9 @@ RowLayout {
                     Action { icon.name: "arrow-down"; text: qsTr("Move down"); enabled: !!root.master.id; onClicked: backend.moveMaster(root.master.id, 1) }
                 }
                 Heading { text: qsTr("MASTER BACKGROUND") }
-                TextField { Layout.fillWidth: true; enabled: !!root.master.id; text: root.master.background ?? "";
-                            onEditingFinished: backend.setMasterProperty(root.master.id, "background", text) }
+                ColorField { enabled: !!root.master.id; value: root.master.background ?? ""
+                             accessibleName: qsTr("Master background colour")
+                             onPicked: v => backend.setMasterProperty(root.master.id, "background", v) }
                 Action { text: root.master.backgroundToken ? qsTr("Linked to theme background") : qsTr("Use theme background");
                          enabled: !!root.master.id && !root.master.backgroundToken;
                          onClicked: backend.setMasterProperty(root.master.id, "backgroundToken", "background") }
@@ -275,10 +276,10 @@ RowLayout {
                             onActivated: root.setPlaceholder("fontWeight", model[currentIndex])
                         }
                         Heading { text: qsTr("COLOUR") }
-                        TextField {
-                            Layout.fillWidth: true
-                            text: (root.placeholder.type === "text" ? root.placeholder.textColor : root.placeholder.fill) ?? ""
-                            onEditingFinished: root.setPlaceholder(root.placeholder.type === "text" ? "textColor" : "fill", text)
+                        ColorField {
+                            value: (root.placeholder.type === "text" ? root.placeholder.textColor : root.placeholder.fill) ?? ""
+                            accessibleName: root.placeholder.type === "text" ? qsTr("Placeholder text colour") : qsTr("Placeholder fill colour")
+                            onPicked: v => root.setPlaceholder(root.placeholder.type === "text" ? "textColor" : "fill", v)
                         }
                         ComboBox {
                             Layout.fillWidth: true
