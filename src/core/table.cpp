@@ -11,13 +11,15 @@ namespace {
 const QSet<QString> styleKeys = {
     "fill",    "textColor",   "fontFamily", "fontSize",      "fontWeight",
     "italic",  "underline",   "textAlign",  "verticalAlign", "textFit",
-    "padding", "borderWidth", "borderColor"};
+    "padding", "borderWidth", "borderColor",
+    // Font swapping on PowerPoint import (core/fontswap.h).
+    "origFont", "origFontSize", "fontScale", "origWeight"};
 bool styleValue(const QString &key, const QVariant &value) {
   if (!styleKeys.contains(key))
     return false;
   if (key == "fill" || key == "textColor" || key == "borderColor")
     return QColor(value.toString()).isValid();
-  if (key == "fontFamily")
+  if (key == "fontFamily" || key == "origFont")
     return !value.toString().isEmpty() && value.toString().size() <= 256;
   if (key == "italic" || key == "underline")
     return value.metaType().id() == QMetaType::Bool;
@@ -27,6 +29,10 @@ bool styleValue(const QString &key, const QVariant &value) {
     return false;
   if (key == "fontWeight")
     return n >= 100 && n <= 900 && n == int(n);
+  if (key == "origWeight")
+    return n >= 100 && n <= 900 && n == int(n);
+  if (key == "fontScale")
+    return n > 0 && n <= 10;
   if (key == "textAlign")
     return n >= 0 && n <= 3 && n == int(n);
   if (key == "verticalAlign")
@@ -278,6 +284,7 @@ SceneObject Table::textObject(const SceneObject &o, int row, int column) {
   text.type = ObjectType::Text;
   text.rotation = 0;
   text.text = cell.text;
+  text.textFit = 0;   // a cell cuts off unless its own style says shrink (TEXT-FIT-1)
   if (row < t.headerRows || column < t.headerColumns) {
     text.fill = t.headerFill;
     text.textColor = contrast(text.fill);
@@ -504,7 +511,7 @@ void Table::scale(TableData &t, qreal factor) {
   t.padding *= factor;
   t.borderWidth *= factor;
   for (auto &cell : t.cells)
-    for (const auto &key : {"fontSize", "padding", "borderWidth"})
+    for (const auto &key : {"fontSize", "origFontSize", "padding", "borderWidth"})
       if (cell.style.contains(key))
         cell.style[key] = cell.style[key].toDouble() * factor;
 }

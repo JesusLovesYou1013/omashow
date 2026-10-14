@@ -72,10 +72,10 @@ QVector<SceneObject> PresentationCache::statesAt(qreal time) const {
         m_settled.timeline = {};
         const auto incoming = slide(m_to);
         m_arriving = incoming; m_arriving.objects.clear(); m_arriving.timeline = {};
+        const auto incomingResolved = incoming.timeline.resolvedSteps();
         for (const auto &object : incoming.objects) {
-            bool buildsIn = false;
-            for (const auto *step : incoming.timeline.stepsFor(object.id))
-                if (step->startsHidden()) buildsIn = true;
+            // ANIM-001: held out only if it is hidden before anything plays.
+            bool buildsIn = !Timeline::visibleAt(incomingResolved, object.id, -1.0);
             if (!buildsIn) m_arriving.objects.append(object);
         }
         m_kind = Presentation::transitionKind(m_document, m_to);

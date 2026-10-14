@@ -513,6 +513,8 @@ Item {
             }
             onSelectionEndChanged: backend.setTextSelection(selectionStart, selectionEnd)
             onLengthChanged: root.typingFormatLen = length
+            // "Dynamic size": the box itself follows the typing, taller or shorter.
+            onContentHeightChanged: if (root.editingText && backend.selection.textFit === 3) backend.growEditedTextBox(root.textSlideId, root.textObjectId, contentHeight)
             Connections {
                 target: backend
                 function onTextFormattingChanged() {

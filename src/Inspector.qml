@@ -43,6 +43,7 @@ Rectangle {
     readonly property string fontPickerFamily: ((range.active || range.caret) ? (range.fontFamily ?? sel.fontFamily) : sel.fontFamily) ?? Theme.fontFamily
     readonly property int fontPickerWeight: (range.active || range.caret) ? (range.weight ?? sel.fontWeight ?? 400) : (sel.fontWeight ?? 400)
     readonly property string fontPickerLabel: {
+        if (several && (isMixed("fontFamily") || isMixed("fontWeight"))) return qsTr("Mixed")
         const family = fontPickerFamily
         const w = fontPickerWeight
         if (w === 400 || w === 700) return family
@@ -51,7 +52,11 @@ Rectangle {
     }
     readonly property bool isMedia: backend.hasSelection && sel.type === "media"
     readonly property bool isImage: backend.hasSelection && sel.type === "image"
-    readonly property bool isText: backend.hasSelection && sel.type === "text"
+    readonly property bool isText: backend.hasSelection && (sel.type === "text" || (sel.textGroup ?? false))
+    // MULTI-1: several text boxes at once. A setting that differs between the
+    // selected objects shows blank ("Mixed"); changing it sets it on all.
+    readonly property bool several: backend.selectionCount > 1
+    function isMixed(key) { return (sel.mixed ?? []).indexOf(key) >= 0 }
     readonly property bool isConnector: backend.selectionCount === 1 && (sel.connector ?? false)
     // With nothing selected the map is empty, and the panel's bindings still
     // evaluate even though it is hidden — so the colour reads go through here
@@ -61,13 +66,23 @@ Rectangle {
         return value !== undefined ? value : Theme.controlBg
     }
     readonly property string swatchText: {
+        if (several && isMixed(isText ? "textColor" : "fill")) return ""
         const value = root.isText ? root.sel.textColor : root.sel.fill
         return value !== undefined ? value : ""
     }
 
+    property string tabFor: ""
     Connections {
         target: backend
-        function onSelectionChanged() { if(tabs.currentIndex === 1 && backend.selection.type !== "text") tabs.currentIndex = 0 }
+        // Tabs are Text, Style, Arrange (TEXT-FIT-1). Picking another
+        // object lands on Text when it holds text, and never leaves Text
+        // showing for one that does not. A change to the same object (which
+        // also arrives here) leaves the tab alone.
+        function onSelectionChanged() {
+            const text = backend.hasSelection && backend.selection.type === "text"
+            if (backend.selectedId !== root.tabFor) { root.tabFor = backend.selectedId; if (text) tabs.currentIndex = 0 }
+            if (tabs.currentIndex === 0 && !text) tabs.currentIndex = 1
+        }
     }
     component Divider: Rectangle {
         Layout.fillWidth: true
@@ -123,8 +138,8 @@ Rectangle {
         anchors.right: parent.right
         height: Theme.hTab
         visible: backend.hasSelection
-        TabButton { text: qsTr("Style") }
         TabButton { text: qsTr("Text"); enabled: root.isText }
+        TabButton { text: qsTr("Style") }
         TabButton { text: qsTr("Arrange") }
     }
 
@@ -152,13 +167,9 @@ Rectangle {
         }
         FieldRow {
             label: qsTr("Background")
-            Rectangle {
-                implicitWidth: Theme.hControl; implicitHeight: Theme.hControl; radius: Theme.rControl
-                color: backend.slideDesign.background || Theme.controlBg
-                border.color: Theme.borderStrong; border.width: Theme.hairline
-            }
-            TextField { Layout.fillWidth: true; text: backend.slideDesign.background ?? ""; font.family: Theme.monoFamily
-                        placeholderText: qsTr("Master"); onEditingFinished: backend.setSlideBackground(text) }
+            ColorField { value: backend.slideDesign.background ?? ""; placeholder: qsTr("Master")
+                         accessibleName: qsTr("Slide background colour")
+                         onPicked: v => backend.setSlideBackground(v) }
         }
         FieldRow {
             label: ""
@@ -205,7 +216,8 @@ Rectangle {
         visible: backend.hasSelection
         StackLayout {
             width: inspectorScroll.availableWidth
-            currentIndex: tabs.currentIndex
+            // The pages below are in their old order: Style, Text, Arrange.
+            currentIndex: [1, 0, 2][tabs.currentIndex] ?? 0
 
         // ── Style ───────────────────────────────────────────────────────────
         ColumnLayout {
@@ -263,21 +275,11 @@ Rectangle {
             FieldRow {
                 label: root.isText ? qsTr("Colour") : qsTr("Fill")
                 visible: !root.isImage && !root.isMedia
-                Rectangle {
-                    implicitWidth: Theme.hControl + Theme.s3
-                    implicitHeight: Theme.hControl
-                    radius: Theme.rControl
-                    color: root.swatch
-                    border.color: Theme.borderStrong
-                    border.width: Theme.hairline
-                }
-                TextField {
-                    Layout.fillWidth: true
-                    text: root.swatchText
-                    font.family: Theme.monoFamily
-                    Accessible.name: root.isText ? qsTr("Text colour") : qsTr("Fill colour")
-                    onEditingFinished:
-                        backend.setSelectedProperty(root.isText ? "textColor" : "fill", text)
+                ColorField {
+                    value: root.swatchText
+                    placeholder: root.several ? qsTr("Mixed") : ""
+                    accessibleName: root.isText ? qsTr("Text colour") : qsTr("Fill colour")
+                    onPicked: v => backend.setSelectedProperty(root.isText ? "textColor" : "fill", v)
                 }
             }
 
@@ -359,6 +361,34 @@ Rectangle {
                 Button { objectName: "discardOriginalPicture"; Layout.fillWidth: true; visible: root.sel.imageHasOriginal??false; text: qsTr("Discard original to reduce deck size"); onClicked: backend.discardOriginalMedia() }
             }
 
+            // How the box treats text that does not fit it (TEXT-FIT-1). The
+            // list shows the default first; the stored values are 0 cut off,
+            // 1 shrink, 2 spill, 3 grow.
+            Divider { visible: root.isText }
+            FieldRow {
+                visible: root.isText
+                label: qsTr("Text fit")
+                ComboBox {
+                    objectName: "textFitMode"
+                    displayText: root.several && root.isMixed("textFit") ? qsTr("Mixed") : currentText
+                    Layout.fillWidth: true
+                    readonly property var modes: [3, 1, 2, 0]
+                    model: [qsTr("Dynamic size"), qsTr("Shrink text to fit"), qsTr("Let text spill over"), qsTr("Cut off and warn")]
+                    currentIndex: Math.max(0, modes.indexOf(root.sel.textFit ?? 3))
+                    onActivated: backend.setSelectedProperty("textFit", modes[currentIndex])
+                }
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: Theme.s2
+                visible: root.isText && ((root.sel.textOverflow ?? false) || (root.sel.textFit === 1 && root.sel.effectiveFontSize < root.sel.fontSize))
+                Icon { name: (root.sel.textOverflow ?? false) ? "triangle-alert" : "info"; color: (root.sel.textOverflow ?? false) ? Theme.warning : Theme.textMuted }
+                Label {
+                    Layout.fillWidth: true; wrapMode: Text.Wrap
+                    color: (root.sel.textOverflow ?? false) ? Theme.warning : Theme.textSecondary
+                    text: (root.sel.textOverflow ?? false) ? qsTr("Some text is outside this box.") : qsTr("Displayed at %1 pt to fit.").arg(Math.round((root.sel.effectiveFontSize ?? 0) * root.ptPerUnit * 10) / 10)
+                }
+            }
             Divider {}
             Button { objectName: "objectLinkButton"; Layout.fillWidth: true; icon.name: "link"; text: root.sel.linkKind?qsTr("Edit link or action…"):qsTr("Add link or action…"); onClicked: backend.editSelectedLink() }
             Label { Layout.fillWidth: true; visible: !!root.sel.linkIssue; text: root.sel.linkIssue??""; color: Theme.warning; wrapMode: Text.Wrap }
@@ -371,6 +401,7 @@ Rectangle {
             spacing: Theme.s3
 
             TextArea {
+                visible: !root.several   // MULTI-1: one box's words only
                 objectName: "textContent"
                 Layout.fillWidth: true
                 Layout.preferredHeight: Theme.s5 * 4
@@ -384,6 +415,7 @@ Rectangle {
             }
 
             FieldRow {
+                visible: !root.several
                 label: qsTr("Content")
                 ComboBox {
                     objectName: "textKind"
@@ -489,6 +521,7 @@ Rectangle {
                 label: qsTr("Size")
                 // Half points; grow / shrink beside it. One undo step per change.
                 FontSizeField {
+                    mixed: !root.range.active && root.several && root.isMixed("fontSize")
                     value: (root.range.active ? (root.range.fontSize ?? Theme.fsBase) : (root.sel.fontSize ?? Theme.fsBase)) * root.ptPerUnit
                     onCommitted: (v) => root.range.active ? backend.formatSelection("fontSize", v / root.ptPerUnit)
                                                           : backend.setSelectedProperty("fontSize", v / root.ptPerUnit)
@@ -498,16 +531,20 @@ Rectangle {
                 label: qsTr("Style")
                 StyleMark { // OMASHOW-PERSONAL: B/I/U/S + caret typing (PR #11)
                 objectName: "textBold"; text: "B"; font.bold: true; tip: qsTr("Bold")
-                            checked: (root.runStyle ? (root.range.weight ?? 400) : (root.sel.fontWeight ?? 400)) >= 700
+                            highlighted: !root.runStyle && root.several && root.isMixed("fontWeight")
+                            checked: !(highlighted) && ((root.runStyle ? (root.range.weight ?? 400) : (root.sel.fontWeight ?? 400)) >= 700)
                             onToggled: root.bold(checked) }
                 StyleMark { objectName: "textItalic"; text: "I"; font.italic: true; tip: qsTr("Italic")
-                            checked: root.runStyle ? (root.range.italic ?? false) : (root.sel.italic ?? false)
+                            highlighted: !root.runStyle && root.several && root.isMixed("italic")
+                            checked: !(highlighted) && (root.runStyle ? (root.range.italic ?? false) : (root.sel.italic ?? false))
                             onToggled: root.style("italic", checked) }
                 StyleMark { objectName: "textUnderline"; text: "U"; font.underline: true; tip: qsTr("Underline")
-                            checked: root.runStyle ? (root.range.underline ?? false) : (root.sel.underline ?? false)
+                            highlighted: !root.runStyle && root.several && root.isMixed("underline")
+                            checked: !(highlighted) && (root.runStyle ? (root.range.underline ?? false) : (root.sel.underline ?? false))
                             onToggled: root.style("underline", checked) }
                 StyleMark { objectName: "textStrike"; text: "S"; font.strikeout: true; tip: qsTr("Strikethrough")
-                            checked: root.runStyle ? (root.range.strike ?? false) : (root.sel.strike ?? false)
+                            highlighted: !root.runStyle && root.several && root.isMixed("strike")
+                            checked: !(highlighted) && (root.runStyle ? (root.range.strike ?? false) : (root.sel.strike ?? false))
                             onToggled: root.style("strike", checked) }
                 Item { Layout.fillWidth: true }
             }
@@ -540,6 +577,7 @@ Rectangle {
                     // A stretch of text can be in another language; with nothing
                     // selected it is the whole box.
                     displayText: {
+                        if (root.several && root.isMixed("language")) return qsTr("Mixed")
                         const chosen = root.range.active ? (root.range.language ?? "")
                                                          : (root.sel.language ?? "")
                         return chosen.length > 0 ? chosen : qsTr("Follow the deck")
@@ -562,7 +600,7 @@ Rectangle {
             }
             FieldRow {
                 label: qsTr("Tab stop")
-                NumField { objectName: "textTabStop"; Layout.fillWidth: true; suffix: " pt"; decimals: 1
+                NumField { objectName: "textTabStop"; mixed: root.several && root.isMixed("tabStop"); Layout.fillWidth: true; suffix: " pt"; decimals: 1
                            value: (root.sel.tabStop ?? 0) * root.ptPerUnit
                            onCommitted: v => backend.setSelectedProperty("tabStop", v / root.ptPerUnit) }
             }
@@ -571,7 +609,7 @@ Rectangle {
                 SpinBox { objectName: "textColumns"; Layout.fillWidth: true; from: 1; to: 6
                           value: root.sel.columns ?? 1
                           onValueModified: backend.setSelectedProperty("columns", value) }
-                NumField { objectName: "textColumnGap"; Layout.fillWidth: true; suffix: " pt"; decimals: 1
+                NumField { objectName: "textColumnGap"; mixed: root.several && root.isMixed("columnGap"); Layout.fillWidth: true; suffix: " pt"; decimals: 1
                            visible: (root.sel.columns ?? 1) > 1
                            value: (root.sel.columnGap ?? 0) * root.ptPerUnit
                            onCommitted: v => backend.setSelectedProperty("columnGap", v / root.ptPerUnit) }
@@ -580,6 +618,7 @@ Rectangle {
                 label: qsTr("Direction")
                 ComboBox {
                     objectName: "textDirection"
+                    displayText: root.several && root.isMixed("direction") ? qsTr("Mixed") : currentText
                     Layout.fillWidth: true
                     model: [qsTr("Follow the words"), qsTr("Left to right"), qsTr("Right to left")]
                     currentIndex: root.sel.direction ?? 0
@@ -591,6 +630,7 @@ Rectangle {
                 label: qsTr("Style")
                 ComboBox {
                     objectName: "textStyleChoice"
+                    displayText: root.several && root.isMixed("textStyleId") ? qsTr("Mixed") : currentText
                     Layout.fillWidth: true
                     textRole: "name"
                     valueRole: "id"
@@ -636,6 +676,7 @@ Rectangle {
                 label: qsTr("Align")
                 ComboBox {
                     objectName: "textAlignment"
+                    displayText: root.several && root.isMixed("textAlign") ? qsTr("Mixed") : currentText
                     Layout.fillWidth: true
                     model: [qsTr("Left"),qsTr("Centre"),qsTr("Right"),qsTr("Justify")]
                     currentIndex: root.sel.textAlign ?? 0
@@ -645,25 +686,27 @@ Rectangle {
                     Layout.fillWidth: true
                     model: [qsTr("Top"),qsTr("Middle"),qsTr("Bottom")]
                     currentIndex: root.sel.verticalAlign ?? 1
+                    displayText: root.several && root.isMixed("verticalAlign") ? qsTr("Mixed") : currentText
                     onActivated: backend.setSelectedProperty("verticalAlign",currentIndex)
                 }
             }
             FieldRow {
                 label: qsTr("Line height")
-                NumField { objectName: "textLineHeight"; Layout.fillWidth: true; suffix: "%"; value: root.sel.lineHeight ?? 100; onCommitted: v => backend.setSelectedProperty("lineHeight",v) }
+                NumField { objectName: "textLineHeight"; mixed: root.several && root.isMixed("lineHeight"); Layout.fillWidth: true; suffix: "%"; value: root.sel.lineHeight ?? 100; onCommitted: v => backend.setSelectedProperty("lineHeight",v) }
             }
             FieldRow {
                 label: qsTr("After ¶")
-                NumField { objectName: "textParagraphSpacing"; Layout.fillWidth: true; value: root.sel.paragraphSpacing ?? 0; onCommitted: v => backend.setSelectedProperty("paragraphSpacing",v) }
+                NumField { objectName: "textParagraphSpacing"; mixed: root.several && root.isMixed("paragraphSpacing"); Layout.fillWidth: true; value: root.sel.paragraphSpacing ?? 0; onCommitted: v => backend.setSelectedProperty("paragraphSpacing",v) }
             }
             FieldRow {
                 label: qsTr("Indent")
-                NumField { Layout.fillWidth: true; value: root.sel.textIndent ?? 0; onCommitted: v => backend.setSelectedProperty("textIndent",v) }
+                NumField { Layout.fillWidth: true; mixed: root.several && root.isMixed("textIndent"); value: root.sel.textIndent ?? 0; onCommitted: v => backend.setSelectedProperty("textIndent",v) }
             }
             FieldRow {
                 label: qsTr("List")
                 ComboBox {
                     objectName: "textListStyle"
+                    displayText: root.several && root.isMixed("listStyle") ? qsTr("Mixed") : currentText
                     Layout.fillWidth: true
                     model: [qsTr("None"), qsTr("Bullets"), qsTr("Numbers"), qsTr("Circles"),
                             qsTr("Squares"), qsTr("a. b. c."), qsTr("A. B. C."),
@@ -674,34 +717,15 @@ Rectangle {
                 NumField {
                     Layout.preferredWidth: Theme.s5 * 3
                     visible: [2,5,6,7,8].indexOf(root.sel.listStyle ?? 0) >= 0
+                    mixed: root.several && root.isMixed("listStart")
                     label: qsTr("#"); value: root.sel.listStart ?? 1
                     onCommitted: v => backend.setSelectedProperty("listStart",v)
                 }
             }
             Label { visible: (root.sel.listStyle ?? 0) > 0; text: qsTr("Leading tabs nest list items."); color: Theme.textMuted; font.pixelSize: Theme.fsLabel }
             Divider {}
-            FieldRow {
-                label: qsTr("Text fit")
-                ComboBox {
-                    objectName: "textFitMode"
-                    Layout.fillWidth: true
-                    model: [qsTr("Clip and warn"),qsTr("Shrink to fit")]
-                    currentIndex: root.sel.textFit ?? 0
-                    onActivated: backend.setSelectedProperty("textFit",currentIndex)
-                }
-            }
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: Theme.s2
-                visible: (root.sel.textOverflow ?? false) || (root.sel.textFit === 1 && root.sel.effectiveFontSize < root.sel.fontSize)
-                Icon { name: (root.sel.textOverflow ?? false) ? "triangle-alert" : "info"; color: (root.sel.textOverflow ?? false) ? Theme.warning : Theme.textMuted }
-                Label {
-                    Layout.fillWidth: true; wrapMode: Text.Wrap
-                    color: (root.sel.textOverflow ?? false) ? Theme.warning : Theme.textSecondary
-                    text: (root.sel.textOverflow ?? false) ? qsTr("Some text is outside this box.") : qsTr("Displayed at %1 pt to fit.").arg(Math.round((root.sel.effectiveFontSize ?? 0) * root.ptPerUnit * 10) / 10)
-                }
-            }
-            Button { objectName: "fitTextBox"; Layout.fillWidth: true; text: qsTr("Resize box to fit text"); onClicked: backend.fitSelectedTextBox() }
+            // A dynamic box already does this by itself.
+            Button { objectName: "fitTextBox"; Layout.fillWidth: true; visible: root.sel.textFit !== 3; text: qsTr("Resize box to fit text"); onClicked: backend.fitSelectedTextBox() }
             Item { Layout.fillHeight: true }
         }
 

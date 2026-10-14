@@ -14,7 +14,7 @@ work, each under its own licence.
 
 | Component | Licence |
 |---|---|
-| [Qt 6](https://www.qt.io) — Core, Gui, Qml, Quick, Quick Controls, Svg, Multimedia, Concurrent, DBus | LGPL-3.0 / GPL-3.0 |
+| [Qt 6](https://www.qt.io) — Core, Gui, Qml, Quick, Quick Controls, Svg, Multimedia, Concurrent, DBus, Network | LGPL-3.0 / GPL-3.0 |
 | [FFmpeg](https://ffmpeg.org) — libavformat, libavcodec, libavutil, libswscale | LGPL-2.1-or-later; GPL-3.0 as built with `--enable-gpl --enable-version3` by Arch Linux |
 | [zlib](https://zlib.net) | zlib licence |
 | [Hunspell](https://hunspell.github.io) | GPL-2.0-or-later / LGPL-2.1-or-later / MPL-1.1 |
@@ -32,6 +32,33 @@ language a deck is written in.
 
 ## Fonts
 
-OmaShow bundles no fonts. It uses the fonts installed on the system (Inter
-when present). PDF export embeds subsets of the fonts a deck uses; the licence
+OmaShow bundles one typeface: **Inter 4.1** by The Inter Project Authors
+(https://github.com/rsms/inter), the static Regular, Bold, Italic and Bold
+Italic TrueType files from the official release `Inter-4.1.zip`
+(sha256 9883fdd4a49d4fb66bd8177ba6625ef9a64aa45899767dde3d36aa425756b11e),
+unmodified, under the SIL Open Font License 1.1 (`src/fonts/inter/LICENSE.txt`,
+installed as `/usr/share/licenses/omashow/LICENSE.Inter`). OmaShow draws it
+app-wide and embeds it in PowerPoint decks it saves, as the OFL allows when
+bundled with software. Other fonts are the system's own. PDF export embeds subsets of the fonts a deck uses; the licence
 of a font chosen for a deck is that font's own.
+
+## Office font map
+
+`src/fonts/office/office-font-map.json` (compiled in as `:/fonts/office-font-map.json`)
+is derived from **office-font-map** by JesusLovesYou1013, licensed under the
+Creative Commons Attribution 4.0 International licence (CC BY 4.0,
+https://creativecommons.org/licenses/by/4.0/). It was reduced to the best free
+matches per Office font with their measured size, width and line factors.
+It contains no fonts.
+
+## Free fonts downloaded on request
+
+`src/fonts/office/font-sources.json` lists, for the free matches OmaShow can
+fetch, the exact files in the google/fonts repository
+(https://github.com/google/fonts) at one pinned commit, each with its size and
+SHA-256. When a person asks for them (the font check on opening a deck, or
+the Extra fonts pack), OmaShow downloads those files, checks each one against
+its SHA-256 before using it, and keeps them in its own font folder
+(`$XDG_DATA_HOME/omashow-fonts`), which only OmaShow reads. Each family's
+licence file is downloaded beside it. The fonts are under their own licences,
+almost all the SIL Open Font License 1.1; none is bundled with OmaShow.

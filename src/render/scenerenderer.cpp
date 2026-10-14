@@ -27,6 +27,12 @@ void paintObject(QPainter &painter, const SceneObject &object) {
         painter.scale(object.paintScale, object.paintScale);
         painter.translate(-centre);
     }
+    if (!object.paintClip.isNull()) {
+        // ANIM-001 Wipe: draw only the part of the object's box shown so far.
+        const QRectF r = object.rect.normalized();
+        painter.setClipRect(QRectF(r.left() + r.width() * object.paintClip.left(), r.top() + r.height() * object.paintClip.top(),
+                                   r.width() * object.paintClip.width(), r.height() * object.paintClip.height()), Qt::IntersectClip);
+    }
 
     switch (object.type) {
     case ObjectType::Chart: Chart::paint(painter,object); break;

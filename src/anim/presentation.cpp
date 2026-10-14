@@ -255,10 +255,10 @@ QVector<SceneObject> Presentation::stateAt(const Document &document, qreal t,
     // snapping back to invisible the moment the slide takes over.
     Slide arrivingTo = to;
     arrivingTo.objects.clear();
+    const auto toResolved = to.timeline.resolvedSteps();
     for (const SceneObject &object : to.objects) {
-      bool buildsIn = false;
-      for (const auto *step : to.timeline.stepsFor(object.id))
-        if (step->startsHidden()) buildsIn = true;
+      // ANIM-001: held out only if it is hidden before anything plays.
+      bool buildsIn = !Timeline::visibleAt(toResolved, object.id, -1.0);
       if (!buildsIn)
         arrivingTo.objects.append(object);
     }

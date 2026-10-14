@@ -1,5 +1,10 @@
 // OmaShow — native presentations for Omarchy.
 
+#include "core/fonts.h"
+#include "core/fontsandbox.h"
+#include <QElapsedTimer>
+#include <QFontInfo>
+
 #include <QGuiApplication>
 #include <QFont>
 #include <QIcon>
@@ -28,6 +33,7 @@
 #include <QQmlEngine>
 #include <QTextStream>
 #include <QDir>
+#include <QJsonDocument>
 #include <QFile>
 #include <QEventLoop>
 #include <QQuickWindow>
@@ -114,6 +120,199 @@ int captureInterface(QQmlApplicationEngine &engine, Backend &backend, Presenter 
     if (!haveDeck) {
         save(window, QStringLiteral("start"));
         backend.createDeck(0, 1920, 1080, 0);
+    }
+    // FONT-CHECK-1/2 (OMASHOW_UI_SHOT_FONTCHECK=1|hide|download): the font
+    // check shown on opening a deck, photographed. hide: tick "Don't show
+    // again" and close. download: press Download, photograph the progress and
+    // the result, and say what the deck uses afterwards.
+    if (haveDeck && !qEnvironmentVariableIsEmpty("OMASHOW_UI_SHOT_FONTCHECK")) {
+        const auto mode = qEnvironmentVariable("OMASHOW_UI_SHOT_FONTCHECK");
+        const auto json = [](const QVariant &v) { return QString::fromUtf8(QJsonDocument::fromVariant(v).toJson(QJsonDocument::Compact)); };
+        settle(500);
+        QObject *check = window->findChild<QObject *>(QStringLiteral("fontCheckDialog"));
+        qInfo().noquote() << "ui-shot fontcheck: sandbox" << backend.fontSandboxDir();
+        qInfo().noquote() << "ui-shot fontcheck: needed" << json(backend.fontsToInstall());
+        qInfo().noquote() << "ui-shot fontcheck: shown" << (check && check->property("visible").toBool())
+                          << "deck held" << backend.fontGate() << "show running" << presenter.property("running").toBool();
+        qInfo().noquote() << "ui-shot fontcheck: swaps" << json(backend.fontSwaps());
+        save(window, QStringLiteral("fontcheck"));
+        // FONT-CHECK-3: "Use fallback fonts" on the loading state, that long in.
+        if (const int ms = qEnvironmentVariableIntValue("OMASHOW_UI_SHOT_GATE_SKIP_MS")) {
+            settle(ms);
+            QObject *skip = window->findChild<QObject *>(QStringLiteral("fontGateFallback"));
+            qInfo().noquote() << "ui-shot fontcheck: gate skip at" << ms << "ms; held" << backend.fontGate() << "button" << bool(skip);
+            if (skip) QMetaObject::invokeMethod(skip, "clicked");
+            settle(1500);
+            qInfo().noquote() << "ui-shot fontcheck: after skip held" << backend.fontGate() << "show running" << presenter.property("running").toBool();
+            save(window, QStringLiteral("gate-skipped"));
+        }
+        if (qEnvironmentVariableIsSet("OMASHOW_UI_SHOT_SAVE")) backend.saveTo(outDir + QStringLiteral("/before.omashow"));
+        const QString source = check ? check->property("source").toString() : QString();
+        if (check && mode == QLatin1String("hide")) {
+            if (auto *box = check->findChild<QObject *>(QStringLiteral("fontCheckHide"))) box->setProperty("checked", true);
+            QMetaObject::invokeMethod(check, "close");
+            settle(300);
+            qInfo().noquote() << "ui-shot fontcheck: hidden for" << source << backend.fontCheckHidden(source);
+        }
+        // FONT-CHECK-3 conditions (OMASHOW_UI_SHOT_FONT_COND, with MODE=download):
+        // show: a rehearsal runs while the fonts arrive (deck untouched until it ends);
+        // editor: a text box is being typed in (typing kept, then redrawn);
+        // undo: an edit is made first; undo after arrival undoes the edit only.
+        const QString cond = qEnvironmentVariable("OMASHOW_UI_SHOT_FONT_COND");
+        const std::function<QQuickItem *(QQuickItem *, const QString &)> findIn = [&](QQuickItem *item, const QString &name) -> QQuickItem * {
+            if (!item) return nullptr;
+            if (item->objectName() == name) return item;
+            for (QQuickItem *child : item->childItems()) if (QQuickItem *f = findIn(child, name)) return f;
+            return nullptr;
+        };
+        QQuickItem *condCanvas = findIn(window->contentItem(), QStringLiteral("editCanvas"));
+        QQuickItem *condEditor = nullptr;
+        QString condTextId;
+        // With MODE=pack the opening deck is first shown on fallbacks (its
+        // popup closed), so the pack's fonts arrive into a deck on screen.
+        if (check && mode == QLatin1String("pack")) { QMetaObject::invokeMethod(check, "close"); settle(300); }
+        if (check && (mode == QLatin1String("download") || mode == QLatin1String("pack")) && !cond.isEmpty()) {
+            for (const QVariant &object : backend.slideObjects())
+                if (object.toMap().value(QStringLiteral("text")).toBool()) { condTextId = object.toMap().value(QStringLiteral("id")).toString(); break; }
+            if (cond == QLatin1String("show")) {
+                presenter.start(false, true);
+                settle(300);
+                qInfo().noquote() << "ui-shot fontcheck: cond show running" << presenter.property("running").toBool();
+            } else if (cond == QLatin1String("editor") && condCanvas) {
+                backend.select(condTextId);
+                settle(100);
+                QMetaObject::invokeMethod(condCanvas, "beginTextEdit");
+                settle(200);
+                for (QQuickItem *k : condCanvas->findChildren<QQuickItem *>())
+                    if (QByteArray(k->metaObject()->className()).contains("TextEdit") && k->isVisible()) { condEditor = k; break; }
+                if (condEditor) {
+                    QMetaObject::invokeMethod(condEditor, "deselect");
+                    const int at = condEditor->property("length").toInt();
+                    QMetaObject::invokeMethod(condEditor, "insert", Q_ARG(int, at), Q_ARG(QString, QStringLiteral(" TYPED-WHILE-DOWNLOADING")));
+                }
+                qInfo().noquote() << "ui-shot fontcheck: cond editor open" << condCanvas->property("editingText").toBool() << "editor found" << bool(condEditor);
+            } else if (cond == QLatin1String("undo")) {
+                backend.select(condTextId);
+                backend.nudgeSelected(40, 0);
+                qInfo().noquote() << "ui-shot fontcheck: cond undo nudged" << condTextId << "canUndo" << backend.canUndo();
+            }
+            save(window, QStringLiteral("cond-before"));
+        }
+        const auto objectText = [&] {
+            if (condCanvas && condCanvas->property("editingText").toBool()) return QVariantMap();   // don't disturb an open editor
+            backend.select(condTextId);
+            return backend.property("selection").toMap();
+        };
+        const auto condAfter = [&] {
+                if (cond == QLatin1String("show")) {
+                    qInfo().noquote() << "ui-shot fontcheck: cond show still running" << presenter.property("running").toBool() << "pending" << backend.fontsPending();
+                    save(window, QStringLiteral("cond-during-show"));
+                    QMetaObject::invokeMethod(&presenter, "stop");
+                    settle(600);
+                    qInfo().noquote() << "ui-shot fontcheck: cond show ended; pending" << backend.fontsPending() << "swaps" << json(backend.fontSwaps());
+                } else if (cond == QLatin1String("editor")) {
+                    settle(300);
+                    const bool stillOpen = condCanvas && condCanvas->property("editingText").toBool();
+                    const QString plain = stillOpen && condEditor ? condEditor->property("text").toString() : objectText().value(QStringLiteral("editHtml")).toString();
+                    qInfo().noquote() << "ui-shot fontcheck: cond editor open after" << stillOpen
+                                      << "typed text kept" << plain.contains(QStringLiteral("TYPED-WHILE-DOWNLOADING"));
+                } else if (cond == QLatin1String("undo")) {
+                    const qreal x = objectText().value(QStringLiteral("x")).toReal();
+                    backend.undo();
+                    settle(300);
+                    qInfo().noquote() << "ui-shot fontcheck: cond undo x before" << x << "after undo" << objectText().value(QStringLiteral("x")).toReal()
+                                      << "swaps after undo" << json(backend.fontSwaps()) << "canUndo" << backend.canUndo();
+                }
+        };
+        // FONT-CHECK-3 pack (OMASHOW_UI_SHOT_FONTCHECK=pack): turn on the Extra
+        // fonts pack, photograph its offer, download it. OMASHOW_UI_SHOT_DECK_MS:
+        // that long into the pack, ask for the open deck's own fonts (they must
+        // jump the queue). OMASHOW_UI_SHOT_CANCEL_MS cancels the pack.
+        if (check && mode == QLatin1String("pack")) {
+            backend.setExtraFontsPack(true);
+            QMetaObject::invokeMethod(check, "showPack");
+            settle(400);
+            {   // every pack family usable under its map name (aliases included)
+                QStringList missing;
+                for (const auto &r : backend.fontPack()) {
+                    const auto f = r.toMap().value("family").toString();
+                    // What a text set in the map's name actually draws with.
+                    const auto drawn = QFontInfo(QFont(f)).family();
+                    if (!FontSandbox::available(f) || (drawn.compare(f, Qt::CaseInsensitive) && drawn.compare(QFont::substitute(f), Qt::CaseInsensitive))) missing << f + QStringLiteral("->") + drawn;
+                    else if (drawn.compare(f, Qt::CaseInsensitive)) qInfo().noquote() << "ui-shot fontcheck: alias" << f << "draws as" << drawn;
+                }
+                qInfo().noquote() << "ui-shot fontcheck: pack families not usable" << missing.size() << missing.join(QLatin1Char(','));
+            }
+            qInfo().noquote() << "ui-shot fontcheck: pack" << backend.packReady() << "of" << backend.packTotal() << "ready," << qRound(backend.packBytes() / 1048576) << "MB";
+            save(window, QStringLiteral("pack-offer"));
+            QElapsedTimer clock; clock.start();
+            QEventLoop wait;
+            bool shotProgress = false;
+            QStringList order;
+            QObject::connect(&backend, &Backend::fontDownloadChanged, &wait, [&] {
+                if (!shotProgress && backend.packDone() > 4e6) { shotProgress = true; QTimer::singleShot(0, &wait, [&] { save(window, QStringLiteral("pack-progress")); }); }
+            });
+            QObject::connect(&backend, &Backend::fontDownloadFinished, &wait, [&](const QStringList &installed, const QVariantMap &failed, bool, bool) {
+                qInfo().noquote() << "ui-shot fontcheck: deck finished at" << clock.elapsed() << "ms installed" << installed.join(QLatin1Char(',')) << "failed" << json(failed)
+                                  << "pack still running" << backend.packRunning() << backend.packReady() << "of" << backend.packTotal();
+                QTimer::singleShot(0, &wait, [&] { save(window, QStringLiteral("pack-deck-done")); });
+            });
+            QObject::connect(&backend, &Backend::packFinished, &wait, [&](int ready, int total, const QVariantMap &failed, bool offline) {
+                qInfo().noquote() << "ui-shot fontcheck: pack finished at" << clock.elapsed() << "ms" << ready << "of" << total << "failed" << failed.size() << json(failed).left(300) << "offline" << offline;
+                QTimer::singleShot(400, &wait, &QEventLoop::quit);
+            });
+            if (const int ms = qEnvironmentVariableIntValue("OMASHOW_UI_SHOT_DECK_MS"))
+                QTimer::singleShot(ms, &backend, [&] {
+                    QStringList fams;
+                    for (const auto &r : backend.fontsToInstall()) if (r.toMap().value("downloadable").toBool()) fams << r.toMap().value("family").toString();
+                    qInfo().noquote() << "ui-shot fontcheck: deck asks at" << clock.elapsed() << "ms for" << fams.join(QLatin1Char(',')) << "pack" << backend.packReady() << "of" << backend.packTotal();
+                    backend.downloadFonts(fams);
+                });
+            if (const int ms = qEnvironmentVariableIntValue("OMASHOW_UI_SHOT_CANCEL_MS"))
+                QTimer::singleShot(ms, &backend, [&] { save(window, QStringLiteral("pack-progress")); qInfo().noquote() << "ui-shot fontcheck: pack cancel at" << clock.elapsed() << "ms"; backend.cancelPack(); });
+            if (const int ms = qEnvironmentVariableIntValue("OMASHOW_UI_SHOT_DECK_CANCEL_MS"))
+                QTimer::singleShot(ms, &backend, [&] { qInfo().noquote() << "ui-shot fontcheck: deck cancel at" << clock.elapsed() << "ms"; backend.cancelFontDownload(); });
+            QTimer::singleShot(1500000, &wait, &QEventLoop::quit);
+            QMetaObject::invokeMethod(check->findChild<QObject *>(QStringLiteral("fontCheckDownload")), "clicked");
+            wait.exec();
+            qInfo().noquote() << "ui-shot fontcheck: dialog state" << check->property("phase").toString() << "visible" << check->property("visible").toBool();
+            if (!cond.isEmpty()) { QMetaObject::invokeMethod(check, "close"); settle(300); condAfter(); }
+            qInfo().noquote() << "ui-shot fontcheck: swaps after" << json(backend.fontSwaps());
+            qInfo().noquote() << "ui-shot fontcheck: status" << backend.property("status").toString() << "| pack status" << backend.packStatus();
+            save(window, QStringLiteral("pack-after"));
+            return 0;
+        }
+        if (check && mode == QLatin1String("download") && check->property("visible").toBool()) {
+            QEventLoop wait;
+            bool shotProgress = false;
+            QObject::connect(&backend, &Backend::fontDownloadChanged, &wait, [&] {
+                // Not from inside the download's own signal: save() spins an event loop.
+                if (!shotProgress && backend.fontDownloadDone() > 0) { shotProgress = true; QTimer::singleShot(0, &wait, [&] { save(window, QStringLiteral("fontcheck-progress")); }); }
+            });
+            QObject::connect(&backend, &Backend::fontDownloadFinished, &wait,
+                             [&](const QStringList &installed, const QVariantMap &failed, bool offline, bool cancelled) {
+                qInfo().noquote() << "ui-shot fontcheck: finished installed" << installed.join(QLatin1Char(','))
+                                  << "failed" << json(failed) << "offline" << offline << "cancelled" << cancelled;
+                QTimer::singleShot(400, &wait, &QEventLoop::quit);
+            });
+            QTimer::singleShot(qEnvironmentVariableIntValue("OMASHOW_UI_SHOT_CANCEL_MS") > 0 ? qEnvironmentVariableIntValue("OMASHOW_UI_SHOT_CANCEL_MS") : 1 << 30,
+                               &backend, [&] { if (!shotProgress) save(window, QStringLiteral("fontcheck-progress")); backend.cancelFontDownload(); });
+            QTimer::singleShot(400000, &wait, &QEventLoop::quit);
+            QMetaObject::invokeMethod(check->findChild<QObject *>(QStringLiteral("fontCheckDownload")), "clicked");
+            wait.exec();
+            qInfo().noquote() << "ui-shot fontcheck: dialog state" << check->property("phase").toString() << "visible" << check->property("visible").toBool();
+            qInfo().noquote() << "ui-shot fontcheck: swaps after" << json(backend.fontSwaps());
+            qInfo().noquote() << "ui-shot fontcheck: needed after" << json(backend.fontsToInstall());
+            qInfo().noquote() << "ui-shot fontcheck: modified" << backend.modified() << "canUndo" << backend.canUndo()
+                              << "revision" << backend.revision() << "deck held" << backend.fontGate() << "show running" << presenter.property("running").toBool();
+            condAfter();
+            save(window, QStringLiteral("fontcheck-after"));
+            if (qEnvironmentVariableIsSet("OMASHOW_UI_SHOT_SAVE")) backend.saveTo(outDir + QStringLiteral("/after.omashow"));
+            if (check->property("visible").toBool()) QMetaObject::invokeMethod(check, "close");
+            settle(300);
+            save(window, QStringLiteral("fontcheck-deck"));
+        }
+        return 0;
     }
     const struct { int workspace; const char *name; } views[] = {
         {0, "edit"}, {1, "design"}, {2, "animate"}, {3, "review"}, {4, "present"}, {6, "sorter"}};
@@ -379,6 +578,14 @@ int main(int argc, char *argv[]) {
     if (!headless)
         QQuickWindow::setDefaultAlphaBuffer(true);
     QGuiApplication app(argc, argv);
+    Fonts::loadBundled();   // Inter travels with OmaShow; draw it the same everywhere
+    // FONT-CHECK-1: extra fonts from OmaShow's own folder, this process only;
+    // fontconfig never sees them, so the rest of Omarchy is unaffected.
+    {
+        QElapsedTimer t; t.start();
+        const int n = FontSandbox::load();
+        if (qEnvironmentVariableIsSet("OMASHOW_FONT_TIMING")) qInfo().noquote() << "font sandbox:" << n << "files in" << t.elapsed() << "ms";
+    }
     Workers::Session workerSession;
 
     // The identity trio. setDesktopFileName is what becomes the Wayland app_id,
@@ -449,6 +656,10 @@ int main(int argc, char *argv[]) {
                                     QStringLiteral("Window size for --ui-shot (default 1920x1080)."),
                                     QStringLiteral("WxH"), QStringLiteral("1920x1080"));
     parser.addOption(uiShotOption);
+    // Open straight into the show (autostart). The show starts only once the
+    // deck is displayed, i.e. after its font check (FONT-CHECK-3).
+    QCommandLineOption showOption(QStringLiteral("show"), QStringLiteral("Start the slide show once the deck is open."));
+    parser.addOption(showOption);
     parser.addOption(uiSizeOption);
     parser.addPositionalArgument(QStringLiteral("file"), QStringLiteral("Deck to open."));
     parser.process(app);
@@ -585,6 +796,15 @@ int main(int argc, char *argv[]) {
     if (!positional.isEmpty()) {
         if (parser.isSet(atOption))
             QObject::connect(&backend, &Backend::opened, &app, [&] { backend.setTime(parser.value(atOption).toDouble()); }, Qt::SingleShotConnection);
+        if (parser.isSet(showOption))
+            QObject::connect(&backend, &Backend::opened, &app, [&] { QMetaObject::invokeMethod(&presenter, [&] { presenter.start(false, false); }, Qt::QueuedConnection); }, Qt::SingleShotConnection);
+        if (parser.isSet(uiShotOption)) {
+            // FONT-CHECK-3 test: what the deck looks like the moment it is first displayed.
+            QObject::connect(&backend, &Backend::opened, &app, [&] {
+                qInfo().noquote() << "ui-shot fontcheck: first display swaps" << QString::fromUtf8(QJsonDocument::fromVariant(backend.fontSwaps()).toJson(QJsonDocument::Compact))
+                                  << "revision" << backend.revision() << "show running" << presenter.property("running").toBool();
+            }, Qt::SingleShotConnection);
+        }
         if (parser.isSet(uiShotOption)) backend.open(QUrl::fromLocalFile(positional.first()));
         else backend.openAsync(QUrl::fromLocalFile(positional.first()));
     } else if (parser.isSet(atOption)) backend.setTime(parser.value(atOption).toDouble());

@@ -1,4 +1,6 @@
+#include <QMetaMethod>
 #include "backend.h"
+#include "core/fontswap.h"
 
 #include <QFontDatabase>
 #include <QSet>
@@ -8,6 +10,9 @@
 #include <algorithm>
 #include "mediaplayback.h"
 #include "core/design.h"
+#include "core/arrange.h"
+#include "render/textlayout.h"
+#include <cmath>
 #include "core/textruns.h"
 #include "core/review.h"
 #include "io/decklock.h"
@@ -298,10 +303,78 @@ void Backend::open(const QUrl &url) {
     return;
   }
 
-  if (Interchange::isForeign(result.kind))
-    acceptImported(result.document, path, Interchange::kindName(result.kind), result.warnings);
-  else
-    acceptOpen(result.document, url);
+  Gate gate;
+  gate.document = result.document; gate.url = url; gate.source = path;
+  gate.foreign = Interchange::isForeign(result.kind);
+  gate.kind = Interchange::kindName(result.kind); gate.warnings = result.warnings;
+  gateOpen(gate);
+}
+
+// FONT-CHECK-3: the font check is the first thing on open. If the deck needs
+// fonts that can be downloaded (and this deck's check isn't switched off),
+// it waits here; the window shows a short loading state and the popup (or,
+// with the Extra fonts pack on, fetches them silently, first), then calls
+// finishFontGate(). Nothing is displayed, and no show can start, before.
+void Backend::gateOpen(Gate gate) {
+  const auto rows = FontSwap::needed(gate.document);
+  bool any = false;
+  for (const auto &r : rows) any = any || r.toMap().value(QStringLiteral("downloadable")).toBool();
+  if (!any || gate.source.isEmpty() || qEnvironmentVariableIsSet("OMASHOW_NO_FONT_SWAP")) { completeOpen(gate); return; }
+  // FONT-SETTINGS-1: the check is switched off: fallbacks, no popup, no download.
+  if (!fontCheckOnOpen()) { m_gateHandled = true; completeOpen(gate); m_gateHandled = false; return; }
+  m_deckNeeded.clear();
+  for (const auto &r : rows) m_deckNeeded.insert(r.toMap().value(QStringLiteral("family")).toString());
+  // Decided here, not in the window: no popup wanted, or no window at all.
+  const bool silent = fontAutoDownload() || extraFontsPack();
+  if ((!silent && fontCheckHidden(gate.source)) || !isSignalConnected(QMetaMethod::fromSignal(&Backend::fontCheckRequested))) {
+    m_gateHandled = true; completeOpen(gate); m_gateHandled = false; return;
+  }
+  m_gate = gate;
+  m_gate.active = true;
+  m_gate.id = ++m_gateIds;
+  m_gate.silent = silent;
+  setStatus(tr("Checking fonts for %1…").arg(QFileInfo(gate.source).fileName()));
+  emit fontGateChanged();
+  if (silent) {
+    QStringList fetch;
+    for (const auto &r : rows) if (r.toMap().value(QStringLiteral("downloadable")).toBool()) fetch << r.toMap().value(QStringLiteral("family")).toString();
+    if (!downloadFonts(fetch)) finishFontGate();
+    return;
+  }
+  emit fontCheckRequested(gate.source, rows);
+}
+
+// "Use fallback fonts" on the loading state: stop waiting, show it now.
+void Backend::skipFontGate() {
+  if (!m_gate.active) return;
+  if (m_gate.silent) cancelFontDownload();
+  finishFontGate();
+}
+
+void Backend::finishFontGate() {
+  if (!m_gate.active) return;
+  Gate gate = m_gate;
+  m_gate = Gate();
+  // Fonts that came in while it waited: swapped before anything is drawn.
+  if (!qEnvironmentVariableIsSet("OMASHOW_NO_FONT_SWAP")) FontSwap::apply(gate.document);
+  m_gateHandled = true;
+  completeOpen(gate);
+  m_gateHandled = false;
+  m_fontsPending = false;   // already in the deck as displayed
+  emit fontGateChanged();
+  emit fontDownloadChanged();
+}
+
+void Backend::completeOpen(const Gate &gate) {
+  if (gate.foreign) { acceptImported(gate.document, gate.source, gate.kind, gate.warnings); return; }
+  acceptOpen(gate.document, gate.recovery ? QUrl() : gate.url);
+  if (gate.recovery) {
+    m_modified = true;
+    setFileUrl(gate.original.isEmpty() ? QUrl() : QUrl::fromLocalFile(gate.original));
+    emit documentChanged();
+    Recovery::forget(gate.url.toLocalFile());
+    setStatus(tr("Recovered — save to keep your recovered work"));
+  }
 }
 
 // A deck from another application arrives as a new, unsaved OmaShow deck:
@@ -316,6 +389,7 @@ void Backend::acceptImported(const Document &document, const QString &sourcePath
   emit fileStateChanged();
   emit documentChanged();
   emit importReportChanged();
+  requestFontCheck(sourcePath);
   const auto name = QFileInfo(sourcePath).fileName();
   setStatus(warnings.isEmpty()
                 ? tr("Opened %1 from %2 — save it as an OmaShow deck").arg(name, kind)
@@ -330,7 +404,9 @@ QVariantMap Backend::importReport() const {
           {QStringLiteral("name"), QFileInfo(m_importedFrom).fileName()},
           {QStringLiteral("kind"), Interchange::kindName(Interchange::kindOf(m_importedFrom))},
           {QStringLiteral("warnings"), m_importWarnings},
-          {QStringLiteral("missingFonts"), Fonts::missing(m_document)}};
+          {QStringLiteral("missingFonts"), Fonts::missing(m_document)},
+          {QStringLiteral("fontSwaps"), fontSwaps()},
+          {QStringLiteral("fontsToInstall"), fontsToInstall()}};
 }
 
 QVariantList Backend::missingFonts() const { return Fonts::report(m_document); }
@@ -566,6 +642,21 @@ void Backend::acceptOpen(const Document &document, const QUrl &url) {
   m_autosave.stop(); Recovery::discard();
   setStatus(tr("Opened %1").arg(fileName()));
   emit opened();
+  if (url.isLocalFile()) requestFontCheck(url.toLocalFile());
+}
+
+// FONT-CHECK-2: asked once the deck is on screen (with fallbacks); fonts that
+// arrive later are applied in place.
+void Backend::requestFontCheck(const QString &source) {
+  if (source.isEmpty() || m_gateHandled) return;   // checked before it was shown
+  const auto rows = FontSwap::needed(m_document);
+  // The families this deck waits for; one arriving (from the deck's own
+  // download or a running pack) is applied when the window says it is safe.
+  m_deckNeeded.clear();
+  for (const auto &r : rows) m_deckNeeded.insert(r.toMap().value(QStringLiteral("family")).toString());
+  bool any = false;   // only when something can actually be fetched
+  for (const auto &r : rows) any = any || r.toMap().value(QStringLiteral("downloadable")).toBool();
+  if (any) emit fontCheckRequested(source, rows);
 }
 
 void Backend::newDeck() { createDeck(0, 1920, 1080); }
@@ -855,7 +946,30 @@ bool Backend::renderFrame(qreal time, const QString &path, int width,bool includ
 // Editing
 // ---------------------------------------------------------------------------
 
+// TEXT-FIT-1 "Dynamic size": after any change, a selected text box in that
+// mode takes the height of its text.
+// Part of the change that caused it: Undo takes both back together.
+void Backend::growSelectedTextBoxes() {
+  // selectedIds(): a single selection lives in m_selectedId alone.
+  for (const auto &id : selectedIds()) growTextBox(m_currentSlide, id);
+}
+void Backend::growTextBox(int slide, const QString &id) {
+  if (slide < 0 || slide >= m_document.slides.size()) return;
+  const auto shown = Design::resolve(m_document, slide);
+  const auto *source = shown.find(id);
+  if (!source || source->type != ObjectType::Text || source->textFit != 3) return;
+  // "Dynamic size": the height follows the text both ways, the top edge
+  // stays put. A layout's placeholder only ever grows: it keeps the room its
+  // layout gave it, so its text does not jump when the first word is typed.
+  const qreal wanted = qMax(8.0, std::ceil(TextLayout::measure(*source).renderedHeight + 1));
+  const bool shrink = source->placeholderId.isEmpty();
+  if (std::abs(wanted - source->rect.height()) <= .5 || (wanted < source->rect.height() && !shrink)) return;
+  if (auto *o = m_document.slides[slide].find(id))
+    Arrange::setRect(*o, source->rect, QRectF(source->rect.topLeft(), QSizeF(source->rect.width(), wanted)));
+}
+
 void Backend::touch() {
+  growSelectedTextBoxes();
   // Notes and reading orders never outlive what they point at.
   Review::prune(m_document);
   applyActiveShow();

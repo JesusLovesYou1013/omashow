@@ -9,6 +9,7 @@ import Omashow 1.0
 RowLayout {
     id: root
     property real value: 0
+    property bool mixed: false   // MULTI-1: several boxes, different sizes
     signal committed(real value)
     spacing: Theme.s1
 
@@ -58,6 +59,7 @@ RowLayout {
         suffix: " pt"
         decimals: 1
         value: root.snap(root.value)
+        mixed: root.mixed
         onCommitted: v => root.committed(root.snap(v))
     }
     SizeStep { objectName: "textSizeGrow"; text: "A"; caret: "\u25B4"; font.pixelSize: Theme.fsControl + 3
