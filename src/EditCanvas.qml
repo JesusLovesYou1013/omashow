@@ -515,6 +515,8 @@ Item {
             }
             onSelectionEndChanged: backend.setTextSelection(selectionStart, selectionEnd)
             onLengthChanged: root.typingFormatLen = length
+            // "Grow box to fit": the box itself grows with the typing.
+            onContentHeightChanged: if (root.editingText && backend.selection.textFit === 3) backend.growEditedTextBox(root.textSlideId, root.textObjectId, contentHeight)
             Connections {
                 target: backend
                 function onTextFormattingChanged() {
