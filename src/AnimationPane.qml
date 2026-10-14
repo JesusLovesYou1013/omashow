@@ -30,7 +30,7 @@ Rectangle {
             Layout.rightMargin: Theme.s3
             Label { text: qsTr("Animations"); font.pixelSize: Theme.fsSection; font.weight: Theme.wHeading }
             Item { Layout.fillWidth: true }
-            Label { text: pane.builds.length ? qsTr("%n click(s)", "", pane.builds.reduce((n, b) => Math.max(n, b.click), 0)) : ""; color: Theme.textMuted; font.pixelSize: Theme.fsLabel }
+            Label { text: pane.builds.length ? ((n) => n === 1 ? qsTr("1 click") : qsTr("%1 clicks").arg(n))(pane.builds.reduce((n, b) => Math.max(n, b.click), 0)) : ""; color: Theme.textMuted; font.pixelSize: Theme.fsLabel }
         }
         Rectangle { Layout.fillWidth: true; implicitHeight: Theme.hairline; color: Theme.border }
         Label {

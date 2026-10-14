@@ -1618,6 +1618,10 @@ ApplicationWindow {
 
     // Offered only when a previous session actually left work behind — a clean
     // quit leaves no journal, so an ordinary launch shows nothing.
+    // RECOVER-1: every deck a crash left behind, each with a tick box (all
+    // ticked at first). Recover or Discard acts on the ticked ones ("all" when
+    // every one is ticked). Discarding asks once more. A handled deck's
+    // journal is gone for good, so it never comes back; "Later" keeps them.
     Sheet {
         id: recoverySheet
         objectName: "recoveryDialog"
@@ -1626,26 +1630,39 @@ ApplicationWindow {
         closePolicy: Popup.NoAutoClose
         anchors.centerIn: parent
         property var candidates: []
+        property var ticked: ({})          // journalPath -> true
+        property bool confirmingDiscard: false
+        readonly property var chosen: candidates.filter(c => ticked[c.journalPath])
+        readonly property bool all: chosen.length === candidates.length
 
-        // Runs in the sheet's scope, not the row's: replacing `candidates`
-        // destroys the row that was clicked, and a handler still running in
-        // that row loses its ids (ReferenceError) before it can close the sheet.
-        function settle(handledPath) {
-            const remaining = backend.recoveryCandidates()
-                .filter(c => c.journalPath !== handledPath)
-            if (remaining.length === 0)
-                close()
-            candidates = remaining
+        function show(found) {
+            const t = {}
+            for (const c of found) t[c.journalPath] = true
+            candidates = found; ticked = t; confirmingDiscard = false
+            open()
         }
-        function discard(journalPath) {
-            backend.discardRecovery(journalPath)
-            settle(journalPath)
+        function tick(path, on) { const t = Object.assign({}, ticked); t[path] = on; ticked = t; confirmingDiscard = false }
+        function tickAll(on) { const t = {}; for (const c of candidates) t[c.journalPath] = on; ticked = t; confirmingDiscard = false }
+        // What is left after these were handled; closes when nothing is.
+        function settle(handled) {
+            const remaining = backend.recoveryCandidates().filter(c => handled.indexOf(c.journalPath) < 0)
+            confirmingDiscard = false
+            if (remaining.length === 0) { close(); return }
+            const t = {}
+            for (const c of remaining) t[c.journalPath] = ticked[c.journalPath] ?? true
+            candidates = remaining; ticked = t
         }
-        function recover(journalPath) {
-            // The journal is forgotten only once the open finishes, so leave it
-            // out of what remains rather than offering it again.
-            backend.openAsync("file://" + journalPath, true)
-            settle(journalPath)
+        function discardChosen() {
+            const paths = chosen.map(c => c.journalPath)
+            for (const p of paths) backend.discardRecovery(p)
+            settle(paths)
+        }
+        function recoverChosen() {
+            const paths = chosen.map(c => c.journalPath)
+            // The first opens here; any others each in a window of their own.
+            for (let n = 1; n < paths.length; ++n) backend.recoverInNewWindow(paths[n])
+            if (paths.length > 0) backend.openAsync("file://" + paths[0], true)
+            settle(paths)
         }
 
         ColumnLayout {
@@ -1657,43 +1674,95 @@ ApplicationWindow {
                 font.pixelSize: Theme.fsControl
             }
 
+            CheckBox {
+                objectName: "recoverySelectAll"
+                visible: recoverySheet.candidates.length > 1
+                text: qsTr("Select all")
+                checkState: recoverySheet.all ? Qt.Checked : recoverySheet.chosen.length === 0 ? Qt.Unchecked : Qt.PartiallyChecked
+                onClicked: recoverySheet.tickAll(!recoverySheet.all)
+            }
+
             Repeater {
                 model: recoverySheet.candidates
-                RowLayout {
+                CheckBox {
                     required property var modelData
+                    required property int index
+                    objectName: "recoveryRow" + index
                     Layout.fillWidth: true
-                    spacing: Theme.s3
-
-                    ColumnLayout {
+                    checked: recoverySheet.ticked[modelData.journalPath] ?? false
+                    onClicked: recoverySheet.tick(modelData.journalPath, checked)
+                    contentItem: ColumnLayout {
                         spacing: 0
                         Label {
-                            text: modelData.name
+                            leftPadding: Theme.s5 + Theme.s1
+                            text: modelData.name + "  ·  " + modelData.savedAt
                             color: Theme.textPrimary
                             font.pixelSize: Theme.fsControl
                             font.weight: Theme.wHeading
                         }
                         Label {
-                            text: modelData.savedAt
+                            leftPadding: Theme.s5 + Theme.s1
+                            Layout.maximumWidth: 420
+                            elide: Text.ElideRight
+                            visible: (modelData.slides ?? 0) > 0
+                            text: ((modelData.slides ?? 0) === 1 ? qsTr("1 slide") : qsTr("%1 slides").arg(modelData.slides))
+                                  + ((modelData.firstWords ?? "") !== "" ? "  ·  “" + modelData.firstWords + "”" : "")
                             color: Theme.textMuted
                             font.pixelSize: Theme.fsLabel
                         }
-                    }
-                    Item { Layout.fillWidth: true }
-                    ToolAction {
-                        text: qsTr("Discard")
-                        onClicked: recoverySheet.discard(modelData.journalPath)
-                    }
-                    ToolAction {
-                        text: qsTr("Recover")
-                        onClicked: recoverySheet.recover(modelData.journalPath)
                     }
                 }
             }
 
             Label {
-                text: qsTr("Recovering opens a copy — nothing already saved is written over.")
+                Layout.maximumWidth: 460
+                wrapMode: Text.Wrap
+                text: qsTr("Recovering opens a copy — nothing already saved is written over. Several open in a window each.")
                 color: Theme.textMuted
                 font.pixelSize: Theme.fsLabel
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: Theme.s2
+                Button {
+                    objectName: "recoveryLater"
+                    text: qsTr("Later")
+                    visible: !recoverySheet.confirmingDiscard
+                    ToolTip.visible: hovered; ToolTip.delay: Theme.tooltipDelay
+                    ToolTip.text: qsTr("Keep them and ask again next time")
+                    onClicked: recoverySheet.close()
+                }
+                Item { Layout.fillWidth: true }
+                Label {
+                    visible: recoverySheet.confirmingDiscard
+                    text: qsTr("This work will be gone for good.")
+                    color: Theme.warning
+                }
+                Button {
+                    objectName: "recoveryKeep"
+                    visible: recoverySheet.confirmingDiscard
+                    text: qsTr("Keep")
+                    onClicked: recoverySheet.confirmingDiscard = false
+                }
+                Button {
+                    objectName: "recoveryDiscard"
+                    enabled: recoverySheet.chosen.length > 0
+                    text: recoverySheet.confirmingDiscard
+                          ? (recoverySheet.all ? qsTr("Yes, discard all") : qsTr("Yes, discard %1").arg(recoverySheet.chosen.length))
+                          : (recoverySheet.all && recoverySheet.candidates.length > 1 ? qsTr("Discard all")
+                             : recoverySheet.candidates.length > 1 ? qsTr("Discard %1").arg(recoverySheet.chosen.length) : qsTr("Discard"))
+                    onClicked: recoverySheet.confirmingDiscard ? recoverySheet.discardChosen() : (recoverySheet.confirmingDiscard = true)
+                }
+                Button {
+                    objectName: "recoveryRecover"
+                    visible: !recoverySheet.confirmingDiscard
+                    highlighted: true
+                    enabled: recoverySheet.chosen.length > 0
+                    text: recoverySheet.all && recoverySheet.candidates.length > 1 ? qsTr("Recover all")
+                          : recoverySheet.candidates.length > 1 ? qsTr("Recover %1").arg(recoverySheet.chosen.length) : qsTr("Recover")
+                    onClicked: recoverySheet.recoverChosen()
+                }
             }
         }
     }
@@ -1712,11 +1781,8 @@ ApplicationWindow {
         Theme.frameActive = active
         win.sanePanels()
         presenter.attach(audienceWindow,consoleWindow,win)
-        const found = backend.recoveryCandidates()
-        if (found.length > 0) {
-            recoverySheet.candidates = found
-            recoverySheet.open()
-        }
+        const found = backend.recoveryPromptSuppressed() ? [] : backend.recoveryCandidates()
+        if (found.length > 0) recoverySheet.show(found)
     }
 
     Sheet {

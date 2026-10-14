@@ -326,6 +326,11 @@ public:
     Q_INVOKABLE QVariantList recoveryCandidates() const;
     Q_INVOKABLE void recoverFrom(const QString &journalPath);
     Q_INVOKABLE void discardRecovery(const QString &journalPath);
+    // RECOVER-1: one recovered deck in another window (Recover with several ticked).
+    Q_INVOKABLE bool recoverInNewWindow(const QString &journalPath);
+    // Set for a window started to recover one deck: it does not show the prompt.
+    Q_INVOKABLE bool recoveryPromptSuppressed() const { return m_recoveryPromptSuppressed; }
+    void setRecoveryPromptSuppressed(bool on) { m_recoveryPromptSuppressed = on; }
 
     // --- export --------------------------------------------------------------
     Q_INVOKABLE void exportPdfDialog(bool pagePerBuildStage = false, bool includeSkipped = false);
@@ -889,6 +894,7 @@ private:
     void gateOpen(Gate gate);
     void completeOpen(const Gate &gate);
     bool m_fontsPending = false;
+    bool m_recoveryPromptSuppressed = false;
     QStringList m_fontRemoveLeft;   // family folders still to delete
     int m_fontRemoveTotal = 0;
     void removeNextFont();

@@ -98,7 +98,7 @@ void Backend::removeNextFont() {
     m_packStatus.clear();
     emit fontDownloadChanged();
     // Fonts already loaded stay usable until OmaShow is closed.
-    setStatus(gone ? tr("Removed %n downloaded font(s); open presentations keep them until OmaShow is restarted", "", gone)
+    setStatus(gone ? (gone == 1 ? tr("Removed 1 downloaded font; open presentations keep it until OmaShow is restarted") : tr("Removed %1 downloaded fonts; open presentations keep them until OmaShow is restarted").arg(gone))
                    : tr("No downloaded fonts to remove"));
     emit fontRemoveFinished(gone);
 }
