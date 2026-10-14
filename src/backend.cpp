@@ -946,8 +946,8 @@ bool Backend::renderFrame(qreal time, const QString &path, int width,bool includ
 // Editing
 // ---------------------------------------------------------------------------
 
-// TEXT-FIT-1 "Grow box to fit": after any change, a selected text box in
-// that mode is made tall enough for its text (downwards only, never smaller).
+// TEXT-FIT-1 "Dynamic size": after any change, a selected text box in that
+// mode takes the height of its text.
 // Part of the change that caused it: Undo takes both back together.
 void Backend::growSelectedTextBoxes() {
   // selectedIds(): a single selection lives in m_selectedId alone.
@@ -958,10 +958,14 @@ void Backend::growTextBox(int slide, const QString &id) {
   const auto shown = Design::resolve(m_document, slide);
   const auto *source = shown.find(id);
   if (!source || source->type != ObjectType::Text || source->textFit != 3) return;
-  const auto metrics = TextLayout::measure(*source);
-  if (!metrics.overflow || metrics.renderedHeight <= source->rect.height() + .5) return;
+  // "Dynamic size": the height follows the text both ways, the top edge
+  // stays put. A layout's placeholder only ever grows: it keeps the room its
+  // layout gave it, so its text does not jump when the first word is typed.
+  const qreal wanted = qMax(8.0, std::ceil(TextLayout::measure(*source).renderedHeight + 1));
+  const bool shrink = source->placeholderId.isEmpty();
+  if (std::abs(wanted - source->rect.height()) <= .5 || (wanted < source->rect.height() && !shrink)) return;
   if (auto *o = m_document.slides[slide].find(id))
-    Arrange::setRect(*o, source->rect, QRectF(source->rect.topLeft(), QSizeF(source->rect.width(), std::ceil(metrics.renderedHeight + 1))));
+    Arrange::setRect(*o, source->rect, QRectF(source->rect.topLeft(), QSizeF(source->rect.width(), wanted)));
 }
 
 void Backend::touch() {

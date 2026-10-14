@@ -380,7 +380,7 @@ Rectangle {
                     objectName: "textFitMode"
                     Layout.fillWidth: true
                     readonly property var modes: [3, 1, 2, 0]
-                    model: [qsTr("Grow box to fit"), qsTr("Shrink text to fit"), qsTr("Let text spill over"), qsTr("Cut off and warn")]
+                    model: [qsTr("Dynamic size"), qsTr("Shrink text to fit"), qsTr("Let text spill over"), qsTr("Cut off and warn")]
                     currentIndex: Math.max(0, modes.indexOf(root.sel.textFit ?? 3))
                     onActivated: backend.setSelectedProperty("textFit", modes[currentIndex])
                 }
@@ -717,7 +717,8 @@ Rectangle {
             }
             Label { visible: (root.sel.listStyle ?? 0) > 0; text: qsTr("Leading tabs nest list items."); color: Theme.textMuted; font.pixelSize: Theme.fsLabel }
             Divider {}
-            Button { objectName: "fitTextBox"; Layout.fillWidth: true; text: qsTr("Resize box to fit text"); onClicked: backend.fitSelectedTextBox() }
+            // A dynamic box already does this by itself.
+            Button { objectName: "fitTextBox"; Layout.fillWidth: true; visible: root.sel.textFit !== 3; text: qsTr("Resize box to fit text"); onClicked: backend.fitSelectedTextBox() }
             Item { Layout.fillHeight: true }
         }
 

@@ -591,10 +591,13 @@ void Backend::growEditedTextBox(const QString &slideId, const QString &id, qreal
   if(index<0) return;
   const auto resolved=Design::resolve(m_document,index);
   const auto *shown=resolved.find(id);
-  if(!shown || shown->type!=ObjectType::Text || shown->textFit!=3 || height<=shown->rect.height()+.5) return;
+  if(!shown || shown->type!=ObjectType::Text || shown->textFit!=3) return;
+  // Both ways, as in growTextBox: a placeholder only grows.
+  const qreal wanted=qMax(8.0,std::ceil(height+1));
+  if(std::abs(wanted-shown->rect.height())<=.5 || (wanted<shown->rect.height() && !shown->placeholderId.isEmpty())) return;
   auto *object=m_document.slides[index].find(id); if(!object) return;
   if(m_editGrowId!=id || m_editGrowSlide!=slideId) { m_editGrowSlide=slideId; m_editGrowId=id; m_editGrowRect=shown->rect; }
-  Arrange::setRect(*object,shown->rect,QRectF(shown->rect.topLeft(),QSizeF(shown->rect.width(),std::ceil(height+1))));
+  Arrange::setRect(*object,shown->rect,QRectF(shown->rect.topLeft(),QSizeF(shown->rect.width(),wanted)));
   // Not an edit of its own: no undo step, no "unsaved" yet. Nothing else moves.
   ++m_revision;
   emit documentChanged();
