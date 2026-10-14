@@ -371,6 +371,9 @@ ApplicationWindow {
         // ── Design ──
         { id: "slideSizeAction", tab: "design", group: "size", label: qsTr("Slide size…"), icon: "scan", also: "change the slide size aspect ratio widescreen portrait", on: () => !backend.startVisible, run: () => { win.commitEditors(); slideSizeDialog.show() } },
         { id: "ribbonDesignMasters", tab: "design", group: "size", label: qsTr("Edit masters and layouts"), icon: "layout-template", also: "design theme master layout template remove what nothing uses unused tidy hygiene", run: () => { win.commitEditors(); win.workspace = 1 } },
+        // FONT-SETTINGS-1 (Daniel): one button for everything about the free fonts.
+        { id: "fontSettingsItem", tab: "design", group: "fonts", label: qsTr("Fonts…"), icon: "type", also: "extra fonts pack office windows free matches download delete list check calibri aptos cambria always download missing",
+          tip: qsTr("Free look-alikes for Office fonts: checking, downloading, listing and deleting them"), run: () => { win.commitEditors(); fontSettingsDialog.show() } },
         // ── Arrange ──
         { id: "ribbonGroup", tab: "arrange", group: "group", label: qsTr("Group"), icon: "group", keys: "Ctrl+G", on: () => backend.selectionCount > 1, run: () => backend.groupSelected() },
         { id: "ribbonUngroup", tab: "arrange", group: "group", label: qsTr("Ungroup"), icon: "ungroup", keys: "Ctrl+Shift+G", on: () => !!backend.selection.groupId, run: () => backend.ungroupSelected() },
@@ -407,12 +410,6 @@ ApplicationWindow {
         { id: "ribbonSnap", tab: "view", group: "guides", kind: "toggle", label: qsTr("Snap to guides"), also: "align magnet", checked: () => backend.snapEnabled, run: () => backend.snapEnabled = !backend.snapEnabled },
         { id: "reducedMotionItem", tab: "view", group: "access", kind: "toggle", label: qsTr("Less movement"), also: "reduced motion animation accessibility vestibular allow movement again", checked: () => backend.reducedMotion, run: () => backend.reducedMotion = !backend.reducedMotion },
         { id: "highContrastItem", tab: "view", group: "access", kind: "toggle", label: qsTr("Stronger contrast"), also: "high contrast accessibility legible ordinary", checked: () => backend.highContrast, run: () => backend.highContrast = !backend.highContrast },
-        { id: "extraFontsPackItem", tab: "view", group: "fonts", kind: "toggle", label: qsTr("Extra fonts pack"), also: "office windows fonts free matches download pack calibri aptos cambria",
-          tip: qsTr("Free look-alikes for every Office font, in OmaShow's own font folder; your system fonts are not changed"), checked: () => backend.extraFontsPack,
-          run: () => { backend.extraFontsPack = !backend.extraFontsPack; if (backend.extraFontsPack) fontCheckDialog.showPack() } },
-        { id: "fontAutoDownloadItem", tab: "view", group: "fonts", kind: "toggle", label: qsTr("Always download missing free fonts"), also: "office windows fonts free matches download calibri aptos cambria automatic",
-          tip: qsTr("When a presentation uses Office fonts, fetch their free look-alikes without asking (only OmaShow uses them)"), checked: () => backend.fontAutoDownload,
-          run: () => { backend.fontAutoDownload = !backend.fontAutoDownload } },
         // ── Animate (ANIM-001): the only place an animation is chosen, timed or ordered ──
         { id: "animPreview", tab: "animate", group: "preview", label: qsTr("Preview"), icon: "play", also: "play animation build preview slide",
           tip: qsTr("Play the chosen animation, or the whole slide when none is chosen"), on: () => backend.builds.length > 0,
@@ -863,6 +860,7 @@ ApplicationWindow {
     FontsDialog { id: fontsDialog }
     // FONT-CHECK-1: say which free fonts an opened PowerPoint deck needs.
     FontCheckDialog { id: fontCheckDialog }
+    FontSettingsDialog { id: fontSettingsDialog; onPackRequested: fontCheckDialog.showPack() }
     // FONT-CHECK-3: while an opening deck waits for its font check, a short
     // loading state (and nothing to click behind it: no show can start).
     Popup {

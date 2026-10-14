@@ -317,6 +317,8 @@ void Backend::gateOpen(Gate gate) {
   bool any = false;
   for (const auto &r : rows) any = any || r.toMap().value(QStringLiteral("downloadable")).toBool();
   if (!any || gate.source.isEmpty() || qEnvironmentVariableIsSet("OMASHOW_NO_FONT_SWAP")) { completeOpen(gate); return; }
+  // FONT-SETTINGS-1: the check is switched off: fallbacks, no popup, no download.
+  if (!fontCheckOnOpen()) { m_gateHandled = true; completeOpen(gate); m_gateHandled = false; return; }
   m_deckNeeded.clear();
   for (const auto &r : rows) m_deckNeeded.insert(r.toMap().value(QStringLiteral("family")).toString());
   // Decided here, not in the window: no popup wanted, or no window at all.
