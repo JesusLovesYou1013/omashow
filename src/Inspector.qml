@@ -74,7 +74,7 @@ Rectangle {
     property string tabFor: ""
     Connections {
         target: backend
-        // Tabs are Text, Style, Arrange (TEXT-FIT-1, Daniel). Picking another
+        // Tabs are Text, Style, Arrange (TEXT-FIT-1). Picking another
         // object lands on Text when it holds text, and never leaves Text
         // showing for one that does not. A change to the same object (which
         // also arrives here) leaves the tab alone.

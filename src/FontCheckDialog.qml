@@ -8,7 +8,7 @@ import Omashow 1.0
 //       click fetches them into OmaShow's own font folder (never the
 //       system's) and the open deck is redrawn with them in place; or carry
 //       on with sized fallbacks.
-// pack: the Extra fonts pack (Daniel's request): free matches for every
+// pack: the Extra fonts pack: free matches for every
 //       Office font. Runs in the background; this dialog can be closed and
 //       reopened from the status line to watch or cancel.
 Sheet {

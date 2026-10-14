@@ -3,7 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import Omashow 1.0
 
-// FONT-SETTINGS-1 (Daniel): everything about the free fonts behind one button
+// FONT-SETTINGS-1: everything about the free fonts behind one button
 // on the Design tab, so the ribbon carries one entry instead of several:
 // whether decks are checked on opening, the Extra fonts pack, what has been
 // downloaded. The Extra fonts pack is one checkbox and nothing else: ticking

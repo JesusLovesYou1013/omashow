@@ -127,7 +127,7 @@ class Backend : public QObject {
     Q_PROPERTY(bool reducedMotion READ reducedMotion WRITE setReducedMotion NOTIFY viewPreferencesChanged)
     Q_PROPERTY(bool highContrast READ highContrast WRITE setHighContrast NOTIFY viewPreferencesChanged)
     Q_PROPERTY(bool fontsPending READ fontsPending NOTIFY fontDownloadChanged)
-    // FONT-CHECK-3: the Extra fonts pack (Daniel's request): free matches for
+    // FONT-CHECK-3: the Extra fonts pack: free matches for
     // every Office font in the map, fetched into OmaShow's own folder.
     Q_PROPERTY(bool extraFontsPack READ extraFontsPack WRITE setExtraFontsPack NOTIFY extraFontsPackChanged)
     Q_PROPERTY(bool packRunning READ packRunning NOTIFY fontDownloadChanged)
@@ -136,7 +136,7 @@ class Backend : public QObject {
     Q_PROPERTY(double packDone READ packDone NOTIFY fontDownloadChanged)
     Q_PROPERTY(double packBytes READ packBytes NOTIFY fontDownloadChanged)
     Q_PROPERTY(QString packStatus READ packStatus NOTIFY fontDownloadChanged)
-    // FONT-CHECK-3 (Daniel): the font check comes first. An opened deck that
+    // FONT-CHECK-3: the font check comes first. An opened deck that
     // needs downloadable fonts is held here, not shown, until its fonts are in
     // or the fallback is chosen; then it is displayed already correct.
     Q_PROPERTY(bool fontGate READ fontGate NOTIFY fontGateChanged)

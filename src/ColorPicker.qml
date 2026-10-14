@@ -3,7 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import Omashow 1.0
 
-// COLOR-PICK-1 (Daniel): the colour chooser behind every colour swatch.
+// COLOR-PICK-1: the colour chooser behind every colour swatch.
 // Two tabs: Swatches (a grid of shades of each main colour, plus greys) and
 // Wheel (any colour: hue and strength on the wheel, brightness below). The hex
 // of what is chosen shows at the bottom, editable, before "Use colour".

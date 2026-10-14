@@ -371,7 +371,7 @@ ApplicationWindow {
         // ── Design ──
         { id: "slideSizeAction", tab: "design", group: "size", label: qsTr("Slide size…"), icon: "scan", also: "change the slide size aspect ratio widescreen portrait", on: () => !backend.startVisible, run: () => { win.commitEditors(); slideSizeDialog.show() } },
         { id: "ribbonDesignMasters", tab: "design", group: "size", label: qsTr("Edit masters and layouts"), icon: "layout-template", also: "design theme master layout template remove what nothing uses unused tidy hygiene", run: () => { win.commitEditors(); win.workspace = 1 } },
-        // FONT-SETTINGS-1 (Daniel): one button for everything about the free fonts.
+        // FONT-SETTINGS-1: one button for everything about the free fonts.
         { id: "fontSettingsItem", tab: "design", group: "fonts", label: qsTr("Fonts…"), icon: "type", also: "extra fonts pack office windows free matches download delete list check calibri aptos cambria always download missing",
           tip: qsTr("Free look-alikes for Office fonts: checking, downloading, listing and deleting them"), run: () => { win.commitEditors(); fontSettingsDialog.show() } },
         // ── Arrange ──
@@ -542,7 +542,7 @@ ApplicationWindow {
     component RibbonButton: ToolAction {
         id: rb
         property var c
-        // RIBBON-HOVER-1 (Daniel): hover fades in and out on the ribbon, so a
+        // RIBBON-HOVER-1: hover fades in and out on the ribbon, so a
         // row scrolling under the pointer does not flicker.
         property int hoverFade: 160
         objectName: c.id
@@ -1152,7 +1152,7 @@ ApplicationWindow {
                                 enabled: tabFlick.overflows
                                 acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
                                 onWheel: (e) => tabFlick.contentX = Math.max(0, Math.min(tabFlick.contentWidth - tabFlick.width,
-                                                                                         tabFlick.contentX - 0.675 * (e.angleDelta.y !== 0 ? e.angleDelta.y : e.angleDelta.x)))   // 25% slower, then 10% more (Daniel): 81 px a notch
+                                                                                         tabFlick.contentX - 0.675 * (e.angleDelta.y !== 0 ? e.angleDelta.y : e.angleDelta.x)))   // 81 px a notch: slower reads calmer
                             }
                             ScrollBar.horizontal: ScrollBar {
                                 objectName: "ribbonScrollBar"

@@ -582,7 +582,7 @@ QVariantList rowsFor(const QStringList &offices, bool all = false) {
 }
 } // namespace
 
-// FONT-CHECK-3: the Extra fonts pack, Daniel's request: the free match OmaShow
+// FONT-CHECK-3: the Extra fonts pack: the free match OmaShow
 // would fetch for every Office font in the map, each row marked installed or not.
 QVariantList FontSwap::pack() {
     QStringList offices;
@@ -716,7 +716,7 @@ const FontSwap::Option *FontSwap::fallback(const QString &officeFamily, int styl
             const qreal width = corpus ? m.horizontalAdvance(kCorpus) / 1000 / kCorpus.size() : m.horizontalAdvance(kSentence) / 1000;
             const qreal office = corpus ? entry->advance[style] : entry->sentence;
             if (width <= 0 || office <= 0) break;
-            // Sized by width (Daniel): the fallback sets the same sentence
+            // Sized by width: the fallback sets the same sentence
             // as wide as the Office font, so lines break where PowerPoint's do.
             const qreal sameSize = width / office;
             qreal size = office / width;
