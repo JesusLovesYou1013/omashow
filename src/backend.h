@@ -210,10 +210,17 @@ public:
     void setFontCheckOnOpen(bool on);
     // The free fonts OmaShow has downloaded into its own folder: {family, bytes}.
     Q_INVOKABLE QVariantList downloadedFonts() const;
-    // Removes them (only folders of families OmaShow downloads; anything put
-    // there by hand stays). Stops downloads and turns the Extra fonts pack
-    // off. Returns how many families went.
-    Q_INVOKABLE int deleteDownloadedFonts();
+    // Unticking the Extra fonts pack: removes what OmaShow downloaded (only
+    // folders of families it downloads; anything put there by hand stays),
+    // a folder per turn of the event loop so the window can show progress.
+    // Stops downloads and turns the pack off first.
+    Q_INVOKABLE void removeDownloadedFonts();
+    Q_PROPERTY(bool fontRemoveRunning READ fontRemoveRunning NOTIFY fontRemoveChanged)
+    Q_PROPERTY(int fontRemoveDone READ fontRemoveDone NOTIFY fontRemoveChanged)
+    Q_PROPERTY(int fontRemoveTotal READ fontRemoveTotal NOTIFY fontRemoveChanged)
+    bool fontRemoveRunning() const { return !m_fontRemoveLeft.isEmpty(); }
+    int fontRemoveDone() const { return m_fontRemoveTotal - int(m_fontRemoveLeft.size()); }
+    int fontRemoveTotal() const { return m_fontRemoveTotal; }
     // The upright weights (100-900) the typeface really has, ascending. A name
     // that is not installed answers for the face it falls back to. Cached per
     // family, so the inspector asks once per family change.
@@ -653,6 +660,8 @@ signals:
     void fontGateChanged();
     void packFinished(int ready, int total, const QVariantMap &failed, bool offline);
     void fontAutoDownloadChanged();
+    void fontRemoveChanged();
+    void fontRemoveFinished(int removed);
     void fontDownloadFinished(const QStringList &installed, const QVariantMap &failed, bool offline, bool cancelled);
     // A deck was opened (local file or import source) that names Office fonts
     // whose free matches are not here.
@@ -876,6 +885,9 @@ private:
     void gateOpen(Gate gate);
     void completeOpen(const Gate &gate);
     bool m_fontsPending = false;
+    QStringList m_fontRemoveLeft;   // family folders still to delete
+    int m_fontRemoveTotal = 0;
+    void removeNextFont();
     void requestFontCheck(const QString &source);
     QTimer m_exportTicker;
     int m_exportSerial = 0;

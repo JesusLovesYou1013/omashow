@@ -76,20 +76,31 @@ QVariantList Backend::downloadedFonts() const {
     }
     return rows;
 }
-int Backend::deleteDownloadedFonts() {
+void Backend::removeDownloadedFonts() {
+    if (fontRemoveRunning()) return;
     setExtraFontsPack(false);   // or it would want them straight back
     if (m_fontDownloader) m_fontDownloader->cancel();
-    int gone = 0;
     const QDir root(FontSandbox::dir());
     for (const auto &folder : root.entryList(QDir::Dirs | QDir::NoDotAndDotDot))
-        if (!FontDownloader::familyForFolder(folder).isEmpty() && QDir(root.filePath(folder)).removeRecursively()) ++gone;
+        if (!FontDownloader::familyForFolder(folder).isEmpty()) m_fontRemoveLeft.append(root.filePath(folder));
+    m_fontRemoveTotal = int(m_fontRemoveLeft.size());
+    emit fontRemoveChanged();
+    QTimer::singleShot(0, this, &Backend::removeNextFont);
+}
+void Backend::removeNextFont() {
+    if (!m_fontRemoveLeft.isEmpty()) {
+        QDir(m_fontRemoveLeft.takeFirst()).removeRecursively();
+        emit fontRemoveChanged();
+        if (!m_fontRemoveLeft.isEmpty()) { QTimer::singleShot(0, this, &Backend::removeNextFont); return; }
+    }
+    const int gone = m_fontRemoveTotal;
     m_packRowsBuilt = false;
     m_packStatus.clear();
     emit fontDownloadChanged();
     // Fonts already loaded stay usable until OmaShow is closed.
-    setStatus(gone ? tr("Deleted %n downloaded font(s); open presentations keep them until OmaShow is restarted", "", gone)
-                   : tr("No downloaded fonts to delete"));
-    return gone;
+    setStatus(gone ? tr("Removed %n downloaded font(s); open presentations keep them until OmaShow is restarted", "", gone)
+                   : tr("No downloaded fonts to remove"));
+    emit fontRemoveFinished(gone);
 }
 
 bool Backend::openFontSandbox() {
