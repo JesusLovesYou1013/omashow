@@ -542,6 +542,9 @@ ApplicationWindow {
     component RibbonButton: ToolAction {
         id: rb
         property var c
+        // RIBBON-HOVER-1 (Daniel): hover fades in and out on the ribbon, so a
+        // row scrolling under the pointer does not flicker.
+        property int hoverFade: 160
         objectName: c.id
         text: c.text ? c.text() : c.label
         icon.name: c.icon ?? ""
@@ -1149,7 +1152,7 @@ ApplicationWindow {
                                 enabled: tabFlick.overflows
                                 acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
                                 onWheel: (e) => tabFlick.contentX = Math.max(0, Math.min(tabFlick.contentWidth - tabFlick.width,
-                                                                                         tabFlick.contentX - 0.75 * (e.angleDelta.y !== 0 ? e.angleDelta.y : e.angleDelta.x)))   // 25% slower (Daniel)
+                                                                                         tabFlick.contentX - 0.675 * (e.angleDelta.y !== 0 ? e.angleDelta.y : e.angleDelta.x)))   // 25% slower, then 10% more (Daniel): 81 px a notch
                             }
                             ScrollBar.horizontal: ScrollBar {
                                 objectName: "ribbonScrollBar"
