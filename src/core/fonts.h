@@ -33,6 +33,15 @@ QString suggested(const QString &family);
 // For the sheet: {family, uses, suggested} for every missing family.
 QVariantList report(const Document &document);
 
+// Typefaces OmaShow carries itself (Inter, OFL, static TrueType), so a deck
+// in the default theme looks the same on every computer and in PowerPoint.
+// Loaded app-wide once, right after the application object exists.
+void loadBundled();
+
+// The bundled files of a family as resource paths, by slot: regular, bold,
+// italic, bold italic (empty when that style or the family is not bundled).
+QStringList bundledFiles(const QString &family);
+
 // family → replacement, applied everywhere. Returns how many names changed.
 int substitute(Document &document, const QMap<QString, QString> &replacements);
 

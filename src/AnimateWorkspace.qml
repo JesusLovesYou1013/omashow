@@ -3,25 +3,24 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import Omashow 1.0
 
-// Animate: the slide, its build timeline under it, and the selected build's
-// settings on the right — the layout of the Animate concept. Everything here
-// edits real build steps; the view is the same pure-function-of-t evaluator
-// Present and export use.
+// The timeline view: the slide, its animations laid out in time under it, and
+// on the right the exact amounts and the slide transition. ANIM-001: choosing,
+// timing and ordering animations moved to the Animate tab; what is left here
+// exists nowhere else (bars to drag, scrubbing, steps, speed, exact amounts).
+// The view is the same pure-function-of-t evaluator Present and export use.
 RowLayout {
     id: root
     objectName: "animateWorkspace"
     readonly property var transition: backend.slideTransition
     spacing: 0
-    property int selectedBuild: 0
+    // The window owns the chosen row (shared with the pane and the tab).
+    property int selectedBuild: -1
+    property var nameOf: (b) => ""
+    signal rowChosen(int index)
     property real pixelsPerSecond: 120
     readonly property var build: backend.builds[selectedBuild] ?? ({})
     readonly property real tickStep: pixelsPerSecond >= 160 ? 0.25 : pixelsPerSecond >= 70 ? 0.5 : 1
-    readonly property var effects: [qsTr("None"), qsTr("Fade"), qsTr("Rise"), qsTr("Media")]
-    readonly property var triggers: [qsTr("At time"), qsTr("On click"), qsTr("With previous"), qsTr("After previous")]
     function update(key,value) { backend.setBuildProperty(selectedBuild,key,value) }
-    function add(phase) {
-        selectedBuild = selectionBuilds.visible && selectionBuilds.checked ? backend.addBuildForSelection(phase,1) : backend.addBuild(target.currentValue,phase,1)
-    }
     function snapTime(value, ownIndex) {
         let best = Math.max(0,value), distance = Theme.snapPixels / root.pixelsPerSecond
         const candidates = [0,backend.localTime]
@@ -32,7 +31,7 @@ RowLayout {
     // Build-in bars take the accent; build-out and media bars the motion colour,
     // so the two directions read apart at a glance.
     function barColour(step) { return step.effect === 3 ? Theme.success : step.phase === 1 ? Theme.aiAccent : Theme.accent }
-    Connections { target: backend; function onCurrentSlideChanged() { root.selectedBuild = 0; backend.setLocalTime(0) } }
+    Connections { target: backend; function onCurrentSlideChanged() { backend.setLocalTime(0) } }
 
     component ToolAction: Button {
         property string tip: ""
@@ -58,24 +57,9 @@ RowLayout {
                 anchors.leftMargin: Theme.s3
                 anchors.rightMargin: Theme.s3
                 spacing: Theme.s1
-                Label { text: qsTr("Object"); color: Theme.textSecondary; Layout.rightMargin: Theme.s1 }
-                ComboBox {
-                    id: target
-                    Layout.preferredWidth: Theme.wInspector * 0.7
-                    model: backend.slideObjects; textRole: "name"; valueRole: "id"
-                    currentIndex: Math.max(0,model.findIndex(o => o.id === backend.selectedId))
-                    Accessible.name: qsTr("Object to animate")
-                }
-                CheckBox { id: selectionBuilds; visible: backend.selectionCount > 1; checked: true
-                           text: qsTr("All %1 selected").arg(backend.selectionCount) }
-                Rectangle { implicitWidth: Theme.hairline; Layout.fillHeight: true; Layout.margins: Theme.s3; color: Theme.border }
-                ToolAction { objectName: "addBuildIn"; icon.name: "plus"; text: qsTr("Build In"); enabled: target.currentIndex >= 0; tip: qsTr("Add a build that brings the object in"); onClicked: root.add(0) }
-                ToolAction { icon.name: "plus"; text: qsTr("Build Out"); enabled: target.currentIndex >= 0; tip: qsTr("Add a build that takes the object away"); onClicked: root.add(1) }
-                Item { Layout.fillWidth: true }
-                ToolAction { icon.name: "eye"; text: qsTr("Preview"); enabled: !!root.build.targetId; tip: qsTr("Play the selected build"); onClicked: backend.previewBuild(root.selectedBuild) }
-                Button { icon.name: backend.playing ? "pause" : "play"; text: backend.playing ? qsTr("Pause") : qsTr("Play"); highlighted: true
-                         implicitHeight: Theme.hToolButton; onClicked: backend.previewSlide()
-                         ToolTip.visible: hovered; ToolTip.delay: Theme.tooltipDelay; ToolTip.text: qsTr("Play this slide's builds  Space") }
+                Label { text: qsTr("Timeline"); font.weight: Theme.wHeading }
+                Label { Layout.fillWidth: true; elide: Text.ElideRight; color: Theme.textMuted
+                        text: qsTr("Choose and time animations on the Animate tab; drag a bar here to move it in time.") }
             }
             Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: Theme.hairline; color: Theme.border }
         }
@@ -170,7 +154,7 @@ RowLayout {
                                 property real draftDuration: modelData.duration
                                 Rectangle { anchors.fill: parent; color: track.chosen ? Theme.withAlpha(Theme.accent, 0.06) : "transparent" }
                                 Rectangle { anchors.bottom: parent.bottom; height: Theme.hairline; width: parent.width; color: Theme.border }
-                                MouseArea { width: Theme.wTrackLabel; height: parent.height; onClicked: root.selectedBuild = track.index }
+                                MouseArea { width: Theme.wTrackLabel; height: parent.height; onClicked: root.rowChosen(track.index) }
                                 Row {
                                     x: Theme.s3; height: parent.height; spacing: Theme.s2
                                     Icon { name: track.modelData.trigger === 1 ? "mouse-pointer-2" : track.modelData.effect === 3 ? "clapperboard" : "sparkles"
@@ -198,7 +182,7 @@ RowLayout {
                                                 x: parent.width - width / 2; anchors.verticalCenter: parent.verticalCenter }
                                     Label { anchors.fill: parent; anchors.leftMargin: Theme.s3; anchors.rightMargin: Theme.s3; elide: Text.ElideRight
                                             verticalAlignment: Text.AlignVCenter; font.pixelSize: Theme.fsLabel
-                                            text: root.effects[track.modelData.effect] + (track.modelData.effect===3 ? "" : track.modelData.phase === 1 ? qsTr(" out") : qsTr(" in"))
+                                            text: root.nameOf(track.modelData)
                                             color: Theme.textPrimary }
                                     MouseArea {
                                         anchors.fill: parent
@@ -207,7 +191,7 @@ RowLayout {
                                         cursorShape: Qt.SizeHorCursor
                                         property real grab: 0
                                         onPressed: mouse => {
-                                            root.selectedBuild = track.index
+                                            root.rowChosen(track.index)
                                             backend.pause()
                                             grab = mapToItem(tracks,mouse.x,mouse.y).x
                                             track.draftStart = track.modelData.start
@@ -217,7 +201,11 @@ RowLayout {
                                         onReleased: {
                                             const index = track.index, start = Math.round(track.draftStart * 100)/100
                                             track.moving = false
-                                            if (start !== track.modelData.start) backend.setBuildProperty(index,"start",start)
+                                            // ANIM-001: a drag moves an animation in time without changing how
+                                            // it starts: an On click / With / After one changes its delay.
+                                            if (start === track.modelData.start) return
+                                            if (track.modelData.trigger === 0) backend.setBuildProperty(index,"start",start)
+                                            else backend.setBuildProperty(index,"delay",Math.max(0, Math.round(((track.modelData.delay ?? 0) + start - track.modelData.start) * 100) / 100))
                                         }
                                         onCanceled: track.moving = false
                                     }
@@ -227,7 +215,7 @@ RowLayout {
                                         enabled: track.modelData.effect!==3
                                         cursorShape: Qt.SizeHorCursor
                                         property real grab: 0
-                                        onPressed: mouse => { root.selectedBuild = track.index; backend.pause(); grab = mapToItem(tracks,mouse.x,mouse.y).x; track.draftDuration = track.modelData.duration; track.trimming = true }
+                                        onPressed: mouse => { root.rowChosen(track.index); backend.pause(); grab = mapToItem(tracks,mouse.x,mouse.y).x; track.draftDuration = track.modelData.duration; track.trimming = true }
                                         onPositionChanged: mouse => { if (pressed) track.draftDuration = Math.max(.01,root.snapTime(track.modelData.start + track.modelData.duration + (mapToItem(tracks,mouse.x,mouse.y).x - grab)/root.pixelsPerSecond,track.index)-track.modelData.start) }
                                         onReleased: { const index = track.index, duration = Math.round(track.draftDuration*100)/100; track.trimming = false; backend.setBuildProperty(index,"duration",duration) }
                                         onCanceled: track.trimming = false
@@ -260,7 +248,7 @@ RowLayout {
                     }
                 }
                 Label { visible: backend.builds.length === 0; Layout.leftMargin: Theme.wTrackLabel + Theme.s4; Layout.bottomMargin: Theme.s2
-                        text: qsTr("Choose an object and add its first build."); color: Theme.textMuted }
+                        text: qsTr("Select an object and choose an effect on the Animate tab."); color: Theme.textMuted }
 
                 // Transport.
                 Rectangle { Layout.fillWidth: true; implicitHeight: Theme.hairline; color: Theme.border }
@@ -272,8 +260,6 @@ RowLayout {
                     spacing: Theme.s1
                     ToolButton { icon.name: "skip-back"; onClicked: backend.setLocalTime(0)
                                  ToolTip.visible: hovered; ToolTip.delay: Theme.tooltipDelay; ToolTip.text: qsTr("Back to the start") }
-                    ToolButton { icon.name: backend.playing ? "pause" : "play"; onClicked: backend.previewSlide()
-                                 ToolTip.visible: hovered; ToolTip.delay: Theme.tooltipDelay; ToolTip.text: backend.playing ? qsTr("Pause  Space") : qsTr("Play slide  Space") }
                     ToolButton { icon.name: "step-back"; onClicked: backend.step(-0.1)
                                  ToolTip.visible: hovered; ToolTip.delay: Theme.tooltipDelay; ToolTip.text: qsTr("Back a tenth  ←") }
                     ToolButton { icon.name: "step-forward"; onClicked: backend.step(0.1)
@@ -304,149 +290,35 @@ RowLayout {
             ColumnLayout {
                 width: parent.width
                 spacing: Theme.s3
-                RowLayout {
-                    Layout.fillWidth: true
-                    Label { text: qsTr("Build"); font.pixelSize: Theme.fsSection; font.weight: Theme.wHeading }
-                    Item { Layout.fillWidth: true }
-                    Label { visible: !!root.build.targetId; text: qsTr("%1 of %2").arg(root.selectedBuild + 1).arg(backend.builds.length); color: Theme.textMuted }
+                // Exact amounts: the numbers behind an effect, for the chosen row.
+                // Everything else about an animation is on the Animate tab.
+                Label { text: qsTr("Exact amounts"); font.pixelSize: Theme.fsSection; font.weight: Theme.wHeading }
+                readonly property bool hasAmount: [4, 5, 6, 7, 13, 14, 16, 17].indexOf(root.build.effect ?? -1) >= 0
+                Label { visible: !parent.hasAmount; Layout.fillWidth: true; wrapMode: Text.Wrap; color: Theme.textMuted
+                        text: !root.build.targetId ? qsTr("Choose a row in the timeline to see its amounts.")
+                                                   : qsTr("%1 has no amount to set.").arg(root.nameOf(root.build)) }
+                FieldRow {
+                    label: qsTr("Travels")
+                    visible: root.build.effect===4
+                    NumField { objectName: "buildMoveX"; Layout.fillWidth: true; step: 10; suffix: " x"
+                               value: root.build.amountX ?? 0; onCommitted: v => root.update("amountX",v) }
+                    NumField { objectName: "buildMoveY"; Layout.fillWidth: true; step: 10; suffix: " y"
+                               value: root.build.amountY ?? 0; onCommitted: v => root.update("amountY",v) }
                 }
-                Label { visible: !root.build.targetId; Layout.fillWidth: true; wrapMode: Text.Wrap; color: Theme.textMuted
-                        text: qsTr("No build selected. Pick an object in the toolbar and add a build in or out.") }
-                ColumnLayout {
-                    Layout.fillWidth: true
-                    spacing: Theme.s3
-                    visible: !!root.build.targetId
-                    FieldRow {
-                        label: qsTr("Object")
-                        Label { Layout.fillWidth: true; text: String(root.build.label ?? "").replace(/\s+/g, " "); elide: Text.ElideRight; maximumLineCount: 1 }
-                    }
-                    FieldRow {
-                        label: qsTr("Direction")
-                        visible: root.build.effect!==3
-                        ComboBox { Layout.fillWidth: true; model: [qsTr("Build in"),qsTr("Build out")]; currentIndex: root.build.phase ?? 0; onActivated: root.update("phase",currentIndex) }
-                    }
-                    FieldRow {
-                        label: qsTr("Effect")
-                        visible: root.build.effect!==3
-                        // Media keeps index 3 to itself, so the list skips it.
-                        ComboBox {
-                            objectName: "buildEffect"
-                            Layout.fillWidth: true
-                            property var effects: [1,2,4,5,6,7,8,9]
-                            model: [qsTr("Fade"),qsTr("Rise"),qsTr("Move"),qsTr("Scale"),qsTr("Spin"),qsTr("Emphasis"),qsTr("Reveal text"),qsTr("Along a path")]
-                            currentIndex: Math.max(0,effects.indexOf(root.build.effect ?? 1))
-                            onActivated: root.update("effect",effects[currentIndex])
-                        }
-                    }
-                    Label {
-                        Layout.fillWidth: true; wrapMode: Text.Wrap; color: Theme.textMuted; font.pixelSize: Theme.fsLabel
-                        visible: root.build.effect===8 && !root.build.text
-                        text: qsTr("Reveal only has an effect on text. This object will simply appear.")
-                    }
-                    FieldRow {
-                        label: qsTr("Travels")
-                        visible: root.build.effect===4
-                        NumField { objectName: "buildMoveX"; Layout.fillWidth: true; step: 10; suffix: " x"
-                                   value: root.build.amountX ?? 0; onCommitted: v => root.update("amountX",v) }
-                        NumField { objectName: "buildMoveY"; Layout.fillWidth: true; step: 10; suffix: " y"
-                                   value: root.build.amountY ?? 0; onCommitted: v => root.update("amountY",v) }
-                    }
-                    FieldRow {
-                        label: root.build.effect===5 ? qsTr("Starts at") : root.build.effect===6 ? qsTr("Turns") : qsTr("Swells by")
-                        visible: root.build.effect===5 || root.build.effect===6 || root.build.effect===7
-                        NumField {
-                            objectName: "buildAmount"
-                            Layout.fillWidth: true
-                            step: root.build.effect===6 ? 15 : .05
-                            suffix: root.build.effect===6 ? "°" : "×"
-                            value: root.build.amount || (root.build.effect===5 ? .5 : root.build.effect===6 ? 180 : .15)
-                            onCommitted: v => root.update("amount",v)
-                        }
-                    }
-                    FieldRow {
-                        label: qsTr("Follows")
-                        visible: root.build.effect===9
-                        ComboBox {
-                            objectName: "buildPath"
-                            Layout.fillWidth: true
-                            textRole: "name"
-                            valueRole: "id"
-                            // Any other object on the slide can be the guide; a
-                            // drawn path hidden in Edit is the usual one.
-                            model: [{ id: "", name: qsTr("Choose a shape or path…") }]
-                                   .concat(backend.slideObjects.filter(o => o.id !== root.build.targetId))
-                            currentIndex: Math.max(0, model.findIndex(o => o.id === (root.build.pathId ?? "")))
-                            onActivated: root.update("pathId", currentValue)
-                        }
-                    }
-                    CheckBox {
-                        objectName: "buildPathReverse"
-                        visible: root.build.effect===9
-                        text: qsTr("Travel the other way")
-                        checked: root.build.pathReverse ?? false
-                        onToggled: root.update("pathReverse", checked)
-                    }
-                    CheckBox {
-                        objectName: "buildPathOrient"
-                        visible: root.build.effect===9
-                        text: qsTr("Turn with the path")
-                        checked: root.build.orient ?? false
-                        onToggled: root.update("orient", checked)
-                    }
-                    Label {
-                        Layout.fillWidth: true; wrapMode: Text.Wrap; color: Theme.textMuted; font.pixelSize: Theme.fsLabel
-                        visible: root.build.effect===9
-                        text: qsTr("Draw the route with the Pen in Edit, then hide it there — the object still follows it, and editing its nodes changes the motion. The object lands where you placed it.")
-                    }
-                    FieldRow {
-                        label: qsTr("One step is")
-                        visible: root.build.effect===8
-                        ComboBox { objectName: "buildUnit"; Layout.fillWidth: true
-                                   model: [qsTr("A paragraph"),qsTr("A word"),qsTr("A character")]
-                                   currentIndex: root.build.unit ?? 0; onActivated: root.update("unit",currentIndex) }
-                    }
-                    FieldRow {
-                        label: qsTr("Order")
-                        Button { icon.name: "arrow-up"; text: qsTr("Earlier"); enabled: root.selectedBuild > 0; onClicked: { backend.moveBuild(root.selectedBuild,root.selectedBuild-1); root.selectedBuild-- } }
-                        Button { icon.name: "arrow-down"; text: qsTr("Later"); enabled: root.selectedBuild < backend.builds.length-1; onClicked: { backend.moveBuild(root.selectedBuild,root.selectedBuild+1); root.selectedBuild++ } }
-                        Item { Layout.fillWidth: true }
-                    }
-                    RowLayout {
+                FieldRow {
+                    readonly property int e: root.build.effect ?? -1
+                    label: e===5 || e===13 ? qsTr("Starts at") : e===6 || e===14 ? qsTr("Turns") : e===16 || e===17 ? qsTr("Ends at") : qsTr("Swells by")
+                    visible: [5, 6, 7, 13, 14, 16, 17].indexOf(e) >= 0
+                    NumField {
+                        objectName: "buildAmount"
                         Layout.fillWidth: true
-                        spacing: Theme.s2
-                        Label { text: qsTr("Start"); color: Theme.textSecondary; Layout.preferredWidth: Theme.wFieldLabel; Layout.alignment: Qt.AlignTop; Layout.topMargin: Theme.s1 }
-                        ColumnLayout {
-                            spacing: 0
-                            Repeater {
-                                model: root.triggers
-                                RadioButton { required property string modelData; required property int index
-                                              text: modelData; checked: (root.build.trigger ?? 0) === index
-                                              onClicked: root.update("trigger", index) }
-                            }
-                        }
+                        readonly property int e: root.build.effect ?? -1
+                        step: e===6 || e===14 ? 15 : .05
+                        suffix: e===6 || e===14 ? "°" : "×"
+                        value: root.build.amount || (e===5 ? .5 : e===13 ? .3 : e===6 ? 180 : e===14 ? 360 : e===16 ? 1.25 : e===17 ? .8 : .15)
+                        onCommitted: v => root.update("amount",v)
                     }
-                    Label { Layout.fillWidth: true; wrapMode: Text.Wrap; color: Theme.textMuted; font.pixelSize: Theme.fsLabel
-                            visible: root.build.trigger === 1; text: qsTr("On-click groups pause for the speaker in Present. Preview and export use the timing shown here.") }
-                    FieldRow {
-                        label: root.build.trigger === 0 ? qsTr("At") : qsTr("Delay")
-                        NumField { Layout.fillWidth: true; step: .01; suffix: " s"; value: root.build.trigger === 0 ? root.build.start ?? 0 : root.build.delay ?? 0
-                                   onCommitted: v => root.update(root.build.trigger === 0 ? "start" : "delay",v) }
-                    }
-                    FieldRow {
-                        label: qsTr("Duration")
-                        NumField { objectName: "buildDuration"; enabled: root.build.effect!==3; Layout.fillWidth: true; step: .01; suffix: " s"; value: root.build.duration ?? .6; onCommitted: v => root.update("duration",v) }
-                    }
-                    FieldRow {
-                        label: qsTr("Easing")
-                        visible: root.build.effect!==3
-                        ComboBox { Layout.fillWidth: true; model: [qsTr("Linear"),qsTr("Ease out"),qsTr("Ease in and out")]
-                                   property var curves: [Easing.Linear,Easing.OutCubic,Easing.InOutCubic]
-                                   currentIndex: Math.max(0,curves.indexOf(root.build.easing)); onActivated: root.update("easing",curves[currentIndex]) }
-                    }
-                    Button { Layout.fillWidth: true; icon.name: "play"; text: qsTr("Preview"); onClicked: backend.previewBuild(root.selectedBuild) }
-                    Button { Layout.fillWidth: true; icon.name: "trash-2"; text: qsTr("Remove build"); onClicked: { backend.removeBuild(root.selectedBuild); root.selectedBuild = Math.max(0,root.selectedBuild-1) } }
                 }
-
                 Rectangle { Layout.fillWidth: true; Layout.topMargin: Theme.s2; implicitHeight: Theme.hairline; color: Theme.border }
                 Label { text: qsTr("Slide Transition"); font.pixelSize: Theme.fsSection; font.weight: Theme.wHeading; Layout.topMargin: Theme.s1 }
                 Label {

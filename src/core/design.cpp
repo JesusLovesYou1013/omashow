@@ -60,14 +60,14 @@ QVariantMap Design::properties(const SceneObject &o) {
             {"listStyle",o.listStyle},{"listStart",o.listStart},{"textFit",o.textFit},{"textKind",o.textKind},
             {"tabStop",o.tabStop},{"columns",o.columns},{"columnGap",o.columnGap},{"direction",o.direction},
             {"language",o.language},
-            {"fontFamily", o.fontFamily}, {"uppercase", o.uppercase}, {"letterSpacing", o.letterSpacing},
+            {"fontFamily", o.fontFamily}, {"origFont", o.origFont}, {"origFontSize", o.origFontSize}, {"fontScale", o.fontScale}, {"origWeight", o.origWeight}, {"uppercase", o.uppercase}, {"letterSpacing", o.letterSpacing},
             {"fillToken", o.fillToken}, {"textColorToken", o.textColorToken}, {"fontToken", o.fontToken},
             {"altTitle", o.altTitle}, {"altText", o.altText}, {"runs", TextRuns::encode(o.runs)},
             {"placeholderId", o.placeholderId}, {"textStyleId", o.textStyleId}, {"overrides", o.overrides}, {"groups", o.groups}, {"locked", o.locked}, {"hidden", o.hidden}};
 }
 bool Design::setProperty(SceneObject &o, const QString &key, const QVariant &v, bool constrainForEditing) {
     const QStringList numeric = {"textKind","tabStop","columns","columnGap","direction","mediaBytes","mediaModified","mediaDuration","mediaTrimStart","mediaTrimEnd","mediaVolume","mediaLoops","x", "y", "w", "h", "rotation", "opacity", "cornerRadius",
-                                 "linkKind", "connectorStartX", "connectorStartY", "connectorEndX", "connectorEndY", "connectorFromSide", "connectorToSide", "connectorRoute", "shapeKind", "fillStyle", "fillAngle", "patternStyle", "strokeWidth", "strokeStyle", "strokeJoin", "strokeCap", "shadowX", "shadowY", "fontSize", "fontWeight", "letterSpacing", "textAlign", "verticalAlign", "lineHeight", "paragraphSpacing", "textIndent", "listStyle", "listStart", "textFit", "imageMask", "imageFocalX", "imageFocalY", "imageBrightness", "imageContrast", "imageSaturation", "imageTintAmount", "imageMode", "cropX", "cropY", "cropW", "cropH"};
+                                 "linkKind", "connectorStartX", "connectorStartY", "connectorEndX", "connectorEndY", "connectorFromSide", "connectorToSide", "connectorRoute", "shapeKind", "fillStyle", "fillAngle", "patternStyle", "strokeWidth", "strokeStyle", "strokeJoin", "strokeCap", "shadowX", "shadowY", "fontSize", "fontWeight", "origFontSize", "fontScale", "origWeight", "letterSpacing", "textAlign", "verticalAlign", "lineHeight", "paragraphSpacing", "textIndent", "listStyle", "listStart", "textFit", "imageMask", "imageFocalX", "imageFocalY", "imageBrightness", "imageContrast", "imageSaturation", "imageTintAmount", "imageMode", "cropX", "cropY", "cropW", "cropH"};
     bool ok = false;
     const qreal n = v.toDouble(&ok);
     if (numeric.contains(key) && (!ok || !std::isfinite(n))) return false;
@@ -180,7 +180,7 @@ bool Design::setProperty(SceneObject &o, const QString &key, const QVariant &v, 
     else if (key == "textIndent") o.textIndent = constrainForEditing ? qBound(0.0,n,1000.0) : qMax(0.0,n);
     else if (key == "listStyle") o.listStyle = qBound(0,v.toInt(),8);
     else if (key == "listStart") o.listStart = qBound(1,v.toInt(),9999);
-    else if (key == "textFit") o.textFit = qBound(0,v.toInt(),1);
+    else if (key == "textFit") o.textFit = qBound(0,v.toInt(),3);
     else if (key == "textKind") o.textKind = qBound(0,v.toInt(),2);
     else if (key == "language") { if(v.toString().size()>32) return false; o.language = v.toString(); }
     else if (key == "tabStop") o.tabStop = qBound(0.0,n,4000.0);
@@ -192,6 +192,10 @@ bool Design::setProperty(SceneObject &o, const QString &key, const QVariant &v, 
     else if (key == "uppercase") o.uppercase = v.toBool();
     else if (key == "text") o.text = v.toString();
     else if (key == "fontFamily") o.fontFamily = v.toString();
+    else if (key == "origFont") { if (v.toString().size() > 256) return false; o.origFont = v.toString(); }
+    else if (key == "origFontSize") { if (n < 0 || n > 4000) return false; o.origFontSize = n; }
+    else if (key == "fontScale") { if (n <= 0 || n > 10) return false; o.fontScale = n; }
+    else if (key == "origWeight") { if (n != 0 && (n < 100 || n > 900)) return false; o.origWeight = v.toInt(); }
     else if (key == "fill") o.fill = QColor(v.toString());
     else if (key == "textColor") o.textColor = QColor(v.toString());
     else if (key == "fillToken") o.fillToken = v.toString();
@@ -216,6 +220,7 @@ bool Design::setProperty(SceneObject &o, const QString &key, const QVariant &v, 
 Slide Design::resolve(const Document &d, int index) {
     if (index < 0 || index >= d.slides.size()) return {};
     Slide slide = d.slides.at(index);
+    slide.stage = d.size;
     const auto *definition = layout(d, slide.layoutId);
     const auto *base = definition ? master(d, definition->masterId) : nullptr;
     slide.objects.clear();

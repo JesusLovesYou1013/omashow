@@ -1,4 +1,13 @@
 <RCC>
+    <qresource prefix="/fonts">
+        <file alias="Inter-Regular.ttf">fonts/inter/Inter-Regular.ttf</file>
+        <file alias="Inter-Bold.ttf">fonts/inter/Inter-Bold.ttf</file>
+        <file alias="Inter-Italic.ttf">fonts/inter/Inter-Italic.ttf</file>
+        <file alias="Inter-BoldItalic.ttf">fonts/inter/Inter-BoldItalic.ttf</file>
+        <file alias="Inter-LICENSE.txt">fonts/inter/LICENSE.txt</file>
+        <file alias="office-font-map.json">fonts/office/office-font-map.json</file>
+        <file alias="font-sources.json">fonts/office/font-sources.json</file>
+    </qresource>
     <qresource prefix="/">
         <file alias="StartCentre.qml">StartCentre.qml</file>
         <file alias="SlideSizeDialog.qml">SlideSizeDialog.qml</file>
@@ -20,9 +29,12 @@
         <file>canvasstrip.js</file>
         <file alias="Inspector.qml">Inspector.qml</file>
         <file>DocumentPanel.qml</file>
+        <file>AnimationPane.qml</file>
         <file alias="Sheet.qml">Sheet.qml</file>
         <file alias="ui/Sheets.qml">Sheets.qml</file>
         <file alias="NumField.qml">NumField.qml</file>
+        <file alias="ColorField.qml">ColorField.qml</file>
+        <file alias="ColorPicker.qml">ColorPicker.qml</file>
         <file>FontSizeField.qml</file>
         <file>SectionLabel.qml</file>
         <file>FieldRow.qml</file>
@@ -36,6 +48,8 @@
         <file alias="ConnectorTools.qml">ConnectorTools.qml</file>
         <file alias="LinkDialog.qml">LinkDialog.qml</file>
         <file alias="FontsDialog.qml">FontsDialog.qml</file>
+        <file alias="FontCheckDialog.qml">FontCheckDialog.qml</file>
+        <file alias="FontSettingsDialog.qml">FontSettingsDialog.qml</file>
         <file alias="CropOverlay.qml">CropOverlay.qml</file>
         <file>MediaTools.qml</file>
     <file>MediaPreflight.qml</file>

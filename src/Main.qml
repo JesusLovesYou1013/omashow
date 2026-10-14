@@ -7,7 +7,7 @@ ApplicationWindow {
     id: win
     width: 1440
     height: 900
-    minimumWidth: 900
+    minimumWidth: 800   // OMASHOW-PERSONAL: ribbon-only prototype — tiles to ~820 px
     minimumHeight: 560
     visible: true
     // The title carries state: a dirty marker, the deck's name, and where you
@@ -21,16 +21,128 @@ ApplicationWindow {
     // visited from the slide and left with Done. (5 was Export, now a sheet.)
     property int workspace: 0
     readonly property bool inMode: workspace === 1 || workspace === 3 || workspace === 4 || workspace === 6
-    // The sidebar beside the slide: 0 Format, 1 Document. Animate is its own
-    // view, so the switch the toolbar shows lit is worked out from both.
+    // The sidebar beside the slide: 0 Format, 1 Document, 2 the animation pane
+    // (ANIM-001; opened from the Animate tab). The cluster lights Format or
+    // Document; the timeline view (workspace 2) is reached from the Animate tab.
     property int sidebar: 0
-    readonly property int sidebarChoice: workspace === 2 ? 1 : workspace === 0 ? (sidebar === 1 ? 2 : 0) : -1
+    readonly property int sidebarChoice: workspace === 0 ? (sidebar === 1 ? 2 : sidebar === 2 ? 3 : 0) : -1
     function chooseSidebar(choice) {
         win.commitEditors()
-        if (choice === 1) { win.workspace = 2; return }
-        win.sidebar = choice === 2 ? 1 : 0
+        win.sidebar = choice === 2 ? 1 : choice === 3 ? 2 : 0
         win.workspace = 0
         win.inspectorCollapsed = false
+    }
+
+    // ── Object animation (ANIM-001) ─────────────────────────────────────────
+    // The pane's (or the timeline's) chosen row; -1 means "the selection's".
+    property int animRow: -1
+    // The chosen row is followed by what it is, not where it was: after Undo,
+    // Redo or any other change to the list it is found again or let go.
+    property string animRowKey: ""
+    property bool animEditing: false
+    function animKey(b) { return b ? [b.targetId, b.effect, b.phase, b.trigger, b.start, b.duration, b.delay, b.direction].join("|") : "" }
+    onAnimRowChanged: animRowKey = animRow >= 0 ? animKey(backend.builds[animRow]) : ""
+    property bool animAutoPreview: true
+    property bool animPreviewing: false
+    property bool animPreviewWanted: false
+    // Ribbon buttons by id, so a command can open a neighbour's drop-down.
+    property var ribbonButtonById: ({})
+    function openRibbonMenu(id) {
+        const at = win.ribbonTabs.findIndex(k => k.key === (win.cmd[id] ? win.cmd[id].tab : ""))
+        if (at >= 0) win.ribbonTab = at
+        const b = win.ribbonButtonById[id]
+        if (b) Qt.callLater(() => b.clicked())
+    }
+    // What the Animate tab's Effect, Timing and Order controls act on: the
+    // chosen row, else every animation of the selected objects.
+    function animTargets() {
+        const list = backend.builds
+        if (win.animRow >= 0 && win.animRow < list.length) return [win.animRow]
+        const ids = backend.selectedIds
+        return list.filter(b => ids.indexOf(b.targetId) >= 0).map(b => b.index)
+    }
+    function animOn() { return win.animTargets().length > 0 }
+    // The value every target shares, or undefined when they differ.
+    function animCommon(key) {
+        const list = backend.builds, rows = win.animTargets()
+        if (!rows.length) return undefined
+        const v = list[rows[0]][key]
+        return rows.every(i => list[i][key] === v) ? v : undefined
+    }
+    function animAny(test) { const list = backend.builds; return win.animTargets().some(i => test(list[i])) }
+    // The effect on the selection in one class, for the gallery's check mark.
+    function animCurrent(cls) {
+        const list = backend.builds, ids = backend.selectedIds
+        const own = win.animRow >= 0 && win.animRow < list.length ? [list[win.animRow]] : list.filter(b => ids.indexOf(b.targetId) >= 0)
+        const mine = own.filter(b => b.cls === cls)
+        return mine.length && mine.every(b => b.effect === mine[0].effect) ? mine[0].effect : -1
+    }
+    readonly property var animEffectNames: ({ 1: qsTr("Fade"), 2: qsTr("Rise"), 3: qsTr("Media"), 4: qsTr("Move (older)"), 5: qsTr("Scale (older)"),
+        6: qsTr("Spin (older)"), 7: qsTr("Pulse"), 8: qsTr("Reveal text"), 9: qsTr("Along a path"), 10: qsTr("Appear"), 11: qsTr("Fly"),
+        12: qsTr("Float"), 13: qsTr("Zoom"), 14: qsTr("Spin"), 15: qsTr("Wipe"), 16: qsTr("Grow"), 17: qsTr("Shrink"), 18: qsTr("Spin") })
+    function animName(b) {
+        if (!b || b.effect === undefined) return ""
+        if (b.effect === 3) return qsTr("Media")
+        if (b.effect === 9 && !b.pathId && !b.motionPath) return qsTr("Along a path (no path chosen)")
+        const base = b.effect === 10 ? (b.phase === 1 ? qsTr("Disappear") : qsTr("Appear")) : (() => {
+            const name = win.animEffectNames[b.effect] ?? qsTr("Effect")
+            return b.cls === 0 ? qsTr("%1 in").arg(name) : b.cls === 2 ? qsTr("%1 out").arg(name) : name })()
+        // ANIM-INTEROP: a PowerPoint effect OmaShow does not have says so, and what it plays instead.
+        if (b.pptxName) return qsTr("⚠ %1 (PowerPoint, plays here as %2)").arg(b.pptxName).arg(base)
+        const part = b.effect === 8 && b.rangeFrom >= 0 ? (b.rangeTo - b.rangeFrom > 1 ? qsTr(", paragraphs %1–%2").arg(b.rangeFrom + 1).arg(b.rangeTo) : qsTr(", paragraph %1").arg(b.rangeFrom + 1)) : ""
+        const more = (b.repeat > 1 ? qsTr(" ×%1").arg(b.repeat) : b.repeat < 0 ? qsTr(" (repeats)") : "") + (b.autoReverse ? qsTr(", there and back") : "") + (b.rewind ? qsTr(", rewinds") : "")
+        return base + part + more
+    }
+    function applyAnim(cls, effect) {
+        win.commitEditors()
+        // An emphasis row chosen in the pane: another emphasis replaces it.
+        const row = win.animRow >= 0 ? backend.builds[win.animRow] : null
+        const index = cls === 1 && row && row.cls === 1 ? backend.replaceEffect(win.animRow, effect) : backend.applyEffect(cls, effect)
+        if (index < 0) return
+        win.animRow = cls === 1 && row && row.cls === 1 ? index : -1
+        // A motion with nowhere to go does nothing: ask for its path at once.
+        if (effect === 9 && !backend.builds[index].pathId) { win.openRibbonMenu("animOptions"); return }
+        if (win.animAutoPreview) win.previewAnim(index)
+    }
+    function setAnim(key, value) {
+        const rows = win.animTargets()
+        if (!rows.length) return
+        win.animEditing = true
+        backend.setBuildsProperty(rows, key, value)
+        win.animEditing = false
+        if (win.animRow >= 0) win.animRowKey = win.animKey(backend.builds[win.animRow])
+    }
+    function moveAnim(by) {
+        const i = win.animTargets()[0]
+        win.animEditing = true
+        backend.moveBuild(i, i + by)
+        win.animEditing = false
+        win.animRow = i + by
+        win.animRowKey = win.animKey(backend.builds[win.animRow])
+    }
+    // Plays one animation (or the slide) where the slide is edited, then goes away.
+    function previewAnim(index) {
+        if (backend.reducedMotion) return
+        // The overlay comes up when playing really starts (nothing to play, no overlay).
+        win.animPreviewWanted = win.workspace === 0
+        if (index >= 0) backend.previewBuild(index); else backend.previewSlide()
+        if (!backend.playing) win.animPreviewWanted = false
+    }
+    Connections {
+        target: backend
+        function onSelectionChanged() {
+            if (win.animEditing || win.animRow < 0) return
+            const list = backend.builds
+            let row = win.animKey(list[win.animRow]) === win.animRowKey ? win.animRow : list.findIndex(b => win.animKey(b) === win.animRowKey)
+            if (row >= 0 && backend.selectedIds.indexOf(list[row].targetId) < 0) row = -1
+            if (row !== win.animRow) win.animRow = row
+        }
+        function onCurrentSlideChanged() { win.animRow = -1 }
+        function onPlayingChanged() {
+            if (backend.playing && win.animPreviewWanted) win.animPreviewing = true
+            if (!backend.playing) win.animPreviewing = false
+            win.animPreviewWanted = false
+        }
     }
     // Adding something to the slide brings the slide and its Format sidebar back.
     function toFormat() { win.commitEditors(); win.workspace = 0; win.sidebar = 0 }
@@ -212,6 +324,399 @@ ApplicationWindow {
         Layout.rightMargin: Theme.s1
         color: Theme.border
     }
+    // OMASHOW-PERSONAL: ribbon-only prototype (UI-RIBBON-003)
+    // ONE command table. The ribbon's second row, the File and ? menus, the title-line
+    // cluster and Ctrl+K are all built from it, so each command has one label, one
+    // enabled rule and one handler. Where the menu bar and the toolbar both had a
+    // command, the handler is the superset of their side effects (toFormat() =
+    // commitEditors + workspace 0 + Format sidebar). No entry owns a key: every
+    // binding stays a window-level Shortcut {}; `keys` is only the text shown.
+    //   tab: home insert design arrange show review view | cluster | parent: menu owner
+    //   kind: button | toggle (checked bound, toggled in run) | menu | layouts | languages
+    property var ribbonCommands: [
+        // ── File (drop-down) ──
+        { id: "fileNewDeck", parent: "file", label: qsTr("New deck"), icon: "file-plus", also: "create start blank", run: () => win.confirmThenNew() },
+        { id: "fileOpen", parent: "file", label: qsTr("Open…"), icon: "folder-open", keys: "Ctrl+O", also: "open a deck load file", run: () => win.confirmThenOpen() },
+        { id: "fileStartCentre", parent: "file", label: qsTr("Start centre…"), icon: "house", also: "home recent templates", run: () => { win.commitEditors(); backend.showStart() } },
+        { id: "newWindowMenuItem", parent: "file", label: qsTr("New window"), icon: "square-plus", also: "open another window second copy", run: () => backend.openInNewWindow() },
+        { id: "fileSave", parent: "file", sep: true, label: qsTr("Save"), icon: "save", keys: "Ctrl+S", also: "write keep", run: () => { win.commitEditors(); backend.save() } },
+        { id: "fileSaveAs", parent: "file", label: qsTr("Save as…"), keys: "Ctrl+Shift+S", also: "copy elsewhere", run: () => { win.commitEditors(); backend.saveAsDialog() } },
+        { id: "keepAsTemplate", parent: "file", label: qsTr("Keep as template…"), also: "keep this deck as a template reuse starting point", on: () => !backend.startVisible, run: () => { win.commitEditors(); templateName.open() } },
+        { id: "fileInstallTemplate", parent: "file", label: qsTr("Install a template…"), also: "template add pack", run: () => backend.installTemplateDialog() },
+        { id: "fileExportPdf", parent: "file", sep: true, label: qsTr("Export PDF…"), icon: "file-output", keys: "Ctrl+E", also: "export a pdf document handout pages", run: () => { win.commitEditors(); backend.exportDialog({ kind: 0 }) } },
+        { id: "exportMenuItem", parent: "file", label: qsTr("Export…"), icon: "share", also: "export pictures png jpeg images export film video movie mp4 print paper printer package the deck zip send share", run: () => win.showExport() },
+        { id: "fileQuit", parent: "file", sep: true, label: qsTr("Quit"), keys: "Ctrl+Q", also: "exit close", run: () => win.close() },
+        // ── Home ──
+        { id: "ribbonPaste", tab: "home", group: "clipboard", label: qsTr("Paste"), icon: "clipboard-paste", keys: "Ctrl+V", on: () => backend.canPaste, run: () => backend.pasteAsync() },
+        { id: "ribbonPasteSpecial", tab: "home", group: "clipboard", kind: "menu", label: qsTr("Paste special"), tip: qsTr("Keep or match formatting, the words only, or as a picture"), on: () => backend.canPaste },
+        { id: "pasteKeeping", parent: "ribbonPasteSpecial", label: qsTr("Keep its formatting"), also: "paste keeping its formatting", on: () => backend.canPaste && (backend.clipboardKinds.objects ?? false), run: () => backend.pasteSpecial(0) },
+        { id: "pasteMatching", parent: "ribbonPasteSpecial", label: qsTr("Match this deck's text style"), also: "paste matching this deck", on: () => backend.canPaste && (backend.clipboardKinds.objects ?? false), run: () => backend.pasteSpecial(1) },
+        { id: "pasteWords", parent: "ribbonPasteSpecial", label: qsTr("The words only"), also: "paste the words only plain text unformatted", on: () => backend.canPaste && (backend.clipboardKinds.text ?? false), run: () => backend.pasteSpecial(2) },
+        { id: "pastePicture", parent: "ribbonPasteSpecial", label: qsTr("As a picture"), also: "paste as a picture flatten image", on: () => backend.canPaste && (backend.clipboardKinds.objects ?? false), run: () => backend.pasteSpecial(3) },
+        { id: "ribbonCut", tab: "home", group: "clipboard", label: qsTr("Cut"), icon: "scissors", keys: "Ctrl+X", on: () => backend.hasSelection, run: () => backend.copyAsync(true) },
+        { id: "ribbonCopy", tab: "home", group: "clipboard", label: qsTr("Copy"), icon: "copy", keys: "Ctrl+C", on: () => backend.hasSelection, run: () => backend.copyAsync() },
+        { id: "toolbarNewSlide", tab: "home", group: "slides", label: qsTr("New Slide"), icon: "square-plus", keys: "Ctrl+N", also: "add a slide new page", on: () => !backend.startVisible, run: () => backend.addSlide() },
+        { id: "ribbonLayout", tab: "home", group: "slides", kind: "layouts", label: qsTr("Layout"), icon: "layout-template", tip: qsTr("Apply a layout to this slide"), also: "apply a layout master placeholder", on: () => !backend.startVisible,
+          run: () => { win.commitEditors(); win.workspace = 1; layoutApplyDialog.show(backend.slideDesign.layoutId ?? "") } },
+        { id: "ribbonDuplicateSlides", tab: "home", group: "slides", label: qsTr("Duplicate slides"), icon: "copy", also: "duplicate the selected slides copy page duplicate this slide", run: () => backend.duplicateSelectedSlides() },
+        { id: "ribbonDeleteSlides", tab: "home", group: "slides", label: qsTr("Delete slides"), icon: "trash-2", also: "delete the selected slides remove page delete this slide", on: () => backend.slideSelectionState.canDelete, run: () => backend.deleteSelectedSlides() },
+        { id: "importDeckMenuItem", tab: "home", group: "slides", label: qsTr("Import from deck…"), icon: "folder-open", tip: qsTr("Import slides (and their design) from another deck"), also: "import slides from another deck borrow steal reuse", on: () => !backend.startVisible, run: () => { win.commitEditors(); backend.importDeckDialog() } },
+        { id: "ribbonDuplicate", tab: "home", group: "editing", label: qsTr("Duplicate"), keys: "Ctrl+D", also: "duplicate the selected objects", on: () => backend.hasSelection, run: () => backend.duplicateSelected() },
+        { id: "ribbonDelete", tab: "home", group: "editing", label: qsTr("Delete"), icon: "trash-2", keys: "Del", also: "delete the selected objects remove", on: () => backend.hasSelection, run: () => backend.deleteSelected() },
+        { id: "ribbonSelectAll", tab: "home", group: "editing", label: qsTr("Select all"), keys: "Ctrl+A", run: () => backend.selectAll() },
+        // ── Insert ──
+        { id: "insertText", tab: "insert", group: "text", label: qsTr("Text"), icon: "type", keys: "T", tip: qsTr("Text box  T"), also: "words box type", on: () => !backend.startVisible, run: () => { win.toFormat(); backend.addText() } },
+        { id: "insertEquation", tab: "insert", group: "text", label: qsTr("Equation"), icon: "sigma", also: "an equation maths math formula latex fraction", on: () => !backend.startVisible, run: () => { win.workspace = 0; win.commitEditors(); backend.addEquation() } },
+        { id: "insertShape", tab: "insert", group: "shapes", kind: "menu", label: qsTr("Shape"), icon: "shapes", tip: qsTr("Shapes, the pen and freehand  S adds a rectangle") },
+        { id: "openShapeGallery", parent: "insertShape", label: qsTr("Shape gallery…"), icon: "shapes", also: "a shape rectangle circle arrow", on: () => !backend.startVisible, run: () => { win.toFormat(); shapeGallery.open() } },
+        { id: "drawWithPen", parent: "insertShape", sep: true, label: qsTr("Draw with the pen"), icon: "pen-tool", also: "path bezier line vector", on: () => !backend.startVisible, run: () => { win.toFormat(); editCanvas.startPathTool(1) } },
+        { id: "drawFreehand", parent: "insertShape", label: qsTr("Draw freehand"), icon: "pencil-line", also: "sketch scribble line", on: () => !backend.startVisible, run: () => { win.toFormat(); editCanvas.startPathTool(2) } },
+        { id: "connectObjectsAction", tab: "insert", group: "shapes", label: qsTr("Connect objects"), icon: "spline", also: "connector line", on: () => backend.selectionCount === 2, run: () => backend.connectSelected() },
+        { id: "insertPicture", tab: "insert", group: "objects", label: qsTr("Picture"), icon: "image", tip: qsTr("Insert a picture"), also: "a picture image photo png", on: () => !backend.startVisible, run: () => { win.toFormat(); backend.insertImageDialog() } },
+        { id: "insertTable", tab: "insert", group: "objects", label: qsTr("Table"), icon: "table", tip: qsTr("Insert a table"), also: "a table grid rows columns", on: () => !backend.startVisible, run: () => { win.toFormat(); if (backend.addTable()) tableEditor.show() } },
+        { id: "insertChart", tab: "insert", group: "objects", label: qsTr("Chart"), icon: "chart-column", tip: qsTr("Insert a chart"), also: "a chart graph bar line pie data", on: () => !backend.startVisible, run: () => { win.toFormat(); backend.addChart() } },
+        { id: "insertDiagram", tab: "insert", group: "objects", label: qsTr("Diagram"), icon: "workflow", tip: qsTr("Insert a process or hierarchy diagram"), also: "a diagram process hierarchy flow", on: () => !backend.startVisible, run: () => { win.toFormat(); diagramDialog.show() } },
+        { id: "mediaMenuButton", tab: "insert", group: "media", kind: "menu", label: qsTr("Media"), icon: "clapperboard", tip: qsTr("Audio and video") },
+        { id: "insertEmbeddedMedia", parent: "mediaMenuButton", label: qsTr("Audio or video · embed…"), icon: "clapperboard", also: "insert film sound video audio movie clip embed film or sound", on: () => !backend.startVisible, run: () => { win.toFormat(); backend.insertMediaDialog(true) } },
+        { id: "insertLinkedMedia", parent: "mediaMenuButton", label: qsTr("Audio or video · link…"), also: "insert film sound video audio movie clip link", on: () => !backend.startVisible, run: () => { win.toFormat(); backend.insertMediaDialog(false) } },
+        { id: "objectLinkAction", tab: "insert", group: "links", label: qsTr("Link or action…"), icon: "link", also: "hyperlink jump url", on: () => backend.hasSelection, run: () => linkDialog.show() },
+        // ── Design ──
+        { id: "slideSizeAction", tab: "design", group: "size", label: qsTr("Slide size…"), icon: "scan", also: "change the slide size aspect ratio widescreen portrait", on: () => !backend.startVisible, run: () => { win.commitEditors(); slideSizeDialog.show() } },
+        { id: "ribbonDesignMasters", tab: "design", group: "size", label: qsTr("Edit masters and layouts"), icon: "layout-template", also: "design theme master layout template remove what nothing uses unused tidy hygiene", run: () => { win.commitEditors(); win.workspace = 1 } },
+        // FONT-SETTINGS-1: one button for everything about the free fonts.
+        { id: "fontSettingsItem", tab: "design", group: "fonts", label: qsTr("Fonts…"), icon: "type", also: "extra fonts pack office windows free matches download delete list check calibri aptos cambria always download missing",
+          tip: qsTr("Free look-alikes for Office fonts: checking, downloading, listing and deleting them"), run: () => { win.commitEditors(); fontSettingsDialog.show() } },
+        // ── Arrange ──
+        { id: "ribbonGroup", tab: "arrange", group: "group", label: qsTr("Group"), icon: "group", keys: "Ctrl+G", on: () => backend.selectionCount > 1, run: () => backend.groupSelected() },
+        { id: "ribbonUngroup", tab: "arrange", group: "group", label: qsTr("Ungroup"), icon: "ungroup", keys: "Ctrl+Shift+G", on: () => !!backend.selection.groupId, run: () => backend.ungroupSelected() },
+        { id: "ribbonForward", tab: "arrange", group: "order", label: qsTr("Bring forward"), icon: "bring-to-front", on: () => backend.hasSelection, run: () => backend.raiseSelected(1) },
+        { id: "ribbonBackward", tab: "arrange", group: "order", label: qsTr("Send backward"), icon: "send-to-back", on: () => backend.hasSelection, run: () => backend.raiseSelected(-1) },
+        { id: "ribbonLock", tab: "arrange", group: "lock", label: qsTr("Lock selected"), icon: "lock", also: "lock the selected objects", on: () => backend.hasSelection, run: () => backend.setSelectedProperty("locked", true) },
+        { id: "ribbonUnlockAll", tab: "arrange", group: "lock", label: qsTr("Unlock all"), icon: "lock-open", run: () => backend.unlockAllObjects() },
+        { id: "ribbonHide", tab: "arrange", group: "lock", label: qsTr("Hide selected"), icon: "eye-off", also: "hide the selected objects", on: () => backend.hasSelection, run: () => backend.setSelectedProperty("hidden", true) },
+        { id: "ribbonShowAll", tab: "arrange", group: "lock", label: qsTr("Show all"), icon: "eye", also: "show all objects", run: () => backend.showAllObjects() },
+        { id: "combineShapesAction", tab: "arrange", group: "combine", label: qsTr("Combine shapes…"), also: "merge union subtract intersect", on: () => backend.selectionCount > 1, run: () => { win.commitEditors(); combineShapesDialog.open() } },
+        { id: "textOnShapeAction", tab: "arrange", group: "combine", label: qsTr("Put the text on this shape"), icon: "spline", also: "put the text on a shape along path curve circle words", on: () => backend.selectionCount === 2, run: () => { win.commitEditors(); win.workspace = 0; backend.putTextOnShape() } },
+        // ── Slide Show ──
+        { id: "ribbonShowFromHere", tab: "show", group: "start", label: qsTr("Play from this slide"), icon: "play", also: "present from this slide show current", run: () => { win.commitEditors(); presenter.start(true, false) } },
+        { id: "ribbonShowRehearse", tab: "show", group: "start", label: qsTr("Rehearse"), icon: "timer", also: "rehearse in a window practise timing", run: () => { win.commitEditors(); presenter.start(false, true) } },
+        { id: "ribbonSkipSlides", tab: "show", group: "setup", kind: "toggle", label: qsTr("Skip in show"), icon: "eye-off", tip: qsTr("Skip the selected slides in the show (or include them again)"), also: "skip the selected slides hide omit include skip this slide in the show", checked: () => !!backend.slideSelectionState.allSkipped, run: () => backend.setSlidesSkipped(!backend.slideSelectionState.allSkipped) },
+        { id: "ribbonShowSetup", tab: "show", group: "setup", label: qsTr("Presenter setup…"), icon: "monitor", also: "displays console timings custom shows", run: () => { win.commitEditors(); win.workspace = 4 } },
+        { id: "openMediaPreflight", tab: "show", group: "setup", label: qsTr("Media preflight…"), also: "check media audio video before the show", run: () => mediaPreflight.open() },
+        // ── Review ──
+        { id: "toolbarReview", tab: "review", group: "review", label: qsTr("Review"), icon: "message-square-text", tip: qsTr("Comments, findings and spelling"), also: "comments findings outline statistics accessibility spelling check the spelling find and replace comment on this slide check what would stop someone reading this", run: () => { win.commitEditors(); win.workspace = 3 } },
+        { id: "deckLanguageMenu", tab: "review", group: "proofing", kind: "languages", label: qsTr("Language"), icon: "languages", tip: qsTr("The deck is written in…"), also: "the deck is written in language dictionary spelling", run: () => win.ribbonTab = win.ribbonTabs.findIndex(t => t.key === "review") },
+        { id: "smartPunctuationItem", tab: "review", group: "proofing", kind: "toggle", label: qsTr("Smart punctuation"), also: "quotes dashes ellipsis curly", checked: () => backend.smartPunctuation, run: () => backend.setSmartPunctuation(!backend.smartPunctuation) },
+        // ── View ──
+        { id: "lightTableMenuItem", tab: "view", group: "views", label: qsTr("Light table"), icon: "layout-grid", also: "sorter order overview grid", run: () => { win.commitEditors(); win.workspace = 6; slideSorter.focusBrowser() } },
+        { id: "ribbonViewNotes", tab: "view", group: "views", kind: "toggle", label: qsTr("Presenter notes"), also: "speaker script", checked: () => win.notesOpen, run: () => win.notesOpen = !win.notesOpen },
+        { id: "toggleNavigator", tab: "view", group: "panels", kind: "toggle", label: qsTr("Slide list"), also: "show the slide list hide the slide list navigator panel thumbnails sidebar", checked: () => !win.navigatorCollapsed, run: () => win.navigatorCollapsed = !win.navigatorCollapsed },
+        { id: "toggleInspector", tab: "view", group: "panels", kind: "toggle", label: qsTr("Inspector"), also: "show the inspector hide the inspector panel properties sidebar", checked: () => !win.inspectorCollapsed, run: () => win.inspectorCollapsed = !win.inspectorCollapsed },
+        { id: "toggleInspectorFixed", tab: "view", group: "panels", kind: "toggle", label: qsTr("Lock sidebar width"), also: "unlock sidebar width lock fixed inspector panel", checked: () => win.inspectorFixed, run: () => win.inspectorFixed = !win.inspectorFixed },
+        { id: "resetPanels", tab: "view", group: "panels", label: qsTr("Put the panels back"), also: "reset widths restore layout",
+          run: () => { win.navigatorCollapsed = false; win.inspectorCollapsed = false; win.inspectorFixed = false; win.resetPanelWidths() } },
+        { id: "ribbonZoomIn", tab: "view", group: "zoom", label: qsTr("Zoom in"), icon: "zoom-in", keys: "Ctrl++", on: () => win.editing, run: () => editCanvas.zoomBy(1.25) },
+        { id: "ribbonZoomOut", tab: "view", group: "zoom", label: qsTr("Zoom out"), icon: "zoom-out", keys: "Ctrl+-", on: () => win.editing, run: () => editCanvas.zoomBy(1 / 1.25) },
+        { id: "ribbonZoomFit", tab: "view", group: "zoom", label: qsTr("Fit slide"), icon: "maximize", keys: "Ctrl+0", on: () => win.editing, run: () => editCanvas.fit() },
+        { id: "ribbonZoomActual", tab: "view", group: "zoom", label: qsTr("Actual size"), keys: "Ctrl+1", on: () => win.editing, run: () => editCanvas.actualSize() },
+        { id: "ribbonSnap", tab: "view", group: "guides", kind: "toggle", label: qsTr("Snap to guides"), also: "align magnet", checked: () => backend.snapEnabled, run: () => backend.snapEnabled = !backend.snapEnabled },
+        { id: "reducedMotionItem", tab: "view", group: "access", kind: "toggle", label: qsTr("Less movement"), also: "reduced motion animation accessibility vestibular allow movement again", checked: () => backend.reducedMotion, run: () => backend.reducedMotion = !backend.reducedMotion },
+        { id: "highContrastItem", tab: "view", group: "access", kind: "toggle", label: qsTr("Stronger contrast"), also: "high contrast accessibility legible ordinary", checked: () => backend.highContrast, run: () => backend.highContrast = !backend.highContrast },
+        // ── Animate (ANIM-001): the only place an animation is chosen, timed or ordered ──
+        { id: "animPreview", tab: "animate", group: "preview", label: qsTr("Preview"), icon: "play", also: "play animation build preview slide",
+          tip: qsTr("Play the chosen animation, or the whole slide when none is chosen"), on: () => backend.builds.length > 0,
+          run: () => { win.commitEditors(); if (backend.playing) { backend.pause(); return } const r = win.animTargets(); win.previewAnim(r.length ? r[0] : -1) } },
+        { id: "animAutoPreview", tab: "animate", group: "preview", kind: "toggle", label: qsTr("Auto preview"), also: "play when applied",
+          tip: qsTr("Play an effect once when you choose it"), checked: () => win.animAutoPreview, run: () => win.animAutoPreview = !win.animAutoPreview },
+        { id: "animPane", tab: "animate", group: "show", kind: "toggle", label: qsTr("Animation pane"), icon: "list", also: "list order sequence builds sidebar",
+          checked: () => win.sidebarChoice === 3, run: () => win.chooseSidebar(win.sidebarChoice === 3 ? 0 : 3) },
+        { id: "animTimeline", tab: "animate", group: "show", kind: "toggle", label: qsTr("Timeline"), icon: "timer", also: "animate view tracks scrub transition seconds",
+          tip: qsTr("The slide with its animations laid out in time, and the slide transition"), checked: () => win.workspace === 2,
+          run: () => { win.commitEditors(); win.workspace = win.workspace === 2 ? 0 : 2 } },
+        { id: "animEntrance", tab: "animate", group: "effect", kind: "menu", on: () => backend.selectionCount > 0, label: qsTr("Entrance"), icon: "eye", tip: qsTr("How the selected objects arrive. Choosing another replaces it.") },
+        { id: "animEntranceAppear", parent: "animEntrance", label: qsTr("Appear"), also: "entrance build in show", on: () => backend.selectionCount > 0, checked: () => win.animCurrent(0) === 10, run: () => win.applyAnim(0, 10) },
+        { id: "animEntranceFade", parent: "animEntrance", label: qsTr("Fade in"), also: "entrance build in dissolve", on: () => backend.selectionCount > 0, checked: () => win.animCurrent(0) === 1, run: () => win.applyAnim(0, 1) },
+        { id: "animEntranceFly", parent: "animEntrance", label: qsTr("Fly in"), also: "entrance build in slide from edge", on: () => backend.selectionCount > 0, checked: () => win.animCurrent(0) === 11, run: () => win.applyAnim(0, 11) },
+        { id: "animEntranceFloat", parent: "animEntrance", label: qsTr("Float in"), also: "entrance build in rise drift", on: () => backend.selectionCount > 0, checked: () => win.animCurrent(0) === 12, run: () => win.applyAnim(0, 12) },
+        { id: "animEntranceZoom", parent: "animEntrance", label: qsTr("Zoom in"), also: "entrance build in grow scale", on: () => backend.selectionCount > 0, checked: () => win.animCurrent(0) === 13, run: () => win.applyAnim(0, 13) },
+        { id: "animEntranceSpin", parent: "animEntrance", label: qsTr("Spin in"), also: "entrance build in turn rotate", on: () => backend.selectionCount > 0, checked: () => win.animCurrent(0) === 14, run: () => win.applyAnim(0, 14) },
+        { id: "animEntranceWipe", parent: "animEntrance", label: qsTr("Wipe in"), also: "entrance build in reveal edge", on: () => backend.selectionCount > 0, checked: () => win.animCurrent(0) === 15, run: () => win.applyAnim(0, 15) },
+        { id: "animEntranceReveal", parent: "animEntrance", sep: true, label: qsTr("Reveal text"), also: "entrance by paragraph word letter typewriter",
+          on: () => backend.slideObjects.some(o => o.text && backend.selectedIds.indexOf(o.id) >= 0), checked: () => win.animCurrent(0) === 8, run: () => win.applyAnim(0, 8) },
+        { id: "animEmphasis", tab: "animate", group: "effect", kind: "menu", on: () => backend.selectionCount > 0, label: qsTr("Emphasis"), icon: "sparkles", tip: qsTr("Draw attention to the selected objects while they stay. Adds one each time.") },
+        { id: "animEmphasisPulse", parent: "animEmphasis", label: qsTr("Pulse"), also: "emphasis swell throb", on: () => backend.selectionCount > 0, run: () => win.applyAnim(1, 7) },
+        { id: "animEmphasisSpin", parent: "animEmphasis", label: qsTr("Spin"), also: "emphasis rotate turn", on: () => backend.selectionCount > 0, run: () => win.applyAnim(1, 18) },
+        { id: "animEmphasisGrow", parent: "animEmphasis", label: qsTr("Grow"), also: "emphasis bigger enlarge", on: () => backend.selectionCount > 0, run: () => win.applyAnim(1, 16) },
+        { id: "animEmphasisShrink", parent: "animEmphasis", label: qsTr("Shrink"), also: "emphasis smaller", on: () => backend.selectionCount > 0, run: () => win.applyAnim(1, 17) },
+        { id: "animExit", tab: "animate", group: "effect", kind: "menu", on: () => backend.selectionCount > 0, label: qsTr("Exit"), icon: "eye-off", tip: qsTr("How the selected objects leave. Choosing another replaces it.") },
+        { id: "animExitDisappear", parent: "animExit", label: qsTr("Disappear"), also: "exit build out hide", on: () => backend.selectionCount > 0, checked: () => win.animCurrent(2) === 10, run: () => win.applyAnim(2, 10) },
+        { id: "animExitFade", parent: "animExit", label: qsTr("Fade out"), also: "exit build out dissolve", on: () => backend.selectionCount > 0, checked: () => win.animCurrent(2) === 1, run: () => win.applyAnim(2, 1) },
+        { id: "animExitFly", parent: "animExit", label: qsTr("Fly out"), also: "exit build out leave edge", on: () => backend.selectionCount > 0, checked: () => win.animCurrent(2) === 11, run: () => win.applyAnim(2, 11) },
+        { id: "animExitFloat", parent: "animExit", label: qsTr("Float out"), also: "exit build out drift", on: () => backend.selectionCount > 0, checked: () => win.animCurrent(2) === 12, run: () => win.applyAnim(2, 12) },
+        { id: "animExitZoom", parent: "animExit", label: qsTr("Zoom out"), also: "exit build out shrink scale", on: () => backend.selectionCount > 0, checked: () => win.animCurrent(2) === 13, run: () => win.applyAnim(2, 13) },
+        { id: "animExitSpin", parent: "animExit", label: qsTr("Spin out"), also: "exit build out turn rotate", on: () => backend.selectionCount > 0, checked: () => win.animCurrent(2) === 14, run: () => win.applyAnim(2, 14) },
+        { id: "animExitWipe", parent: "animExit", label: qsTr("Wipe out"), also: "exit build out edge", on: () => backend.selectionCount > 0, checked: () => win.animCurrent(2) === 15, run: () => win.applyAnim(2, 15) },
+        { id: "animMotion", tab: "animate", group: "effect", kind: "menu", on: () => backend.selectionCount > 0, label: qsTr("Motion"), icon: "route", tip: qsTr("Move the selected objects along a route") },
+        { id: "animMotionPath", parent: "animMotion", label: qsTr("Along a path"), also: "motion path route follow travel", on: () => backend.selectionCount > 0, run: () => win.applyAnim(3, 9) },
+        { id: "animOptions", tab: "animate", group: "effect", kind: "menu", label: qsTr("Effect options"), icon: "settings", tip: qsTr("Direction, text steps, path and pace of the chosen animations"), on: () => win.animOn() },
+        { id: "animFromBottom", parent: "animOptions", label: qsTr("From the bottom"), also: "direction effect options", on: () => win.animAny(b => b.effect === 11 || b.effect === 12 || b.effect === 15), checked: () => win.animCommon("direction") === 0, run: () => win.setAnim("direction", 0) },
+        { id: "animFromLeft", parent: "animOptions", label: qsTr("From the left"), also: "direction effect options", on: () => win.animAny(b => b.effect === 11 || b.effect === 12 || b.effect === 15), checked: () => win.animCommon("direction") === 1, run: () => win.setAnim("direction", 1) },
+        { id: "animFromRight", parent: "animOptions", label: qsTr("From the right"), also: "direction effect options", on: () => win.animAny(b => b.effect === 11 || b.effect === 12 || b.effect === 15), checked: () => win.animCommon("direction") === 2, run: () => win.setAnim("direction", 2) },
+        { id: "animFromTop", parent: "animOptions", label: qsTr("From the top"), also: "direction effect options", on: () => win.animAny(b => b.effect === 11 || b.effect === 12 || b.effect === 15), checked: () => win.animCommon("direction") === 3, run: () => win.setAnim("direction", 3) },
+        { id: "animByParagraph", parent: "animOptions", sep: true, label: qsTr("By paragraph"), also: "reveal text one step is", on: () => win.animAny(b => b.effect === 8), checked: () => win.animCommon("unit") === 0, run: () => win.setAnim("unit", 0) },
+        { id: "animByWord", parent: "animOptions", label: qsTr("By word"), also: "reveal text one step is", on: () => win.animAny(b => b.effect === 8), checked: () => win.animCommon("unit") === 1, run: () => win.setAnim("unit", 1) },
+        { id: "animByLetter", parent: "animOptions", label: qsTr("By letter"), also: "reveal text character typewriter", on: () => win.animAny(b => b.effect === 8), checked: () => win.animCommon("unit") === 2, run: () => win.setAnim("unit", 2) },
+        { id: "buildPath", parent: "animOptions", sep: true, kind: "paths", label: qsTr("Path guide"), also: "motion path route follow shape",
+          on: () => win.animAny(b => b.effect === 9) },
+        { id: "buildPathReverse", parent: "animOptions", label: qsTr("Travel the other way"), also: "path reverse direction", on: () => win.animAny(b => b.effect === 9), checked: () => win.animCommon("pathReverse") === true, run: () => win.setAnim("pathReverse", win.animCommon("pathReverse") !== true) },
+        { id: "buildPathOrient", parent: "animOptions", label: qsTr("Turn with the path"), also: "path orient rotate", on: () => win.animAny(b => b.effect === 9), checked: () => win.animCommon("orient") === true, run: () => win.setAnim("orient", win.animCommon("orient") !== true) },
+        { id: "animRepeatOnce", parent: "animOptions", sep: true, label: qsTr("Play once"), also: "repeat count times", on: () => win.animAny(b => b.effect !== 3 && b.effect !== 10), checked: () => win.animCommon("repeat") === 0, run: () => win.setAnim("repeat", 0) },
+        { id: "animRepeat2", parent: "animOptions", label: qsTr("Repeat 2 times"), also: "repeat count twice", on: () => win.animAny(b => b.effect !== 3 && b.effect !== 10), checked: () => win.animCommon("repeat") === 2, run: () => win.setAnim("repeat", 2) },
+        { id: "animRepeat3", parent: "animOptions", label: qsTr("Repeat 3 times"), also: "repeat count", on: () => win.animAny(b => b.effect !== 3 && b.effect !== 10), checked: () => win.animCommon("repeat") === 3, run: () => win.setAnim("repeat", 3) },
+        { id: "animRepeatSlide", parent: "animOptions", label: qsTr("Repeat until the next slide"), also: "repeat loop forever until next click", on: () => win.animAny(b => b.effect !== 3 && b.effect !== 10), checked: () => win.animCommon("repeat") === -1, run: () => win.setAnim("repeat", -1) },
+        { id: "animAutoReverse", parent: "animOptions", label: qsTr("Play forwards, then back"), also: "auto reverse there and back", on: () => win.animAny(b => b.effect !== 3 && b.effect !== 10), checked: () => win.animCommon("autoReverse") === true, run: () => win.setAnim("autoReverse", win.animCommon("autoReverse") !== true) },
+        { id: "animRewind", parent: "animOptions", label: qsTr("Rewind when done"), also: "rewind reset after playing", on: () => win.animAny(b => b.effect !== 3), checked: () => win.animCommon("rewind") === true, run: () => win.setAnim("rewind", win.animCommon("rewind") !== true) },
+        { id: "animEaseLinear", parent: "animOptions", sep: true, label: qsTr("Even speed"), also: "easing linear pace", on: () => win.animAny(b => b.effect !== 3 && b.effect !== 10), checked: () => win.animCommon("easing") === Easing.Linear, run: () => win.setAnim("easing", Easing.Linear) },
+        { id: "animEaseOut", parent: "animOptions", label: qsTr("Slow down at the end"), also: "easing ease out decelerate smooth end gentle stop", on: () => win.animAny(b => b.effect !== 3 && b.effect !== 10), checked: () => [Easing.OutQuad, Easing.OutCubic].includes(win.animCommon("easing")), run: () => win.setAnim("easing", Easing.OutQuad) },
+        { id: "animEaseIn", parent: "animOptions", label: qsTr("Speed up from the start"), also: "easing ease in accelerate smooth start gentle", on: () => win.animAny(b => b.effect !== 3 && b.effect !== 10), checked: () => [Easing.InQuad, Easing.InCubic].includes(win.animCommon("easing")), run: () => win.setAnim("easing", Easing.InQuad) },
+        { id: "animEaseInOut", parent: "animOptions", label: qsTr("Smooth start and stop"), also: "easing ease in and out", on: () => win.animAny(b => b.effect !== 3 && b.effect !== 10), checked: () => [Easing.InOutQuad, Easing.InOutCubic].includes(win.animCommon("easing")), run: () => win.setAnim("easing", Easing.InOutQuad) },
+        { id: "animStart", tab: "animate", group: "timing", kind: "menu", label: qsTr("Start"), icon: "mouse-pointer-2", on: () => win.animOn(), sizeText: qsTr("After previous"),
+          text: () => { const v = win.animCommon("trigger"); return v === undefined ? qsTr("Start") : [qsTr("At a time"), qsTr("On click"), qsTr("With previous"), qsTr("After previous")][v] },
+          tip: qsTr("When the chosen animations start") },
+        { id: "animStartClick", parent: "animStart", label: qsTr("On click"), also: "start trigger next", on: () => win.animOn(), checked: () => win.animCommon("trigger") === 1, run: () => win.setAnim("trigger", 1) },
+        { id: "animStartWith", parent: "animStart", label: qsTr("With previous"), also: "start trigger together same time", on: () => win.animOn(), checked: () => win.animCommon("trigger") === 2, run: () => win.setAnim("trigger", 2) },
+        { id: "animStartAfter", parent: "animStart", label: qsTr("After previous"), also: "start trigger then", on: () => win.animOn(), checked: () => win.animCommon("trigger") === 3, run: () => win.setAnim("trigger", 3) },
+        { id: "animStartAtTime", parent: "animStart", label: qsTr("At a time"), also: "start trigger seconds absolute", on: () => win.animOn(), checked: () => win.animCommon("trigger") === 0, run: () => win.setAnim("trigger", 0) },
+        { id: "buildDuration", tab: "animate", group: "timing", kind: "number", label: qsTr("Duration"), suffix: " s", step: 0.1, tip: qsTr("How long the chosen animations take"),
+          on: () => win.animAny(b => b.effect !== 3 && b.effect !== 10), value: () => win.animCommon("duration"), set: v => win.setAnim("duration", v) },
+        { id: "buildDelay", tab: "animate", group: "timing", kind: "number", label: qsTr("Delay"), suffix: " s", step: 0.1, tip: qsTr("How long the chosen animations wait after their start"),
+          on: () => win.animOn(), value: () => win.animCommon("delay"), set: v => win.setAnim("delay", v) },
+        { id: "animEarlier", tab: "animate", group: "order", label: qsTr("Earlier"), icon: "arrow-up", tip: qsTr("Play the chosen animation one place earlier"), also: "move earlier reorder animation sooner up",
+          on: () => { const r = win.animTargets(); return r.length === 1 && r[0] > 0 }, run: () => win.moveAnim(-1) },
+        { id: "animLater", tab: "animate", group: "order", label: qsTr("Later"), icon: "arrow-down", tip: qsTr("Play the chosen animation one place later"), also: "move later reorder animation down",
+          on: () => { const r = win.animTargets(); return r.length === 1 && r[0] < backend.builds.length - 1 }, run: () => win.moveAnim(1) },
+        { id: "animRemove", tab: "animate", group: "order", label: qsTr("Remove"), icon: "trash-2", also: "delete animation build none",
+          tip: qsTr("Remove the chosen animations (the objects stay)"), on: () => win.animOn(), run: () => { backend.removeBuilds(win.animTargets()); win.animRow = -1 } },
+        // ── The always-visible cluster on the title line ──
+        { id: "commandSearchMenuItem", tab: "cluster", pal: qsTr("Help"), label: qsTr("Find a command"), icon: "search", keys: "Ctrl+K", also: "search palette", run: () => { win.commitEditors(); commandPalette.show() } },
+        { id: "toolbarUndo", tab: "cluster", pal: qsTr("Edit"), label: qsTr("Undo"), icon: "undo-2", keys: "Ctrl+Z", also: "back mistake", on: () => backend.canUndo, run: () => backend.undo() },
+        { id: "toolbarRedo", tab: "cluster", pal: qsTr("Edit"), label: qsTr("Redo"), icon: "redo-2", keys: "Ctrl+Shift+Z", also: "forward again", on: () => backend.canRedo, run: () => backend.redo() },
+        { id: "toolbarPlay", tab: "cluster", pal: qsTr("Slide Show"), label: qsTr("Play"), icon: "play", keys: "F5", tip: qsTr("Play from the start  F5"), also: "present from the start show play full screen", run: () => win.startShow() },
+        { id: "sidebarFormat", tab: "cluster", pal: qsTr("View"), kind: "toggle", label: qsTr("Format"), icon: "pencil", also: "edit canvas slide style inspector", checked: () => win.sidebarChoice === 0, run: () => win.chooseSidebar(0) },
+        { id: "sidebarDocument", tab: "cluster", pal: qsTr("View"), kind: "toggle", label: qsTr("Document"), icon: "file-text", also: "theme and slide size deck settings language properties", checked: () => win.sidebarChoice === 2, run: () => win.chooseSidebar(2) },
+        { id: "ribbonHelpButton", tab: "cluster", kind: "menu", label: "?", tip: qsTr("Help: the guide and keyboard shortcuts") },
+        { id: "helpGuideMenuItem", parent: "ribbonHelpButton", label: qsTr("OmaShow guide"), icon: "info", keys: "F1", also: "help manual explain how what does sections parts", run: () => { win.commitEditors(); helpGuide.open() } },
+        { id: "helpShortcutsMenuItem", parent: "ribbonHelpButton", label: qsTr("Keyboard shortcuts"), icon: "keyboard", keys: "?", also: "keys help", run: () => helpSheet.open() }
+    ]
+    readonly property var ribbonTabs: [
+        { key: "home", label: qsTr("Home") }, { key: "insert", label: qsTr("Insert") }, { key: "design", label: qsTr("Design") },
+        { key: "arrange", label: qsTr("Arrange") }, { key: "animate", label: qsTr("Animate") }, { key: "show", label: qsTr("Slide Show") }, { key: "review", label: qsTr("Review") },
+        { key: "view", label: qsTr("View") }
+    ]
+    readonly property var ribbonGroupLabels: ({
+        clipboard: qsTr("Clipboard"), slides: qsTr("Slides"), editing: qsTr("Editing"), text: qsTr("Text"), shapes: qsTr("Shapes"),
+        objects: qsTr("Objects"), media: qsTr("Media"), links: qsTr("Links"), size: qsTr("Size and masters"), group: qsTr("Group"),
+        order: qsTr("Order"), lock: qsTr("Lock and hide"), combine: qsTr("Combine"), start: qsTr("Start"), setup: qsTr("Set up"),
+        review: qsTr("Review"), proofing: qsTr("Proofing"), views: qsTr("Views"), panels: qsTr("Panels"), zoom: qsTr("Zoom"),
+        guides: qsTr("Guides"), access: qsTr("Accessibility"), fonts: qsTr("Fonts"), preview: qsTr("Preview"), effect: qsTr("Effect"), timing: qsTr("Timing"),
+        show: qsTr("Show") })
+    // Ctrl+K's list, built when it opens (not re-built under the user on every selection change).
+    function paletteCommands() {
+        return ribbonCommands.filter(c => c.kind !== "menu" && !!c.run).map(c => ({
+            group: paletteGroup(c), name: c.label, also: (c.also ?? "") + " " + (c.tip ?? ""),
+            shortcut: c.keys ?? "", enabled: cmdOn(c), run: c.run }))
+    }
+    // A button reached with Tab inside a scrolled row comes into view.
+    function revealInRow(item) {
+        let row = item.parent
+        while (row && !(row.objectName && row.objectName.indexOf("ribbonTabRow_") === 0)) row = row.parent
+        if (!row) return
+        const x = item.mapToItem(row.contentItem, 0, 0).x
+        if (x < row.contentX) row.contentX = Math.max(0, x - Theme.s2)
+        else if (x + item.width > row.contentX + row.width) row.contentX = Math.min(row.contentWidth - row.width, x + item.width - row.width + Theme.s2)
+    }
+    readonly property var cmd: { const m = ({}); for (const c of ribbonCommands) m[c.id] = c; return m }
+    function cmdOn(c) { return !c.on || !!c.on() }
+    function cmdsIn(tab, group) { return ribbonCommands.filter(c => c.tab === tab && c.group === group) }
+    function childrenOf(owner) { return ribbonCommands.filter(c => c.parent === owner) }
+    function groupsIn(tab) { const g = []; for (const c of ribbonCommands) if (c.tab === tab && g.indexOf(c.group) < 0) g.push(c.group); return g }
+    function paletteGroup(c) {
+        if (c.pal) return c.pal
+        if (c.parent === "file") return qsTr("File")
+        const owner = c.parent ? win.cmd[c.parent] : c
+        const t = ribbonTabs.find(t => t.key === owner.tab)
+        return t ? t.label : qsTr("Help")
+    }
+    // The tab on show in row 2. Home at start; a tab never closes and has no side effects.
+    property int ribbonTab: 0
+
+    // One ribbon control, from one table entry. Selection only enables or disables it.
+    component RibbonButton: ToolAction {
+        id: rb
+        property var c
+        // RIBBON-HOVER-1: hover fades in and out on the ribbon, so a
+        // row scrolling under the pointer does not flicker.
+        property int hoverFade: 160
+        objectName: c.id
+        text: c.text ? c.text() : c.label
+        icon.name: c.icon ?? ""
+        display: icon.name === "" ? AbstractButton.TextOnly : AbstractButton.TextBesideIcon
+        // Icon-only (the cluster below 1440 px) is a square, so ~820 px still fits.
+        implicitWidth: display === AbstractButton.IconOnly ? implicitHeight
+                       : Math.max(implicitBackgroundWidth + leftInset + rightInset, implicitContentWidth + leftPadding + rightPadding)
+                         + (c && c.sizeText ? Math.max(0, Math.ceil(rbLong.advanceWidth - rbNow.advanceWidth)) : 0)
+        enabled: win.cmdOn(c)
+        // Toggles: the binding owns `checked`; a click runs the command, which flips the source.
+        checkable: false
+        checked: c.kind === "toggle" && !!c.checked()
+        readonly property bool opensMenu: c.kind === "menu" || c.kind === "layouts" || c.kind === "languages"
+        tip: (c.tip ?? c.label) + (c.keys && !c.tip ? "  " + c.keys : "")
+        focusPolicy: Qt.StrongFocus
+        onActiveFocusChanged: if (activeFocus) win.revealInRow(rb)
+        Component.onCompleted: if (c && c.id) win.ribbonButtonById[c.id] = rb
+        // A button whose text changes (Start) keeps the width of its longest text.
+        TextMetrics { id: rbNow; font: rb.font; text: rb.text }
+        TextMetrics { id: rbLong; font: rb.font; text: rb.c ? (rb.c.sizeText ?? "") : "" }
+        Accessible.role: c.kind === "toggle" ? Accessible.CheckBox : opensMenu ? Accessible.ButtonMenu : Accessible.Button
+        Accessible.checkable: c.kind === "toggle"
+        Accessible.checked: checked
+        Accessible.description: c.tip ?? ""
+        onClicked: {
+            if (c.kind === "menu") menuLoader.item.popup(rb, 0, rb.height)
+            else if (c.kind === "layouts") backend.design.layouts.length ? layoutsLoader.item.popup(rb, 0, rb.height) : backend.setupDesign()
+            else if (c.kind === "languages") languagesLoader.item.popup(rb, 0, rb.height)
+            else c.run()
+        }
+        // Only the drop-down a button's kind needs is created.
+        Loader { id: menuLoader; active: rb.c.kind === "menu"; sourceComponent: Component { RibbonMenu { owner: rb.c.id } } }
+        Loader {
+            id: layoutsLoader
+            active: rb.c.kind === "layouts"
+            sourceComponent: Component {
+                Menu {
+                    id: rbLayouts
+                    Instantiator {
+                        model: backend.design.layouts
+                        delegate: MenuItem {
+                            required property var modelData
+                            text: modelData.name
+                            checkable: true
+                            checked: modelData.id === backend.slideDesign.layoutId
+                            onTriggered: { win.commitEditors(); layoutApplyDialog.show(modelData.id) }
+                        }
+                        onObjectAdded: (index, object) => rbLayouts.insertItem(index, object)
+                        onObjectRemoved: (index, object) => rbLayouts.removeItem(object)
+                    }
+                }
+            }
+        }
+        Loader {
+            id: languagesLoader
+            active: rb.c.kind === "languages"
+            sourceComponent: Component {
+                Menu {
+                    Repeater {
+                        model: backend.spellingLanguages()
+                        MenuItem {
+                            required property string modelData
+                            text: modelData
+                            checkable: true
+                            checked: backend.deckLanguage === modelData
+                            onTriggered: backend.setDeckLanguage(modelData)
+                        }
+                    }
+                    MenuItem {
+                        objectName: "noDictionaries"
+                        enabled: false
+                        visible: backend.spellingLanguages().length === 0
+                        height: visible ? implicitHeight : 0
+                        text: qsTr("No dictionaries are installed")
+                    }
+                }
+            }
+        }
+    }
+    component RibbonMenuItem: MenuItem {
+        property var c
+        objectName: c.id
+        text: c.keys ? c.label + "  " + c.keys : c.label
+        icon.name: c.icon ?? ""
+        enabled: win.cmdOn(c)
+        // A choice (Start, direction, pace, current effect) shows its tick;
+        // the source owns it, so the binding is put back after a click.
+        checkable: !!c.checked
+        checked: !!c.checked && c.checked()
+        onTriggered: { c.run(); if (c.checked) checked = Qt.binding(() => !!c.checked && c.checked()) }
+    }
+    // ANIM-001: a number on the ribbon (Duration, Delay). Blank-ish when the
+    // chosen animations disagree: it shows the first and says "mixed".
+    component RibbonNumber: RowLayout {
+        id: rn
+        property var c
+        spacing: Theme.s1
+        enabled: win.cmdOn(c)
+        Accessible.role: Accessible.Grouping
+        Accessible.name: c.label
+        readonly property var shared: c.value()
+        Label { text: rn.c.label; color: rn.enabled ? Theme.textSecondary : Theme.textMuted }
+        NumField {
+            objectName: rn.c.id
+            Layout.preferredWidth: Theme.s5 * 4
+            step: rn.c.step ?? 0.1
+            suffix: rn.c.suffix ?? ""
+            value: rn.shared ?? (win.animTargets().length ? backend.builds[win.animTargets()[0]][rn.c.id === "buildDuration" ? "duration" : "delay"] : 0)
+            tabStop: true
+            mixed: rn.shared === undefined && rn.enabled
+            onCommitted: v => rn.c.set(v)
+            HoverHandler { id: rnHover }
+            ToolTip.visible: rnHover.hovered && (rn.c.tip ?? "") !== ""; ToolTip.delay: Theme.tooltipDelay; ToolTip.text: rn.c.tip ?? ""
+            Accessible.name: rn.c.label
+        }
+    }
+    Component { id: ribbonMenuItemComp; RibbonMenuItem {} }
+    Component { id: ribbonButtonComp; RibbonButton { c: parent.modelData } }
+    // ANIM-001: Effect options > Path guide: any other object on the slide is the route.
+    Component {
+        id: ribbonPathsMenuComp
+        Menu {
+            id: rbPaths
+            property var c
+            objectName: c.id
+            title: c.label
+            enabled: win.cmdOn(c)
+            Instantiator {
+                model: backend.slideObjects.filter(o => !win.animAny(b => b.effect === 9 && b.targetId === o.id))
+                delegate: MenuItem {
+                    required property var modelData
+                    text: String(modelData.name).replace(/\s+/g, " ")
+                    checkable: true
+                    checked: win.animCommon("pathId") === modelData.id
+                    onTriggered: { win.setAnim("pathId", modelData.id); checked = Qt.binding(() => win.animCommon("pathId") === modelData.id) }
+                }
+                onObjectAdded: (index, object) => rbPaths.insertItem(index, object)
+                onObjectRemoved: (index, object) => rbPaths.removeItem(object)
+            }
+        }
+    }
+    Component { id: ribbonNumberComp; RibbonNumber { c: parent.modelData } }
+    Component { id: ribbonMenuSepComp; MenuSeparator {} }
+    // A drop-down filled from the table: every entry whose parent is `owner`, in order.
+    component RibbonMenu: Menu {
+        id: rm
+        property string owner
+        onOwnerChanged: fill()
+        Component.onCompleted: fill()
+        property bool filled: false
+        function fill() {
+            if (filled || owner === "") return
+            filled = true
+            for (const k of win.childrenOf(owner)) {
+                if (k.sep && rm.count > 0) rm.addItem(ribbonMenuSepComp.createObject(win.contentItem))
+                if (k.kind === "paths") rm.addMenu(ribbonPathsMenuComp.createObject(win.contentItem, { c: k }))
+                else rm.addItem(ribbonMenuItemComp.createObject(win.contentItem, { c: k }))
+            }
+        }
+    }
     component StatusText: Label {
         color: Theme.textSecondary
         font.pixelSize: Theme.fsLabel
@@ -269,7 +774,7 @@ ApplicationWindow {
                } }
     Shortcut { sequence: "Space"; context: Qt.ApplicationShortcut; enabled: !win.dialogOpen && !presenter.running && !backend.startVisible && (win.workspace === 2 || win.workspace === 4)
                onActivated: backend.togglePlay() }
-    Shortcut { sequence: "F5"; context: Qt.ApplicationShortcut; enabled: !win.dialogOpen && !presenter.running && !backend.startVisible; onActivated: win.startShow() }
+    Shortcut { sequence: "F5"; context: Qt.ApplicationShortcut; enabled: !win.dialogOpen && !presenter.running && !backend.startVisible && !backend.fontGate; onActivated: win.startShow() }
     Shortcut { sequence: "?"; context: Qt.ApplicationShortcut; enabled: !win.dialogOpen && !presenter.running && !backend.startVisible && !win.textEntryFocused; onActivated: helpSheet.open() }
     Shortcut { sequence: "F1"; context: Qt.ApplicationShortcut; enabled: !win.dialogOpen && !presenter.running; onActivated: { win.commitEditors(); helpGuide.open() } }
     Shortcut { sequence: "Ctrl+Q"; context: Qt.ApplicationShortcut; enabled: !presenter.running; onActivated: win.close() }
@@ -319,76 +824,16 @@ ApplicationWindow {
         discardSheet.open()
     }
 
-    function startShow() { win.commitEditors(); presenter.start(false,false) }
+    function startShow() { if (backend.fontGate) return; win.commitEditors(); presenter.start(false,false) }
     function endShow() { presenter.stop() }
     SlideSizeDialog { id: slideSizeDialog }
     LayoutApplyDialog { id: layoutApplyDialog }
     // Every command the menus offer, by name and by the words people use for it.
+    // OMASHOW-PERSONAL: ribbon-only prototype (UI-RIBBON-003) — Ctrl+K lists the
+    // ribbon's own table (same labels, rules and handlers), built as it opens.
     CommandPalette {
         id: commandPalette
-        commands: [
-            { group: qsTr("File"), name: qsTr("New deck"), also: "create start blank", run: () => win.confirmThenNew() },
-            { group: qsTr("File"), name: qsTr("Open a deck"), also: "load file", shortcut: "Ctrl+O", run: () => win.confirmThenOpen() },
-            { group: qsTr("File"), name: qsTr("Open another window"), also: "second copy", run: () => backend.openInNewWindow() },
-            { group: qsTr("File"), name: qsTr("Import slides from another deck"), also: "borrow steal reuse", enabled: !backend.startVisible, run: () => backend.importDeckDialog() },
-            { group: qsTr("File"), name: qsTr("Save"), also: "write keep", shortcut: "Ctrl+S", run: () => { win.commitEditors(); backend.save() } },
-            { group: qsTr("File"), name: qsTr("Save as"), also: "copy elsewhere", shortcut: "Ctrl+Shift+S", run: () => { win.commitEditors(); backend.saveAsDialog() } },
-            { group: qsTr("File"), name: qsTr("Start centre"), also: "home recent templates", run: () => { win.commitEditors(); backend.showStart() } },
-            { group: qsTr("File"), name: qsTr("Keep this deck as a template"), also: "template reuse starting point", enabled: !backend.startVisible, run: () => { win.commitEditors(); templateName.open() } },
-            { group: qsTr("File"), name: qsTr("Install a template"), also: "template add pack", run: () => backend.installTemplateDialog() },
-            { group: qsTr("Export"), name: qsTr("Export a PDF"), also: "document handout print pages", shortcut: "Ctrl+E", run: () => { win.commitEditors(); backend.exportDialog({ kind: 0 }) } },
-            { group: qsTr("Export"), name: qsTr("Export pictures"), also: "png jpeg images slides", run: () => win.showExport() },
-            { group: qsTr("Export"), name: qsTr("Export film"), also: "video movie mp4 record", run: () => win.showExport() },
-            { group: qsTr("Export"), name: qsTr("Print"), also: "paper printer handout", run: () => win.showExport() },
-            { group: qsTr("Export"), name: qsTr("Package the deck"), also: "zip send share assets", run: () => win.showExport() },
-            { group: qsTr("Present"), name: qsTr("Present from the start"), also: "show play full screen", shortcut: "F5", run: () => win.startShow() },
-            { group: qsTr("Present"), name: qsTr("Present from this slide"), also: "show play current", run: () => { win.commitEditors(); presenter.start(true,false) } },
-            { group: qsTr("Present"), name: qsTr("Rehearse in a window"), also: "practise timing", run: () => { win.commitEditors(); presenter.start(false,true) } },
-            { group: qsTr("View"), name: qsTr("Format"), also: "edit canvas slide style inspector", run: () => win.chooseSidebar(0) },
-            { group: qsTr("View"), name: qsTr("Animate"), also: "build transition timeline motion", run: () => win.chooseSidebar(1) },
-            { group: qsTr("View"), name: qsTr("Document"), also: "theme size language deck settings", run: () => win.chooseSidebar(2) },
-            { group: qsTr("View"), name: qsTr("Edit masters and layouts"), also: "design theme master layout template", run: () => win.workspace = 1 },
-            { group: qsTr("View"), name: qsTr("Review"), also: "comments findings outline statistics accessibility", run: () => win.workspace = 3 },
-            { group: qsTr("View"), name: qsTr("Light table"), also: "sorter order overview grid", run: () => { win.workspace = 6; slideSorter.focusBrowser() } },
-            { group: qsTr("Present"), name: qsTr("Presenter setup"), also: "displays console timings custom shows", run: () => win.workspace = 4 },
-            { group: qsTr("Slides"), name: qsTr("Add a slide"), also: "new page", shortcut: "Ctrl+N", enabled: !backend.startVisible, run: () => backend.addSlide() },
-            { group: qsTr("Slides"), name: qsTr("Duplicate this slide"), also: "copy page", shortcut: "Ctrl+D", enabled: !backend.startVisible, run: () => backend.duplicateSlide() },
-            { group: qsTr("Slides"), name: qsTr("Delete this slide"), also: "remove page", enabled: backend.slideCount > 1, run: () => backend.deleteSlide() },
-            { group: qsTr("Slides"), name: qsTr("Skip this slide in the show"), also: "hide omit", enabled: !backend.startVisible, run: () => backend.setSlidesSkipped(true) },
-            { group: qsTr("Slides"), name: qsTr("Change the slide size"), also: "aspect ratio widescreen portrait", enabled: !backend.startVisible, run: () => slideSizeDialog.open() },
-            { group: qsTr("Insert"), name: qsTr("Text"), also: "words box type", enabled: !backend.startVisible, run: () => { win.workspace = 0; backend.addText() } },
-            { group: qsTr("Format"), name: qsTr("Smart punctuation"), also: "quotes dashes ellipsis curly", run: () => backend.setSmartPunctuation(!backend.smartPunctuation) },
-            { group: qsTr("Review"), name: qsTr("Check the spelling"), also: "dictionary language words typo", run: () => { win.workspace = 3 } },
-            { group: qsTr("Arrange"), name: qsTr("Put the text on a shape"), also: "along path curve circle words", enabled: backend.selectionCount === 2, run: () => { win.workspace = 0; backend.putTextOnShape() } },
-            { group: qsTr("Insert"), name: qsTr("An equation"), also: "maths math formula latex fraction", enabled: !backend.startVisible, run: () => { win.workspace = 0; backend.addEquation() } },
-            { group: qsTr("Insert"), name: qsTr("A shape"), also: "rectangle circle arrow", enabled: !backend.startVisible, run: () => { win.toFormat(); shapeGallery.open() } },
-            { group: qsTr("Insert"), name: qsTr("Draw with the pen"), also: "path bezier line vector", enabled: !backend.startVisible, run: () => { win.toFormat(); editCanvas.startPathTool(1) } },
-            { group: qsTr("Insert"), name: qsTr("Draw freehand"), also: "sketch scribble line", enabled: !backend.startVisible, run: () => { win.toFormat(); editCanvas.startPathTool(2) } },
-            { group: qsTr("Insert"), name: qsTr("A picture"), also: "image photo png", enabled: !backend.startVisible, run: () => { win.workspace = 0; backend.insertImageDialog() } },
-            { group: qsTr("Insert"), name: qsTr("Film or sound"), also: "video audio movie clip", enabled: !backend.startVisible, run: () => { win.workspace = 0; backend.insertMediaDialog() } },
-            { group: qsTr("Insert"), name: qsTr("A table"), also: "grid rows columns", enabled: !backend.startVisible, run: () => { win.workspace = 0; backend.addTable() } },
-            { group: qsTr("Insert"), name: qsTr("A chart"), also: "graph bar line pie data", enabled: !backend.startVisible, run: () => { win.workspace = 0; backend.addChart() } },
-            { group: qsTr("Insert"), name: qsTr("A diagram"), also: "process hierarchy flow", enabled: !backend.startVisible, run: () => { win.workspace = 0; diagramDialog.show() } },
-            { group: qsTr("Edit"), name: qsTr("Undo"), also: "back mistake", shortcut: "Ctrl+Z", enabled: backend.canUndo, run: () => backend.undo() },
-            { group: qsTr("Edit"), name: qsTr("Redo"), also: "forward again", shortcut: "Ctrl+Shift+Z", enabled: backend.canRedo, run: () => backend.redo() },
-            { group: qsTr("Edit"), name: qsTr("Paste the words only"), also: "plain text unformatted", enabled: backend.canPaste, run: () => backend.pasteSpecial(2) },
-            { group: qsTr("Edit"), name: qsTr("Paste as a picture"), also: "flatten image", enabled: backend.canPaste, run: () => backend.pasteSpecial(3) },
-            { group: qsTr("Edit"), name: qsTr("Find and replace"), also: "search words swap", enabled: !backend.startVisible, run: () => win.workspace = 3 },
-            { group: qsTr("Review"), name: qsTr("Comment on this slide"), also: "note remark feedback", enabled: !backend.startVisible, run: () => win.workspace = 3 },
-            { group: qsTr("Review"), name: qsTr("Check what would stop someone reading this"), also: "accessibility contrast alt text findings", enabled: !backend.startVisible, run: () => win.workspace = 3 },
-            { group: qsTr("Design"), name: qsTr("Apply a layout"), also: "master placeholder arrange", enabled: !backend.startVisible, run: () => { win.workspace = 1; layoutApplyDialog.show(backend.slideDesign.layoutId ?? "") } },
-            { group: qsTr("Design"), name: qsTr("Remove what nothing uses"), also: "unused tidy hygiene clean", enabled: !backend.startVisible, run: () => win.workspace = 1 },
-            { group: qsTr("View"), name: qsTr("Presenter notes"), also: "speaker script", run: () => win.notesOpen = !win.notesOpen },
-            { group: qsTr("View"), name: win.navigatorCollapsed ? qsTr("Show the slide list") : qsTr("Hide the slide list"), also: "navigator panel thumbnails sidebar", run: () => win.navigatorCollapsed = !win.navigatorCollapsed },
-            { group: qsTr("View"), name: win.inspectorCollapsed ? qsTr("Show the inspector") : qsTr("Hide the inspector"), also: "panel properties sidebar", run: () => win.inspectorCollapsed = !win.inspectorCollapsed },
-            { group: qsTr("View"), name: win.inspectorFixed ? qsTr("Unlock sidebar width") : qsTr("Lock sidebar width"), also: "fixed inspector panel", run: () => win.inspectorFixed = !win.inspectorFixed },
-            { group: qsTr("View"), name: qsTr("Put the panels back"), also: "reset widths restore layout", run: () => { win.navigatorCollapsed = false; win.inspectorCollapsed = false; win.inspectorFixed = false; win.resetPanelWidths() } },
-            { group: qsTr("View"), name: qsTr("Snap to guides"), also: "align magnet", run: () => backend.snapEnabled = !backend.snapEnabled },
-            { group: qsTr("View"), name: backend.reducedMotion ? qsTr("Allow movement again") : qsTr("Less movement"), also: "reduced motion animation accessibility vestibular", run: () => backend.reducedMotion = !backend.reducedMotion },
-            { group: qsTr("View"), name: backend.highContrast ? qsTr("Ordinary contrast") : qsTr("Stronger contrast"), also: "high contrast accessibility legible", run: () => backend.highContrast = !backend.highContrast },
-            { group: qsTr("Help"), name: qsTr("OmaShow guide"), also: "help manual explain how what does sections parts", shortcut: "F1", run: () => helpGuide.open() },
-            { group: qsTr("Help"), name: qsTr("Keyboard shortcuts"), also: "keys help", shortcut: "?", run: () => helpSheet.open() }
-        ]
+        onAboutToShow: commands = win.paletteCommands()
     }
     // Where the guide's "Take me there" goes. Most parts need a deck open.
     function canVisitHelp(key) {
@@ -400,7 +845,7 @@ ApplicationWindow {
         case "start": backend.showStart(); break
         case "slides": win.workspace = 0; win.navigatorCollapsed = false; slideNavigator.forceActiveFocus(); break
         case "format": win.chooseSidebar(0); break
-        case "animate": win.chooseSidebar(1); break
+        case "animate": win.ribbonTab = win.ribbonTabs.findIndex(k => k.key === "animate"); win.chooseSidebar(3); break
         case "document": win.chooseSidebar(2); break
         case "notes": win.workspace = 0; win.notesOpen = true; break
         case "masters": win.workspace = 1; break
@@ -428,6 +873,57 @@ ApplicationWindow {
     Connections { target: backend; function onTableEditorRequested() { win.commitEditors(); tableEditor.show() } }
     LinkDialog { id: linkDialog }
     FontsDialog { id: fontsDialog }
+    // FONT-CHECK-1: say which free fonts an opened PowerPoint deck needs.
+    FontCheckDialog { id: fontCheckDialog }
+    FontSettingsDialog { id: fontSettingsDialog; onPackRequested: fontCheckDialog.showPack() }
+    // FONT-CHECK-3: while an opening deck waits for its font check, a short
+    // loading state (and nothing to click behind it: no show can start).
+    Popup {
+        id: fontGateLoading
+        objectName: "fontGateLoading"
+        parent: Overlay.overlay; anchors.centerIn: parent
+        modal: true; closePolicy: Popup.NoAutoClose
+        visible: backend.fontGateSilent
+        Overlay.modal: Rectangle { color: Theme.withAlpha(Theme.showBg, .65) }
+        background: Rectangle { color: Theme.panelBg; border.color: Theme.border; radius: Theme.rControl }
+        ColumnLayout {
+            spacing: Theme.s2
+            Label { text: backend.fontDownloadRunning ? qsTr("Getting the free fonts this presentation needs…") : qsTr("Checking fonts…") }
+            ProgressBar {
+                Layout.preferredWidth: 280
+                indeterminate: !backend.fontDownloadRunning || backend.fontDownloadTotal <= 0
+                from: 0; to: Math.max(1, backend.fontDownloadTotal); value: backend.fontDownloadDone
+            }
+            // Never stuck behind a slow connection: open it now with similar fonts.
+            Button {
+                objectName: "fontGateFallback"
+                Layout.alignment: Qt.AlignRight
+                text: qsTr("Use fallback fonts")
+                onClicked: backend.skipFontGate()
+            }
+        }
+    }
+    // FONT-CHECK-2: never in the middle of a show: a check or arrived fonts
+    // wait until it ends; editors are committed before fonts are applied.
+    property var pendingFontCheck: null
+    Connections {
+        target: backend
+        function onFontCheckRequested(source, rows) {
+            win.pendingFontCheck = null   // a newer deck replaces any held check
+            if (presenter.running) win.pendingFontCheck = { source: source, rows: rows }
+            else Qt.callLater(() => fontCheckDialog.check(source, rows))
+        }
+        function onFontDownloadChanged() { if (backend.fontsPending && !presenter.running) Qt.callLater(win.applyArrivedFonts) }
+    }
+    Connections {
+        target: presenter
+        function onStateChanged() {
+            if (presenter.running) return
+            if (win.pendingFontCheck) { const p = win.pendingFontCheck; win.pendingFontCheck = null; fontCheckDialog.check(p.source, p.rows) }
+            if (backend.fontsPending) win.applyArrivedFonts()
+        }
+    }
+    function applyArrivedFonts() { if (!backend.fontsPending || presenter.running) return; win.commitEditors(); backend.applyArrivedFonts() }
     MediaOptimisation { id: mediaOptimisation }
     Connections { target: backend; function onMediaOptimisationRequested() { win.commitEditors(); mediaOptimisation.show() } }
     MediaPreflight { id: mediaPreflight; onEditRequested: win.workspace=0 }
@@ -524,7 +1020,10 @@ ApplicationWindow {
         spacing: 0
         visible: !win.presenting && !backend.startVisible
 
-        // ── Title and menus ─────────────────────────────────────────────────
+        // ── Title line: name · File · tabs · the always-visible cluster ─────
+        // OMASHOW-PERSONAL: ribbon-only prototype (UI-RIBBON-003). The menu bar and
+        // the toolbar are one ribbon: this line plus row 2 below, at the height the
+        // two had, so the canvas never moves.
         Rectangle {
             Layout.fillWidth: true
             implicitHeight: Theme.hTitleBar
@@ -532,187 +1031,57 @@ ApplicationWindow {
 
             RowLayout {
                 anchors.fill: parent
-                anchors.leftMargin: Theme.s4
-                anchors.rightMargin: Theme.s3
-                spacing: Theme.s3
+                // Eight tabs and the cluster still fit at ~820 px (ANIM-001 added Animate).
+                anchors.leftMargin: win.width < 900 ? Theme.s1 : Theme.s4
+                anchors.rightMargin: win.width < 900 ? Theme.s1 : Theme.s3
+                spacing: win.width < 900 ? 0 : Theme.s1
 
                 Label {
+                    // The window title names the app too; below 1000 px the tabs need the room.
+                    visible: win.width >= 1000
                     text: Theme.appName
                     color: Theme.textPrimary
                     font.pixelSize: Theme.fsTitle
                     font.weight: Font.Bold
+                    Layout.rightMargin: Theme.s2
                 }
-
-                MenuBar {
-                    id: appMenus
+                ToolAction {
+                    id: fileButton
+                    objectName: "ribbonFileButton"
+                    text: qsTr("File")
+                    display: AbstractButton.TextOnly
+                    implicitHeight: Theme.hTitleBar - 6
+                    readonly property bool opensMenu: true
+                    focusPolicy: Qt.StrongFocus
+                    Accessible.role: Accessible.ButtonMenu
+                    onClicked: fileMenu.popup(fileButton, 0, fileButton.height)
+                    RibbonMenu { id: fileMenu; objectName: "ribbonFileMenu"; owner: "file" }
+                }
+                Row {
+                    objectName: "ribbonTabBar"
                     Layout.fillHeight: true
-                    Menu {
-                        title: qsTr("File")
-                        MenuItem { text: qsTr("Start centre…"); icon.name: "house"; onTriggered: { win.commitEditors(); backend.showStart() } }
-                        MenuItem { text: qsTr("Open…"); icon.name: "folder-open"; onTriggered: win.confirmThenOpen() }
-                        MenuItem { objectName: "newWindowMenuItem"; text: qsTr("New window"); icon.name: "square-plus"
-                                   onTriggered: backend.openInNewWindow() }
-                        MenuItem { objectName: "importDeckMenuItem"; text: qsTr("Import from deck…"); icon.name: "folder-open"
-                                   enabled: !backend.startVisible; onTriggered: { win.commitEditors(); backend.importDeckDialog() } }
-                        MenuSeparator {}
-                        MenuItem { text: qsTr("Save"); icon.name: "save"; onTriggered: { win.commitEditors(); backend.save() } }
-                        MenuItem { text: qsTr("Save as…"); onTriggered: { win.commitEditors(); backend.saveAsDialog() } }
-                        MenuItem { objectName: "keepAsTemplate"; text: qsTr("Keep as template…")
-                                   enabled: !backend.startVisible
-                                   onTriggered: { win.commitEditors(); templateName.open() } }
-                        MenuSeparator {}
-                        MenuItem { text: qsTr("Export PDF…"); icon.name: "file-output"; onTriggered: { win.commitEditors(); backend.exportDialog({ kind: 0 }) } }
-                        MenuItem { objectName: "exportMenuItem"; text: qsTr("Export…"); icon.name: "share"; onTriggered: win.showExport() }
-                        MenuSeparator {}
-                        MenuItem { text: qsTr("Quit"); onTriggered: win.close() }
-                    }
-                    Menu {
-                        title: qsTr("Edit")
-                        MenuItem { text: backend.canUndo ? qsTr("Undo %1").arg(backend.undoLabel) : qsTr("Undo"); icon.name: "undo-2"; enabled: backend.canUndo; onTriggered: backend.undo() }
-                        MenuItem { text: qsTr("Redo"); icon.name: "redo-2"; enabled: backend.canRedo; onTriggered: backend.redo() }
-                        MenuSeparator {}
-                        MenuItem { text: qsTr("Cut"); icon.name: "scissors"; enabled: backend.hasSelection; onTriggered: backend.copyAsync(true) }
-                        MenuItem { text: qsTr("Copy"); icon.name: "copy"; enabled: backend.hasSelection; onTriggered: backend.copyAsync() }
-                        MenuItem { text: qsTr("Paste"); icon.name: "clipboard-paste"; enabled: backend.canPaste; onTriggered: backend.pasteAsync() }
-                        Menu {
-                            title: qsTr("Paste special")
-                            enabled: backend.canPaste
-                            MenuItem { objectName: "pasteKeeping"; text: qsTr("Keep its formatting")
-                                       enabled: backend.clipboardKinds.objects ?? false
-                                       onTriggered: backend.pasteSpecial(0) }
-                            MenuItem { objectName: "pasteMatching"; text: qsTr("Match this deck's text style")
-                                       enabled: backend.clipboardKinds.objects ?? false
-                                       onTriggered: backend.pasteSpecial(1) }
-                            MenuItem { objectName: "pasteWords"; text: qsTr("The words only")
-                                       enabled: backend.clipboardKinds.text ?? false
-                                       onTriggered: backend.pasteSpecial(2) }
-                            MenuItem { objectName: "pastePicture"; text: qsTr("As a picture")
-                                       enabled: backend.clipboardKinds.objects ?? false
-                                       onTriggered: backend.pasteSpecial(3) }
+                    Accessible.role: Accessible.PageTabList
+                    Accessible.name: qsTr("Ribbon tabs")
+                    Repeater {
+                        model: win.ribbonTabs
+                        ToolAction {
+                            required property var modelData
+                            required property int index
+                            objectName: "ribbonTab" + index
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: modelData.label
+                            display: AbstractButton.TextOnly
+                            implicitHeight: Theme.hTitleBar - 6
+                            leftPadding: win.width < 900 ? 2 : win.width < 1000 ? Theme.s1 : Theme.s2; rightPadding: leftPadding
+                            // Usable in rooms too: personal's menus were reachable there.
+                            checkable: false
+                            checked: win.ribbonTab === index
+                            focusPolicy: Qt.StrongFocus
+                            Accessible.role: Accessible.PageTab
+                            Accessible.checked: checked
+                            // Showing a tab has no side effects.
+                            onClicked: win.ribbonTab = index
                         }
-                        MenuItem { text: qsTr("Duplicate"); enabled: backend.hasSelection; onTriggered: backend.duplicateSelected() }
-                        MenuItem { text: qsTr("Delete"); icon.name: "trash-2"; enabled: backend.hasSelection; onTriggered: backend.deleteSelected() }
-                        MenuSeparator {}
-                        MenuItem { text: qsTr("Select all"); onTriggered: backend.selectAll() }
-                    }
-                    Menu {
-                        title: qsTr("Insert")
-                        MenuItem { text: qsTr("Text"); icon.name: "type"; onTriggered: { win.workspace = 0; backend.addText() } }
-                        MenuItem { objectName: "insertEquation"; text: qsTr("Equation"); icon.name: "sigma"; onTriggered: { win.workspace = 0; win.commitEditors(); backend.addEquation() } }
-                        MenuItem { text: qsTr("Shape…"); icon.name: "shapes"; onTriggered: { win.toFormat(); shapeGallery.open() } }
-                        MenuItem { text: qsTr("Pen drawing"); icon.name: "pen-tool"; onTriggered: { win.toFormat(); editCanvas.startPathTool(1) } }
-                        MenuItem { text: qsTr("Freehand drawing"); icon.name: "pencil-line"; onTriggered: { win.toFormat(); editCanvas.startPathTool(2) } }
-                        MenuItem { text: qsTr("Picture…"); icon.name: "image"; onTriggered: { win.workspace = 0; win.commitEditors(); backend.insertImageDialog() } }
-                        MenuSeparator {}
-                        MenuItem { text: qsTr("Table…"); icon.name: "table"; onTriggered: { win.workspace = 0; win.commitEditors(); if (backend.addTable()) tableEditor.show() } }
-                        MenuItem { text: qsTr("Chart"); icon.name: "chart-column"; onTriggered: { win.workspace = 0; win.commitEditors(); backend.addChart() } }
-                        MenuItem { text: qsTr("Diagram…"); icon.name: "workflow"; onTriggered: { win.workspace = 0; win.commitEditors(); diagramDialog.show() } }
-                        MenuSeparator {}
-                        MenuItem { text: qsTr("Audio or video · embed…"); icon.name: "clapperboard"; onTriggered: { win.workspace = 0; win.commitEditors(); backend.insertMediaDialog(true) } }
-                        MenuItem { text: qsTr("Audio or video · link…"); onTriggered: { win.workspace = 0; win.commitEditors(); backend.insertMediaDialog(false) } }
-                    }
-                    Menu {
-                        title: qsTr("Slide")
-                        MenuItem { text: qsTr("New slide"); icon.name: "square-plus"; onTriggered: backend.addSlide() }
-                        MenuItem { text: qsTr("Duplicate slides"); icon.name: "copy"; onTriggered: backend.duplicateSelectedSlides() }
-                        MenuItem { text: qsTr("Delete slides"); icon.name: "trash-2"; enabled: backend.slideSelectionState.canDelete; onTriggered: backend.deleteSelectedSlides() }
-                        MenuItem { text: backend.slideSelectionState.allSkipped ? qsTr("Include in show") : qsTr("Skip in show"); icon.name: "eye-off"; onTriggered: backend.setSlidesSkipped(!backend.slideSelectionState.allSkipped) }
-                        MenuSeparator {}
-                        MenuItem { text: qsTr("Slide size…"); icon.name: "scan"; onTriggered: { win.commitEditors(); slideSizeDialog.show() } }
-                    }
-                    Menu {
-                        title: qsTr("Format")
-                        MenuItem { text: qsTr("Link or action…"); icon.name: "link"; enabled: backend.hasSelection; onTriggered: linkDialog.show() }
-                        MenuItem { text: qsTr("Combine shapes…"); enabled: backend.selectionCount > 1; onTriggered: { win.commitEditors(); combineShapesDialog.open() } }
-                        MenuItem { text: qsTr("Theme and slide size"); icon.name: "palette"; onTriggered: win.chooseSidebar(2) }
-                        MenuItem { text: qsTr("Edit masters and layouts"); onTriggered: { win.commitEditors(); win.workspace = 1 } }
-                        MenuSeparator {}
-                        MenuItem {
-                            objectName: "smartPunctuationItem"
-                            text: qsTr("Smart punctuation")
-                            checkable: true; checked: backend.smartPunctuation
-                            onTriggered: backend.setSmartPunctuation(!backend.smartPunctuation)
-                        }
-                        Menu {
-                            objectName: "deckLanguageMenu"
-                            title: qsTr("The deck is written in")
-                            Repeater {
-                                model: backend.spellingLanguages()
-                                MenuItem {
-                                    required property string modelData
-                                    text: modelData
-                                    checkable: true
-                                    checked: backend.deckLanguage === modelData
-                                    onTriggered: backend.setDeckLanguage(modelData)
-                                }
-                            }
-                            MenuItem {
-                                objectName: "noDictionaries"
-                                enabled: false
-                                visible: backend.spellingLanguages().length === 0
-                                text: qsTr("No dictionaries are installed")
-                            }
-                        }
-                    }
-                    Menu {
-                        title: qsTr("Arrange")
-                        MenuItem { text: qsTr("Group"); icon.name: "group"; enabled: backend.selectionCount > 1; onTriggered: backend.groupSelected() }
-                        MenuItem { text: qsTr("Ungroup"); icon.name: "ungroup"; enabled: !!backend.selection.groupId; onTriggered: backend.ungroupSelected() }
-                        MenuSeparator {}
-                        MenuItem { text: qsTr("Bring forward"); icon.name: "bring-to-front"; enabled: backend.hasSelection; onTriggered: backend.raiseSelected(1) }
-                        MenuItem { text: qsTr("Send backward"); icon.name: "send-to-back"; enabled: backend.hasSelection; onTriggered: backend.raiseSelected(-1) }
-                        MenuSeparator {}
-                        MenuItem { text: qsTr("Lock selected"); icon.name: "lock"; enabled: backend.hasSelection; onTriggered: backend.setSelectedProperty("locked", true) }
-                        MenuItem { text: qsTr("Unlock all"); icon.name: "lock-open"; onTriggered: backend.unlockAllObjects() }
-                        MenuItem { text: qsTr("Hide selected"); icon.name: "eye-off"; enabled: backend.hasSelection; onTriggered: backend.setSelectedProperty("hidden", true) }
-                        MenuItem { text: qsTr("Show all"); icon.name: "eye"; onTriggered: backend.showAllObjects() }
-                        MenuSeparator {}
-                        MenuItem { text: qsTr("Connect objects"); enabled: backend.selectionCount === 2; onTriggered: backend.connectSelected() }
-                    }
-                    Menu {
-                        title: qsTr("View")
-                        MenuItem { text: qsTr("Format"); icon.name: "pencil"; checkable: true; checked: win.sidebarChoice === 0; onTriggered: win.chooseSidebar(0) }
-                        MenuItem { text: qsTr("Animate"); icon.name: "sparkles"; checkable: true; checked: win.sidebarChoice === 1; onTriggered: win.chooseSidebar(1) }
-                        MenuItem { text: qsTr("Document"); icon.name: "file-text"; checkable: true; checked: win.sidebarChoice === 2; onTriggered: win.chooseSidebar(2) }
-                        MenuSeparator {}
-                        MenuItem { objectName: "lightTableMenuItem"; text: qsTr("Light table"); icon.name: "layout-grid"; onTriggered: { win.commitEditors(); win.workspace = 6; slideSorter.focusBrowser() } }
-                        MenuItem { text: qsTr("Review"); icon.name: "message-square-text"; onTriggered: { win.commitEditors(); win.workspace = 3 } }
-                        MenuItem { objectName: "toggleNavigator"; text: win.navigatorCollapsed ? qsTr("Show the slide list") : qsTr("Hide the slide list")
-                                   onTriggered: win.navigatorCollapsed = !win.navigatorCollapsed }
-                        MenuItem { objectName: "toggleInspector"; text: win.inspectorCollapsed ? qsTr("Show the inspector") : qsTr("Hide the inspector")
-                                   onTriggered: win.inspectorCollapsed = !win.inspectorCollapsed }
-                        MenuItem { objectName: "toggleInspectorFixed"; text: win.inspectorFixed ? qsTr("Unlock sidebar width") : qsTr("Lock sidebar width")
-                                   onTriggered: win.inspectorFixed = !win.inspectorFixed }
-                        MenuItem { objectName: "resetPanels"; text: qsTr("Put the panels back")
-                                   onTriggered: { win.navigatorCollapsed = false; win.inspectorCollapsed = false
-                                                  win.inspectorFixed = false; win.resetPanelWidths() } }
-                        MenuItem { objectName: "commandSearchMenuItem"; text: qsTr("Find a command…"); onTriggered: commandPalette.show() }
-                        MenuSeparator {}
-                        MenuItem { objectName: "reducedMotionItem"; checkable: true; checked: backend.reducedMotion
-                                   text: qsTr("Less movement"); onTriggered: backend.reducedMotion = checked }
-                        MenuItem { objectName: "highContrastItem"; checkable: true; checked: backend.highContrast
-                                   text: qsTr("Stronger contrast"); onTriggered: backend.highContrast = checked }
-                        MenuSeparator {}
-                        MenuItem { text: qsTr("Zoom in"); icon.name: "zoom-in"; enabled: win.editing; onTriggered: editCanvas.zoomBy(1.25) }
-                        MenuItem { text: qsTr("Zoom out"); icon.name: "zoom-out"; enabled: win.editing; onTriggered: editCanvas.zoomBy(1 / 1.25) }
-                        MenuItem { text: qsTr("Fit slide"); icon.name: "maximize"; enabled: win.editing; onTriggered: editCanvas.fit() }
-                        MenuItem { text: qsTr("Actual size"); enabled: win.editing; onTriggered: editCanvas.actualSize() }
-                        MenuSeparator {}
-                        MenuItem { text: qsTr("Snap to guides"); checkable: true; checked: backend.snapEnabled; onTriggered: backend.snapEnabled = !backend.snapEnabled }
-                        MenuItem { text: qsTr("Presenter notes"); checkable: true; checked: win.notesOpen; onTriggered: win.notesOpen = !win.notesOpen }
-                    }
-                    Menu {
-                        title: qsTr("Present")
-                        MenuItem { text: qsTr("Play from start"); icon.name: "play"; onTriggered: win.startShow() }
-                        MenuItem { text: qsTr("Play from this slide"); onTriggered: { win.commitEditors(); presenter.start(true, false) } }
-                        MenuItem { text: qsTr("Rehearse"); icon.name: "timer"; onTriggered: { win.commitEditors(); presenter.start(false, true) } }
-                        MenuSeparator {}
-                        MenuItem { text: qsTr("Presenter setup…"); icon.name: "monitor"; onTriggered: { win.commitEditors(); win.workspace = 4 } }
-                    }
-                    Menu {
-                        title: qsTr("Help")
-                        MenuItem { objectName: "helpGuideMenuItem"; text: qsTr("OmaShow guide"); icon.name: "info"; onTriggered: { win.commitEditors(); helpGuide.open() } }
-                        MenuItem { text: qsTr("Keyboard shortcuts"); icon.name: "keyboard"; onTriggered: helpSheet.open() }
                     }
                 }
 
@@ -726,149 +1095,123 @@ ApplicationWindow {
                     elide: Text.ElideRight
                     Layout.maximumWidth: Theme.wInspector
                 }
-                ToolButton {
-                    icon.name: "keyboard"
-                    onClicked: helpSheet.open()
-                    ToolTip.visible: hovered; ToolTip.delay: Theme.tooltipDelay
-                    ToolTip.text: qsTr("Keyboard shortcuts  ?")
-                    Accessible.name: qsTr("Keyboard shortcuts")
-                }
-            }
-        }
-
-        // ── Toolbar ─────────────────────────────────────────────────────────
-        // One toolbar, as Keynote has it: add things on the left, play in the
-        // middle of the right-hand group, and the sidebar's three switches —
-        // Format, Animate, Document — at the far right. The occasional rooms
-        // (masters, review, presenter setup, the light table) replace it with
-        // a title and a Done button, so there is always a single way back.
-        Rectangle {
-            objectName: "mainToolbar"
-            Layout.fillWidth: true
-            // A room's bar is only a title and Done, so it takes the slimmer height.
-            implicitHeight: win.inMode ? Theme.hWorkspaceBar : Theme.hToolbar
-            color: Theme.framePanel
-            Hairline { anchors.top: parent.top; width: parent.width }
-
-            RowLayout {
-                anchors.fill: parent
-                anchors.leftMargin: Theme.s3
-                anchors.rightMargin: Theme.s3
-                spacing: Theme.s1
-                visible: !win.inMode
-
-                ToolAction { objectName: "toolbarNewSlide"; icon.name: "square-plus"; text: qsTr("New Slide"); tip: qsTr("New slide  Ctrl+N"); onClicked: backend.addSlide() }
-                ToolAction {
-                    id: layoutButton
-                    icon.name: "layout-template"
-                    text: qsTr("Layout")
-                    property bool opensMenu: true
-                    tip: qsTr("Apply a layout to this slide")
-                    onClicked: backend.design.layouts.length ? layoutMenu.popup(layoutButton, 0, layoutButton.height) : backend.setupDesign()
-                }
-                Menu {
-                    id: layoutMenu
-                    Instantiator {
-                        model: backend.design.layouts
-                        delegate: MenuItem {
-                            required property var modelData
-                            text: modelData.name
-                            checkable: true
-                            checked: modelData.id === backend.slideDesign.layoutId
-                            onTriggered: { win.commitEditors(); layoutApplyDialog.show(modelData.id) }
-                        }
-                        onObjectAdded: (index, object) => layoutMenu.insertItem(index, object)
-                        onObjectRemoved: (index, object) => layoutMenu.removeItem(object)
-                    }
-                }
-                ToolbarRule {}
-                ToolAction { objectName: "insertText"; icon.name: "type"; text: qsTr("Text"); tip: qsTr("Text box  T"); onClicked: { win.toFormat(); backend.addText() } }
-                ToolAction { id: shapeButton; objectName: "insertShape"; icon.name: "shapes"; text: qsTr("Shape"); property bool opensMenu: true; tip: qsTr("Shapes, the pen and freehand  S adds a rectangle"); onClicked: shapeMenu.popup(shapeButton, 0, shapeButton.height) }
-                Menu {
-                    id: shapeMenu
-                    MenuItem { objectName: "openShapeGallery"; text: qsTr("Shape gallery…"); icon.name: "shapes"; onTriggered: { win.toFormat(); shapeGallery.open() } }
-                    MenuSeparator {}
-                    MenuItem { objectName: "drawWithPen"; text: qsTr("Draw with the pen"); icon.name: "pen-tool"; onTriggered: { win.toFormat(); editCanvas.startPathTool(1) } }
-                    MenuItem { objectName: "drawFreehand"; text: qsTr("Draw freehand"); icon.name: "pencil-line"; onTriggered: { win.toFormat(); editCanvas.startPathTool(2) } }
-                }
-                ToolAction { objectName: "insertPicture"; icon.name: "image"; text: qsTr("Picture"); tip: qsTr("Insert a picture"); onClicked: { win.toFormat(); backend.insertImageDialog() } }
-                ToolAction { objectName: "insertTable"; icon.name: "table"; text: qsTr("Table"); tip: qsTr("Insert a table"); onClicked: { win.toFormat(); if(backend.addTable()) tableEditor.show() } }
-                ToolAction { objectName: "insertChart"; icon.name: "chart-column"; text: qsTr("Chart"); tip: qsTr("Insert a chart"); onClicked: { win.toFormat(); backend.addChart() } }
-                ToolAction { objectName: "insertDiagram"; icon.name: "workflow"; text: qsTr("Diagram"); tip: qsTr("Insert a process or hierarchy diagram"); onClicked: { win.toFormat(); diagramDialog.show() } }
-                ToolAction { id: mediaButton; objectName: "mediaMenuButton"; icon.name: "clapperboard"; text: qsTr("Media"); property bool opensMenu: true; tip: qsTr("Audio and video"); onClicked: mediaMenu.popup(mediaButton,0,mediaButton.height) }
-                Menu {
-                    id: mediaMenu
-                    MenuItem { objectName: "insertEmbeddedMedia"; text: qsTr("Insert audio/video · embed…"); onTriggered: { win.toFormat(); backend.insertMediaDialog(true) } }
-                    MenuItem { objectName: "insertLinkedMedia"; text: qsTr("Insert audio/video · link…"); onTriggered: { win.toFormat(); backend.insertMediaDialog(false) } }
-                    MenuSeparator {}
-                    MenuItem { objectName: "openMediaPreflight"; text: qsTr("Media preflight…"); onTriggered: mediaPreflight.open() }
-                }
-                ToolAction { id: arrangeButton; objectName: "arrangeMenuButton"; icon.name: "layers"; text: qsTr("Arrange"); property bool opensMenu: true; tip: qsTr("Arrange, group, lock and connect"); onClicked: arrangeMenu.popup(arrangeButton,0,arrangeButton.height) }
-                Menu {
-                    id: arrangeMenu
-                    MenuItem { text: qsTr("Copy"); icon.name: "copy"; enabled: backend.hasSelection; onTriggered: backend.copyAsync() }
-                    MenuItem { text: qsTr("Cut"); icon.name: "scissors"; enabled: backend.hasSelection; onTriggered: backend.copyAsync(true) }
-                    MenuItem { text: qsTr("Paste"); icon.name: "clipboard-paste"; enabled: backend.canPaste; onTriggered: backend.pasteAsync() }
-                    MenuItem { text: qsTr("Duplicate objects"); enabled: backend.hasSelection; onTriggered: backend.duplicateSelected() }
-                    MenuSeparator {}
-                    MenuItem { text: qsTr("Select all"); onTriggered: backend.selectAll() }
-                    MenuItem { text: qsTr("Group"); icon.name: "group"; enabled: backend.selectionCount > 1; onTriggered: backend.groupSelected() }
-                    MenuItem { text: qsTr("Ungroup"); icon.name: "ungroup"; enabled: !!backend.selection.groupId; onTriggered: backend.ungroupSelected() }
-                    MenuSeparator {}
-                    MenuItem { text: qsTr("Lock selected"); icon.name: "lock"; enabled: backend.hasSelection; onTriggered: backend.setSelectedProperty("locked",true) }
-                    MenuItem { text: qsTr("Hide selected"); icon.name: "eye-off"; enabled: backend.hasSelection; onTriggered: backend.setSelectedProperty("hidden",true) }
-                    MenuItem { text: qsTr("Unlock all"); icon.name: "lock-open"; onTriggered: backend.unlockAllObjects() }
-                    MenuItem { text: qsTr("Show all"); icon.name: "eye"; onTriggered: backend.showAllObjects() }
-                    MenuSeparator {}
-                    MenuItem { objectName: "objectLinkAction"; text: qsTr("Link or action…"); icon.name: "link"; enabled: backend.hasSelection; onTriggered: linkDialog.show() }
-                    MenuItem { objectName: "connectObjectsAction"; text: qsTr("Connect objects"); icon.name: "spline"; enabled: backend.selectionCount===2; onTriggered: backend.connectSelected() }
-                    MenuItem { objectName: "combineShapesAction"; text: qsTr("Combine shapes…"); enabled: backend.selectionCount>1; onTriggered: { win.commitEditors(); combineShapesDialog.open() } }
-                    MenuItem { objectName: "textOnShapeAction"; text: qsTr("Put the text on this shape"); icon.name: "spline"
-                               enabled: backend.selectionCount===2; onTriggered: { win.commitEditors(); backend.putTextOnShape() } }
-                    MenuSeparator {}
-                    MenuItem { objectName: "slideSizeAction"; text: qsTr("Slide size…"); icon.name: "scan"; onTriggered: { win.commitEditors(); slideSizeDialog.show() } }
-                }
-                ToolAction { objectName: "toolbarReview"; icon.name: "message-square-text"; text: qsTr("Review"); tip: qsTr("Comments, findings and spelling"); onClicked: { win.commitEditors(); win.workspace = 3 } }
-                Item { Layout.fillWidth: true }
-                ToolAction { icon.name: "undo-2"; text: qsTr("Undo"); display: AbstractButton.IconOnly; enabled: backend.canUndo; tip: qsTr("Undo %1  Ctrl+Z").arg(backend.undoLabel); onClicked: backend.undo() }
-                ToolAction { icon.name: "redo-2"; text: qsTr("Redo"); display: AbstractButton.IconOnly; enabled: backend.canRedo; tip: qsTr("Redo  Ctrl+Shift+Z"); onClicked: backend.redo() }
-                ToolbarRule {}
-                ToolAction { objectName: "toolbarPlay"; icon.name: "play"; text: qsTr("Play"); highlighted: true; flat: false; tip: qsTr("Play from the start  F5"); onClicked: win.startShow() }
-                ToolbarRule {}
-                // The sidebar's switches. Animate is also a view of the slide,
-                // with the build timeline under it, so it swaps the body too.
+                // The cluster: each of these exists only here.
+                RibbonButton { c: win.cmd.commandSearchMenuItem; display: AbstractButton.IconOnly; implicitHeight: Theme.hTitleBar - 6 }
+                RibbonButton { c: win.cmd.toolbarUndo; display: AbstractButton.IconOnly; implicitHeight: Theme.hTitleBar - 6
+                               tip: backend.canUndo ? qsTr("Undo %1  Ctrl+Z").arg(backend.undoLabel) : qsTr("Undo  Ctrl+Z") }
+                RibbonButton { c: win.cmd.toolbarRedo; display: AbstractButton.IconOnly; implicitHeight: Theme.hTitleBar - 6 }
+                ToolbarRule { Layout.topMargin: Theme.s2; Layout.bottomMargin: Theme.s2 }
+                RibbonButton { c: win.cmd.toolbarPlay; highlighted: true; flat: false; implicitHeight: Theme.hTitleBar - 6
+                               display: win.compactToolbar ? AbstractButton.IconOnly : AbstractButton.TextBesideIcon }
+                ToolbarRule { Layout.topMargin: Theme.s2; Layout.bottomMargin: Theme.s2 }
+                // The sidebar's switches. Animation lives on the Animate tab (ANIM-001).
                 Repeater {
-                    model: [
-                        { name: qsTr("Format"), icon: "pencil", key: "sidebarFormat" },
-                        { name: qsTr("Animate"), icon: "sparkles", key: "sidebarAnimate" },
-                        { name: qsTr("Document"), icon: "file-text", key: "sidebarDocument" }
-                    ]
-                    ToolAction {
-                        required property var modelData
-                        required property int index
-                        objectName: modelData.key
-                        icon.name: modelData.icon
-                        text: modelData.name
-                        tip: modelData.name
-                        checkable: true
-                        checked: win.sidebarChoice === index
-                        onClicked: win.chooseSidebar(index)
+                    model: ["sidebarFormat", "sidebarDocument"]
+                    RibbonButton {
+                        required property string modelData
+                        c: win.cmd[modelData]
+                        implicitHeight: Theme.hTitleBar - 6
+                        display: win.compactToolbar ? AbstractButton.IconOnly : AbstractButton.TextBesideIcon
                         Accessible.role: Accessible.PageTab
                         Accessible.description: qsTr("Sidebar")
                     }
                 }
+                RibbonButton { c: win.cmd.ribbonHelpButton; display: AbstractButton.TextOnly; implicitHeight: Theme.hTitleBar - 6 }
             }
+        }
 
-            // A room you visit: its name, and the way back.
+        // ── Row 2: the selected tab's groups (+ in a room: its title and Done) ─
+        Rectangle {
+            objectName: "mainToolbar"
+            Layout.fillWidth: true
+            implicitHeight: Theme.hToolbar
+            color: Theme.framePanel
+            Hairline { anchors.top: parent.top; width: parent.width }
+
+            // Every tab is built once and kept; only the selected one shows. Too
+            // wide for the window: the row scrolls sideways (never wraps), with a
+            // 3 px bar shown only while the pointer is over the row.
             RowLayout {
                 anchors.fill: parent
-                anchors.leftMargin: Theme.s4
+                anchors.leftMargin: Theme.s3
                 anchors.rightMargin: Theme.s3
-                spacing: Theme.s3
-                visible: win.inMode
+                spacing: Theme.s2
+                StackLayout {
+                    id: ribbonStack
+                    objectName: "ribbonStack"
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    currentIndex: win.ribbonTab
+                    Repeater {
+                        model: win.ribbonTabs
+                        Flickable {
+                            id: tabFlick
+                            required property var modelData
+                            required property int index
+                            objectName: "ribbonTabRow_" + modelData.key
+                            readonly property bool overflows: contentWidth > width + 1
+                            contentWidth: tabRow.implicitWidth
+                            contentHeight: height
+                            clip: true
+                            // Wheel and scrollbar only: a drag on a button must stay a click.
+                            interactive: false
+                            flickableDirection: Flickable.HorizontalFlick
+                            boundsBehavior: Flickable.StopAtBounds
+                            Accessible.role: Accessible.Pane
+                            Accessible.name: modelData.label
+                            HoverHandler { id: rowHover }
+                            WheelHandler {
+                                enabled: tabFlick.overflows
+                                acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                                onWheel: (e) => tabFlick.contentX = Math.max(0, Math.min(tabFlick.contentWidth - tabFlick.width,
+                                                                                         tabFlick.contentX - 0.675 * (e.angleDelta.y !== 0 ? e.angleDelta.y : e.angleDelta.x)))   // 81 px a notch: slower reads calmer
+                            }
+                            ScrollBar.horizontal: ScrollBar {
+                                objectName: "ribbonScrollBar"
+                                // A 3 px line with a 9 px grab area.
+                                height: 9
+                                topPadding: 6
+                                leftPadding: 0; rightPadding: 0; bottomPadding: 0
+                                policy: ScrollBar.AlwaysOn
+                                visible: tabFlick.overflows && (rowHover.hovered || pressed)
+                                contentItem: Rectangle { implicitHeight: 3; radius: 1.5; color: Theme.textMuted }
+                                background: Item {}
+                            }
+                            RowLayout {
+                                id: tabRow
+                                height: tabFlick.height
+                                spacing: Theme.s1
+                                Repeater {
+                                    model: win.groupsIn(tabFlick.modelData.key)
+                                    RowLayout {
+                                        required property string modelData
+                                        required property int index
+                                        spacing: Theme.s1
+                                        Accessible.role: Accessible.Grouping
+                                        Accessible.name: win.ribbonGroupLabels[modelData] ?? modelData
+                                        ToolbarRule { visible: index > 0 }
+                                        Repeater {
+                                            model: win.cmdsIn(tabFlick.modelData.key, modelData)
+                                            Loader {
+                                                required property var modelData
+                                                Layout.alignment: Qt.AlignVCenter
+                                                sourceComponent: modelData.kind === "number" ? ribbonNumberComp : ribbonButtonComp
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // In a room: its name and the way back, pinned right; the tabs stay usable.
+                ToolbarRule { visible: win.inMode || win.workspace === 2 }
                 Label {
                     objectName: "modeTitle"
-                    text: win.workspace === 1 ? qsTr("Masters and layouts")
+                    visible: win.inMode || win.workspace === 2
+                    text: win.workspace === 2 ? qsTr("Timeline")
+                        : win.workspace === 1 ? qsTr("Masters and layouts")
                         : win.workspace === 3 ? qsTr("Review")
                         : win.workspace === 4 ? qsTr("Presenter setup")
                         : qsTr("Light table")
@@ -876,24 +1219,20 @@ ApplicationWindow {
                     font.weight: Theme.wHeading
                     color: Theme.textPrimary
                 }
-                Label {
-                    Layout.fillWidth: true
-                    elide: Text.ElideRight
-                    color: Theme.textMuted
-                    font.pixelSize: Theme.fsLabel
-                    text: win.workspace === 1 ? qsTr("Changes here reach every slide that uses the master or layout.")
-                        : win.workspace === 3 ? qsTr("Comments, findings, search and spelling across the whole deck.")
-                        : win.workspace === 4 ? qsTr("Choose the displays and rehearse. The console opens when the show starts.")
-                        : qsTr("Every slide at once. Drag to reorder; double-click one to edit it.")
-                }
-                ToolAction { visible: win.workspace === 6; icon.name: "play"; text: qsTr("Play"); tip: qsTr("Play from the start  F5"); onClicked: win.startShow() }
                 Button {
                     objectName: "modeDone"
+                    visible: win.inMode || win.workspace === 2
                     text: qsTr("Done")
                     highlighted: true
                     onClicked: win.leaveMode()
+                    readonly property string about: win.workspace === 2 ? qsTr("The slide's animations laid out in time, and its transition.")
+                        : win.workspace === 1 ? qsTr("Changes here reach every slide that uses the master or layout.")
+                        : win.workspace === 3 ? qsTr("Comments, findings, search and spelling across the whole deck.")
+                        : win.workspace === 4 ? qsTr("Choose the displays and rehearse. The console opens when the show starts.")
+                        : qsTr("Every slide at once. Drag to reorder; double-click one to edit it.")
                     ToolTip.visible: hovered; ToolTip.delay: Theme.tooltipDelay
-                    ToolTip.text: qsTr("Back to the slide  Esc")
+                    ToolTip.text: about + "\n" + qsTr("Back to the slide  Esc")
+                    Accessible.description: about
                 }
             }
             Hairline { anchors.bottom: parent.bottom; width: parent.width }
@@ -941,6 +1280,16 @@ ApplicationWindow {
                     Layout.fillHeight: true
                     color: Theme.framePasteboard
                     EditCanvas { id: editCanvas; anchors.fill: parent }
+                    // ANIM-001 auto preview: the slide plays its animation over the
+                    // canvas, then goes; any click ends it. Nothing is edited.
+                    Rectangle {
+                        objectName: "animPreviewOverlay"
+                        anchors.fill: parent
+                        visible: win.animPreviewing && backend.playing
+                        color: Theme.framePasteboard
+                        SlideView { anchors.fill: parent; anchors.margins: Theme.s5; deck: backend; time: backend.time; editSlide: -1 }
+                        MouseArea { anchors.fill: parent; onPressed: { backend.pause(); win.animPreviewing = false } }
+                    }
 
                 }
 
@@ -992,9 +1341,13 @@ ApplicationWindow {
             }
 
             AnimateWorkspace {
+                id: animateRoom
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 visible: win.workspace === 2
+                nameOf: b => win.animName(b)
+                selectedBuild: win.animRow
+                onRowChosen: index => { win.animRow = index; const b = backend.builds[index]; if (b) backend.select(b.targetId) }
             }
 
             ReviewWorkspace {
@@ -1043,6 +1396,17 @@ ApplicationWindow {
                 clip: true
                 visible: win.editing && win.sidebar === 1 && !win.inspectorCollapsed
             }
+            AnimationPane {
+                Layout.preferredWidth: win.inspectorCollapsed ? 0 : win.inspectorWidth
+                Layout.minimumWidth: win.inspectorCollapsed ? 0 : Theme.wInspectorMin
+                Layout.maximumWidth: win.inspectorCollapsed ? 0 : Number.POSITIVE_INFINITY
+                Layout.fillHeight: true
+                clip: true
+                visible: win.editing && win.sidebar === 2 && !win.inspectorCollapsed
+                row: win.animRow
+                nameOf: b => win.animName(b)
+                onRowChosen: (index, targetId) => { win.commitEditors(); backend.select(targetId); win.animRow = index }
+            }
         }
 
         // ── A deck that came from another application ───────────────────────
@@ -1079,6 +1443,8 @@ ApplicationWindow {
                               ? qsTr("%1 was opened from %2 as a new OmaShow deck. One thing could not be brought across; the original is untouched.").arg(parent.parent.parent.report.name).arg(parent.parent.parent.report.kind)
                               : qsTr("%1 was opened from %2 as a new OmaShow deck. %3 things could not be brought across; the original is untouched.").arg(parent.parent.parent.report.name).arg(parent.parent.parent.report.kind).arg(parent.parent.parent.notes.length)
                     }
+                    // FONT-CHECK-2: the old pacman "Install free fonts…" button is gone; the font check offers the download.
+
                     Button {
                         objectName: "importFonts"
                         visible: (parent.parent.parent.report.missingFonts ?? []).length > 0
@@ -1095,6 +1461,23 @@ ApplicationWindow {
                         objectName: "importDismiss"
                         text: qsTr("OK")
                         onClicked: backend.dismissImportReport()
+                    }
+                }
+                Label {
+                    objectName: "importFontSwaps"
+                    readonly property var swaps: parent.parent.report.fontSwaps ?? []
+                    readonly property var wanted: parent.parent.report.fontsToInstall ?? []
+                    visible: swaps.length > 0 || wanted.length > 0
+                    Layout.fillWidth: true
+                    Layout.leftMargin: Theme.s5
+                    wrapMode: Text.Wrap
+                    color: Theme.textSecondary
+                    text: {
+                        const parts = swaps.map(s => s.office + " → " + s.free + (s.metric ? "" : " (" + Math.round(s.size * 100) + "% size)"))
+                        let line = parts.length > 0 ? qsTr("Office fonts drawn with free matches: %1. Saving as PowerPoint names the originals again.").arg(parts.join(", ")) : ""
+                        if (wanted.length > 0)
+                            line += (line ? " " : "") + qsTr("Not installed here: %1.").arg(wanted.map(w => w.family + " (" + w.offices.slice(0, 3).join(", ") + ")").join(", "))
+                        return line
                     }
                 }
                 Repeater {
@@ -1184,6 +1567,14 @@ ApplicationWindow {
                     // What just happened, for anything reading the window aloud.
                     Accessible.role: Accessible.StaticText
                     Accessible.name: text
+                }
+                // The Extra fonts pack's progress (FONT-CHECK-3); a click opens it.
+                StatusText {
+                    objectName: "packStatus"
+                    visible: backend.packStatus !== ""
+                    text: backend.packStatus
+                    font.underline: packStatusMouse.containsMouse
+                    MouseArea { id: packStatusMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: fontCheckDialog.showPack() }
                 }
                 StatusText { visible: showGuard.engaged; text: showGuard.state; color: Theme.success }
 

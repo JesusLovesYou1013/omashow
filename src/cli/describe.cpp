@@ -33,6 +33,14 @@ QString effectName(Effect effect) {
     case Effect::Pulse: return QStringLiteral("pulse");
     case Effect::Reveal: return QStringLiteral("reveal");
     case Effect::Path: return QStringLiteral("path");
+    case Effect::Appear: return QStringLiteral("appear");
+    case Effect::Fly: return QStringLiteral("fly");
+    case Effect::Float: return QStringLiteral("float");
+    case Effect::Zoom: return QStringLiteral("zoom");
+    case Effect::Turn: return QStringLiteral("turn");
+    case Effect::Wipe: return QStringLiteral("wipe");
+    case Effect::Grow: return QStringLiteral("grow");
+    case Effect::Shrink: return QStringLiteral("shrink");
     }
     return QStringLiteral("none");
 }
@@ -174,6 +182,9 @@ QVariantMap Cli::describeSlide(const Document &d, int index, bool full) {
                                   {QStringLiteral("start"), step.start},
                                   {QStringLiteral("duration"), step.duration},
                                   {QStringLiteral("delay"), step.delay},
+                                  {QStringLiteral("direction"), step.direction},
+                                  {QStringLiteral("amount"), step.amount},
+                                  {QStringLiteral("easing"), int(step.easing)},
                                   {QStringLiteral("pathId"), step.pathId}};
         // What a Reveal counts as one step, always: it is the whole point.
         if (step.effect == Effect::Reveal)
@@ -284,7 +295,7 @@ QVariantMap Cli::vocabulary() {
     auto chartKeys = Chart::encode(ChartData{}).keys();
     chartKeys.removeAll(QStringLiteral("seriesColors"));
     QVariantMap effects;
-    for (int e = int(Effect::Fade); e <= int(Effect::Path); ++e)
+    for (int e = int(Effect::Fade); e <= kLastEffect; ++e)
         if (e != int(Effect::Media)) effects[QString::number(e)] = effectName(Effect(e));
     return QVariantMap{
         {QStringLiteral("themes"), indexed({QStringLiteral("Midnight"), QStringLiteral("Paper"),
@@ -304,7 +315,7 @@ QVariantMap Cli::vocabulary() {
                                QStringLiteral("circles"), QStringLiteral("squares"), QStringLiteral("lower-letters"),
                                QStringLiteral("upper-letters"), QStringLiteral("lower-roman"),
                                QStringLiteral("upper-roman")})},
-                     {QStringLiteral("textFit"), indexed({QStringLiteral("clip"), QStringLiteral("shrink")})},
+                     {QStringLiteral("textFit"), indexed({QStringLiteral("clip"), QStringLiteral("shrink"), QStringLiteral("spill"), QStringLiteral("dynamic")})},
                      {QStringLiteral("direction"), indexed({QStringLiteral("auto"), QStringLiteral("left-to-right"),
                                                             QStringLiteral("right-to-left")})},
                      {QStringLiteral("imageMode"), indexed({QStringLiteral("fit"), QStringLiteral("fill"),
@@ -348,8 +359,11 @@ QVariantMap Cli::vocabulary() {
                                QStringLiteral("withPrevious"), QStringLiteral("afterPrevious")})},
                      {QStringLiteral("easing"),
                       QVariantMap{{QString::number(int(QEasingCurve::Linear)), QStringLiteral("linear")},
-                                  {QString::number(int(QEasingCurve::OutCubic)), QStringLiteral("ease out")},
-                                  {QString::number(int(QEasingCurve::InOutCubic)), QStringLiteral("ease in and out")}}},
+                                  {QString::number(int(QEasingCurve::OutQuad)), QStringLiteral("ease out (PowerPoint: smooth end)")},
+                                  {QString::number(int(QEasingCurve::InQuad)), QStringLiteral("ease in (PowerPoint: smooth start)")},
+                                  {QString::number(int(QEasingCurve::InOutQuad)), QStringLiteral("ease in and out (PowerPoint: smooth start and end)")},
+                                  {QString::number(int(QEasingCurve::OutCubic)), QStringLiteral("ease out, stronger (PowerPoint: smooth end)")},
+                                  {QString::number(int(QEasingCurve::InOutCubic)), QStringLiteral("ease in and out, stronger (PowerPoint: smooth start and end)")}}},
                      {QStringLiteral("revealUnits"),
                       indexed({QStringLiteral("paragraphs"), QStringLiteral("words"), QStringLiteral("characters")})},
                      {QStringLiteral("properties"),

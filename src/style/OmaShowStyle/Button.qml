@@ -62,6 +62,7 @@ T.Button {
             name: control.icon.name
             size: control.icon.width
             color: control.ink
+            Behavior on color { enabled: (control.hoverFade ?? 0) > 0; ColorAnimation { duration: control.fadeMs; easing.type: Theme.easing } }
             x: control.under ? (parent.width - width) / 2
              : !parent.hasText ? (parent.width - width) / 2
              : control.trailing ? label.x + label.width + control.spacing
@@ -75,6 +76,7 @@ T.Button {
             textFormat: Text.PlainText
             font: control.font
             color: control.ink
+            Behavior on color { enabled: (control.hoverFade ?? 0) > 0; ColorAnimation { duration: control.fadeMs; easing.type: Theme.easing } }
             elide: Text.ElideRight
             width: Math.min(implicitWidth, parent.width - (control.under || !parent.hasIcon ? 0 : glyph.width + control.spacing) - parent.chevronWidth)
             x: control.under ? (parent.width - width) / 2
@@ -92,6 +94,10 @@ T.Button {
         }
     }
 
+    // RIBBON-HOVER-1: a button that sets `hoverFade` (ms) fades its hover in and
+    // out, words and icon too, instead of snapping. 0 under "Less movement".
+    readonly property int fadeMs: Theme.reducedMotion ? 0 : ((control.hoverFade ?? 0) > 0 ? control.hoverFade : Theme.dFast)
+
     background: Rectangle {
         implicitWidth: control.iconOnly || control.mark ? Theme.szIconHit : Theme.hControl * 2
         implicitHeight: control.under ? Theme.hToolTile : Theme.hControl
@@ -103,10 +109,11 @@ T.Button {
                 return Theme.pressedOn(Theme.controlBg)
             if (control.hovered)
                 return Theme.controlHover
-            return control.flat ? "transparent" : Theme.withAlpha(Theme.controlBg, 0.55)
+            // Faded from the hover colour itself, so it never passes through black.
+            return control.flat ? Theme.withAlpha(Theme.controlHover, 0) : Theme.withAlpha(Theme.controlBg, 0.55)
         }
         border.width: control.flat && !control.accentTone && !control.visualFocus ? 0 : Theme.hairline
         border.color: control.visualFocus || control.accentTone ? Theme.accent : Theme.borderStrong
-        Behavior on color { ColorAnimation { duration: Theme.dFast; easing.type: Theme.easing } }
+        Behavior on color { ColorAnimation { duration: control.fadeMs; easing.type: Theme.easing } }
     }
 }

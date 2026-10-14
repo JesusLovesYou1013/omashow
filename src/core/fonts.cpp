@@ -1,4 +1,5 @@
 #include "core/fonts.h"
+#include "core/fontswap.h"
 
 #include <QFont>
 #include <QFontDatabase>
@@ -48,6 +49,20 @@ bool looksMono(const QString &family) {
 
 } // namespace
 
+void Fonts::loadBundled() {
+    static bool done = false;
+    if (done) return;
+    done = true;
+    for (const auto &path : bundledFiles(QStringLiteral("Inter")))
+        if (!path.isEmpty()) QFontDatabase::addApplicationFont(path);
+}
+
+QStringList Fonts::bundledFiles(const QString &family) {
+    if (family.compare(QLatin1String("Inter"), Qt::CaseInsensitive) != 0) return {};
+    return {QStringLiteral(":/fonts/Inter-Regular.ttf"), QStringLiteral(":/fonts/Inter-Bold.ttf"),
+            QStringLiteral(":/fonts/Inter-Italic.ttf"), QStringLiteral(":/fonts/Inter-BoldItalic.ttf")};
+}
+
 QMap<QString, int> Fonts::families(const Document &document) {
     QMap<QString, int> out;
     Document copy = document;
@@ -68,6 +83,9 @@ QStringList Fonts::missing(const Document &document) {
 
 QString Fonts::suggested(const QString &family) {
     if (QFontDatabase::hasFamily(family)) return family;
+    // An Office font: its measured free match, when one is installed.
+    for (const auto &option : FontSwap::options(family))
+        if (QFontDatabase::hasFamily(option.family)) return option.family;
     // "Inter SemiBold" is Inter with a weight in its name; "Roboto Serif 14pt"
     // is Roboto Serif at a size. Strip such words and try the stem.
     static const QRegularExpression weightWords(QStringLiteral(

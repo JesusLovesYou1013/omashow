@@ -4,6 +4,8 @@
 #include <QElapsedTimer>
 #include <QFileSystemWatcher>
 #include <QObject>
+#include <QRectF>
+#include <QSet>
 #include <QString>
 #include <QTimer>
 #include <QUrl>
@@ -124,6 +126,26 @@ class Backend : public QObject {
     Q_PROPERTY(QVariantMap startState READ startState CONSTANT)
     Q_PROPERTY(bool reducedMotion READ reducedMotion WRITE setReducedMotion NOTIFY viewPreferencesChanged)
     Q_PROPERTY(bool highContrast READ highContrast WRITE setHighContrast NOTIFY viewPreferencesChanged)
+    Q_PROPERTY(bool fontsPending READ fontsPending NOTIFY fontDownloadChanged)
+    // FONT-CHECK-3: the Extra fonts pack: free matches for
+    // every Office font in the map, fetched into OmaShow's own folder.
+    Q_PROPERTY(bool extraFontsPack READ extraFontsPack WRITE setExtraFontsPack NOTIFY extraFontsPackChanged)
+    Q_PROPERTY(bool packRunning READ packRunning NOTIFY fontDownloadChanged)
+    Q_PROPERTY(int packReady READ packReady NOTIFY fontDownloadChanged)
+    Q_PROPERTY(int packTotal READ packTotal NOTIFY fontDownloadChanged)
+    Q_PROPERTY(double packDone READ packDone NOTIFY fontDownloadChanged)
+    Q_PROPERTY(double packBytes READ packBytes NOTIFY fontDownloadChanged)
+    Q_PROPERTY(QString packStatus READ packStatus NOTIFY fontDownloadChanged)
+    // FONT-CHECK-3: the font check comes first. An opened deck that
+    // needs downloadable fonts is held here, not shown, until its fonts are in
+    // or the fallback is chosen; then it is displayed already correct.
+    Q_PROPERTY(bool fontGate READ fontGate NOTIFY fontGateChanged)
+    Q_PROPERTY(bool fontDownloadRunning READ fontDownloadRunning NOTIFY fontDownloadChanged)
+    Q_PROPERTY(double fontDownloadDone READ fontDownloadDone NOTIFY fontDownloadChanged)
+    Q_PROPERTY(double fontDownloadTotal READ fontDownloadTotal NOTIFY fontDownloadChanged)
+    Q_PROPERTY(bool fontAutoDownload READ fontAutoDownload WRITE setFontAutoDownload NOTIFY fontAutoDownloadChanged)
+    // FONT-SETTINGS-1: off = decks open on fallback fonts, no popup, nothing fetched.
+    Q_PROPERTY(bool fontCheckOnOpen READ fontCheckOnOpen WRITE setFontCheckOnOpen NOTIFY fontAutoDownloadChanged)
     Q_PROPERTY(QVariantMap slideTransition READ slideTransition NOTIFY selectionChanged)
     Q_PROPERTY(QVariantList exportQueue READ exportQueue NOTIFY exportQueueChanged)
     Q_PROPERTY(bool encoderAvailable READ encoderAvailable CONSTANT)
@@ -144,6 +166,62 @@ public:
     // suggested stand-in; and the rewrite, as one undo step.
     Q_INVOKABLE QVariantList missingFonts() const;
     Q_INVOKABLE int substituteFonts(const QVariantMap &replacements);
+    // Office fonts swapped for free matches on PowerPoint import, and the free
+    // matches worth installing (core/fontswap.h). Installing asks first, in
+    // the interface; system packages go through pacman (pkexec), the rest
+    // into the person's own font folder. OMASHOW_FONT_INSTALL=simulate only
+    // writes the plan; =user puts everything in the font folder.
+    Q_INVOKABLE QVariantList fontSwaps() const;
+    Q_INVOKABLE QVariantList fontsToInstall() const;
+    // Fonts arrived and are waiting to be used (the window applies them when
+    // no show is running and editors are committed).
+    bool fontsPending() const { return m_fontsPending; }
+    Q_INVOKABLE void applyArrivedFonts();
+    // FONT-CHECK-2: fetch free fonts into OmaShow's own folder, then use them in place.
+    Q_INVOKABLE bool downloadFonts(const QStringList &families);
+    Q_INVOKABLE void cancelFontDownload();
+    Q_INVOKABLE QVariantList fontPack() const;
+    Q_INVOKABLE bool downloadPack();
+    Q_INVOKABLE void cancelPack();
+    bool extraFontsPack() const;
+    void setExtraFontsPack(bool on);
+    bool packRunning() const { return !m_packLeft.isEmpty(); }
+    int packReady() const;
+    int packTotal() const;
+    double packDone() const;
+    double packBytes() const;
+    QString packStatus() const { return m_packStatus; }
+    bool fontGate() const { return m_gate.active; }
+    // Display the held deck now (fonts arrived, or fallbacks chosen).
+    Q_INVOKABLE void finishFontGate();
+    Q_INVOKABLE void skipFontGate();
+    Q_PROPERTY(bool fontGateSilent READ fontGateSilent NOTIFY fontGateChanged)
+    bool fontGateSilent() const { return m_gate.active && m_gate.silent; }
+    bool fontDownloadRunning() const;
+    double fontDownloadDone() const;
+    double fontDownloadTotal() const;
+    bool fontAutoDownload() const;
+    void setFontAutoDownload(bool on);
+    // FONT-CHECK-1: OmaShow's own font folder and the per-document font check.
+    Q_INVOKABLE QString fontSandboxDir() const;
+    Q_INVOKABLE bool fontCheckHidden(const QString &source) const;
+    Q_INVOKABLE void setFontCheckHidden(const QString &source, bool hidden);
+    Q_INVOKABLE bool openFontSandbox();
+    bool fontCheckOnOpen() const;
+    void setFontCheckOnOpen(bool on);
+    // The free fonts OmaShow has downloaded into its own folder: {family, bytes}.
+    Q_INVOKABLE QVariantList downloadedFonts() const;
+    // Unticking the Extra fonts pack: removes what OmaShow downloaded (only
+    // folders of families it downloads; anything put there by hand stays),
+    // a folder per turn of the event loop so the window can show progress.
+    // Stops downloads and turns the pack off first.
+    Q_INVOKABLE void removeDownloadedFonts();
+    Q_PROPERTY(bool fontRemoveRunning READ fontRemoveRunning NOTIFY fontRemoveChanged)
+    Q_PROPERTY(int fontRemoveDone READ fontRemoveDone NOTIFY fontRemoveChanged)
+    Q_PROPERTY(int fontRemoveTotal READ fontRemoveTotal NOTIFY fontRemoveChanged)
+    bool fontRemoveRunning() const { return !m_fontRemoveLeft.isEmpty(); }
+    int fontRemoveDone() const { return m_fontRemoveTotal - int(m_fontRemoveLeft.size()); }
+    int fontRemoveTotal() const { return m_fontRemoveTotal; }
     // The upright weights (100-900) the typeface really has, ascending. A name
     // that is not installed answers for the face it falls back to. Cached per
     // family, so the inspector asks once per family change.
@@ -364,6 +442,9 @@ public:
     Q_INVOKABLE void editSelectedTable();
     bool applyTable(const QString &slideId,const QString &objectId,const TableData &table,const QString &label,const DataSource *source=nullptr);
     Q_INVOKABLE void addText();
+    // "Grow box to fit" while typing: the box itself (not only its frame)
+    // takes the editor's height, so snapping and alignment see its real size.
+    Q_INVOKABLE void growEditedTextBox(const QString &slideId, const QString &id, qreal height);
     Q_INVOKABLE void addEquation();
     Q_INVOKABLE bool putTextOnShape();
     // What the deck is written in, what it has been taught, and whether it
@@ -468,7 +549,18 @@ public:
     Q_INVOKABLE void previewBuild(int index);
     Q_INVOKABLE int addBuild(const QString &targetId, int phase = 0, int effect = 1);
     Q_INVOKABLE int addBuildForSelection(int phase = 0, int effect = 1);
+    // ANIM-001: what the Animate tab's galleries do. cls 0 entrance, 1
+    // emphasis, 2 exit, 3 motion. An entrance or exit replaces the object's
+    // own (one each); emphasis and motion add. Several objects: the first On
+    // click, the rest With previous. One undo step. Returns the first index.
+    Q_INVOKABLE int applyEffect(int cls, int effect);
+    // ANIM-001: one animation becomes another of the same class (one undo step).
+    Q_INVOKABLE int replaceEffect(int index, int effect);
+    // Set one property on several builds as one undo step (the tab's Timing
+    // and Effect options act on the pane's rows or the selection's builds).
+    Q_INVOKABLE void setBuildsProperty(const QVariantList &indices, const QString &key, const QVariant &value);
     Q_INVOKABLE void removeBuild(int index);
+    Q_INVOKABLE void removeBuilds(const QVariantList &indices);   // ANIM-001: one undo step
     Q_INVOKABLE void moveBuild(int from, int to);
     Q_INVOKABLE void setBuildProperty(int index, const QString &key, const QVariant &value);
     QVariantMap design() const;
@@ -567,6 +659,17 @@ public:
 signals:
     void opened();
     void importReportChanged();
+    void fontDownloadChanged();
+    void extraFontsPackChanged();
+    void fontGateChanged();
+    void packFinished(int ready, int total, const QVariantMap &failed, bool offline);
+    void fontAutoDownloadChanged();
+    void fontRemoveChanged();
+    void fontRemoveFinished(int removed);
+    void fontDownloadFinished(const QStringList &installed, const QVariantMap &failed, bool offline, bool cancelled);
+    // A deck was opened (local file or import source) that names Office fonts
+    // whose free matches are not here.
+    void fontCheckRequested(const QString &source, const QVariantList &rows);
     void importReady();
     void deckImportChanged();
     void findChanged();
@@ -753,6 +856,50 @@ private:
     QString m_defaultPrinter;
     bool m_printersRunning = false, m_printersKnown = false;
     int m_reducedMotion = -1, m_highContrast = -1;
+    class FontDownloader *m_fontDownloader = nullptr;
+    void ensureDownloader();
+    void familyArrived(const QString &family);
+    void familyLost(const QString &family, const QString &why, bool network);
+    void runFinished(const QStringList &installed, const QVariantMap &failed, bool offline, bool cancelled);
+    QStringList m_deckFamilies, m_packFamilies;   // what the dialog / the pack asked for
+    QSet<QString> m_deckLeft, m_packLeft, m_deckNeeded;
+    QStringList m_deckInstalled;
+    QVariantMap m_deckFailed, m_packFailed;
+    bool m_deckCancelled = false;
+    // The pack's rows, built once and kept up to date as families settle
+    // (not rebuilt on every progress tick).
+    const QVariantList &packRows() const;
+    mutable QVariantList m_packRows;
+    mutable bool m_packRowsBuilt = false;
+    mutable int m_packReadyCount = 0;
+    QString m_packStatus;
+    void finishDeck();
+    struct Gate {
+        bool active = false;
+        Document document;
+        QUrl url;
+        QString source, kind, original;
+        QStringList warnings;
+        bool foreign = false, recovery = false, silent = false;
+        int id = 0;
+    } m_gate;
+    bool m_gateHandled = false;
+    int m_gateIds = 0;   // the opening deck's check is done: no second popup
+    // Every open comes through here: held behind the font check if needed.
+    void gateOpen(Gate gate);
+    void completeOpen(const Gate &gate);
+    bool m_fontsPending = false;
+    QStringList m_fontRemoveLeft;   // family folders still to delete
+    int m_fontRemoveTotal = 0;
+    void removeNextFont();
+    void requestFontCheck(const QString &source);
+    void growSelectedTextBoxes();
+    void growTextBox(int slide, const QString &id);
+    // The box being typed in, as it was before it started growing with the
+    // typing, so the edit and the growth are one Undo (TEXT-FIT-1).
+    QString m_editGrowSlide, m_editGrowId;
+    QRectF m_editGrowRect;
+    void endEditGrowth();
     QTimer m_exportTicker;
     int m_exportSerial = 0;
     void startNextExport();

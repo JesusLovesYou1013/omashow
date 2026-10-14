@@ -37,7 +37,14 @@ QColor colorFromString(const QString &value, const QColor &fallback) {
 }
 
 QJsonObject objectToJson(const SceneObject &object) {
-    return QJsonObject::fromVariantMap(Design::properties(object));
+    auto json = QJsonObject::fromVariantMap(Design::properties(object));
+    // Only an imported PowerPoint box whose Office font was swapped carries
+    // these; leaving them out otherwise keeps every other deck readable by
+    // builds that do not know them.
+    if (object.origFont.isEmpty()) {
+        for (const auto *key : {"origFont", "origFontSize", "fontScale", "origWeight"}) json.remove(QLatin1String(key));
+    }
+    return json;
 }
 SceneObject objectFromJson(const QJsonObject &json) {
     SceneObject object;
@@ -85,6 +92,15 @@ QString effectToString(Effect effect) {
     case Effect::Pulse: return QStringLiteral("pulse");
     case Effect::Reveal: return QStringLiteral("reveal");
     case Effect::Path: return QStringLiteral("path");
+    case Effect::Appear: return QStringLiteral("appear");
+    case Effect::Fly: return QStringLiteral("fly");
+    case Effect::Float: return QStringLiteral("float");
+    case Effect::Zoom: return QStringLiteral("zoom");
+    case Effect::Turn: return QStringLiteral("turn");
+    case Effect::Wipe: return QStringLiteral("wipe");
+    case Effect::Grow: return QStringLiteral("grow");
+    case Effect::Shrink: return QStringLiteral("shrink");
+    case Effect::Rotate: return QStringLiteral("rotate");
     case Effect::None: break;
     }
     return QStringLiteral("none");
@@ -100,19 +116,40 @@ Effect effectFromString(const QString &value) {
     if (value == QLatin1String("pulse")) return Effect::Pulse;
     if (value == QLatin1String("reveal")) return Effect::Reveal;
     if (value == QLatin1String("path")) return Effect::Path;
+    if (value == QLatin1String("appear")) return Effect::Appear;
+    if (value == QLatin1String("fly")) return Effect::Fly;
+    if (value == QLatin1String("float")) return Effect::Float;
+    if (value == QLatin1String("zoom")) return Effect::Zoom;
+    if (value == QLatin1String("turn")) return Effect::Turn;
+    if (value == QLatin1String("wipe")) return Effect::Wipe;
+    if (value == QLatin1String("grow")) return Effect::Grow;
+    if (value == QLatin1String("shrink")) return Effect::Shrink;
+    if (value == QLatin1String("rotate")) return Effect::Rotate;
     return Effect::None;
 }
 
 QJsonObject stepToJson(const BuildStep &step) {
     QJsonObject json;
     json[QStringLiteral("target")] = step.targetId;
-    json[QStringLiteral("effect")] = effectToString(step.effect);
+    // ANIM-001: an older OmaShow does not know the newer effects and would read
+    // them as none. It gets the nearest one it knows in "effect"; this build
+    // reads the real one from "look".
+    if (Effects::isNew(step.effect)) {
+        json[QStringLiteral("effect")] = Effects::legacyName(step.effect);
+        json[QStringLiteral("look")] = effectToString(step.effect);
+    } else {
+        json[QStringLiteral("effect")] = effectToString(step.effect);
+    }
+    if (step.direction) json[QStringLiteral("direction")] = step.direction;
     json[QStringLiteral("start")] = step.start;
     json["phase"] = int(step.phase);
     json["trigger"] = int(step.trigger);
     json["delay"] = step.delay;
     json[QStringLiteral("duration")] = step.duration;
     json[QStringLiteral("easing")] = int(step.easing);
+    if (step.accel >= 0) json[QStringLiteral("accel")] = step.accel;
+    if (step.decel >= 0) json[QStringLiteral("decel")] = step.decel;
+    if (!step.pptxWas.isEmpty()) json[QStringLiteral("pptxWas")] = step.pptxWas;
     json["amountX"] = step.amountX;
     json["amountY"] = step.amountY;
     json["amount"] = step.amount;
@@ -120,6 +157,17 @@ QJsonObject stepToJson(const BuildStep &step) {
     json["pathId"] = step.pathId;
     json["pathReverse"] = step.pathReverse;
     json["orient"] = step.orient;
+    // ANIM-INTEROP: written only when used, so ordinary decks stay as they were.
+    if (step.repeat != 0) json["repeat"] = step.repeat;
+    if (step.autoReverse) json["autoReverse"] = true;
+    if (step.rewind) json["rewind"] = true;
+    if (!step.motionPath.isEmpty()) json["motionPath"] = step.motionPath;
+    if (step.rangeFrom >= 0) { json["rangeFrom"] = step.rangeFrom; json["rangeTo"] = step.rangeTo; }
+    if (!step.pptxXml.isEmpty()) {
+        json["pptx"] = step.pptxXml; json["pptxSig"] = step.pptxSig; json["pptxDuration"] = step.pptxDuration;
+        if (!step.pptxName.isEmpty()) json["pptxName"] = step.pptxName;
+        if (!step.pptxBuild.isEmpty()) json["pptxBuild"] = step.pptxBuild;
+    }
     return json;
 }
 
@@ -127,6 +175,9 @@ BuildStep stepFromJson(const QJsonObject &json) {
     BuildStep step;
     step.targetId = json.value(QStringLiteral("target")).toString();
     step.effect = effectFromString(json.value(QStringLiteral("effect")).toString());
+    if (const auto look = effectFromString(json.value(QStringLiteral("look")).toString()); look != Effect::None)
+        step.effect = look;
+    step.direction = qBound(0, json.value(QStringLiteral("direction")).toInt(), 3);
     step.start = qMax(0.0, json.value(QStringLiteral("start")).toDouble());
     step.phase = BuildPhase(qBound(0, json.value("phase").toInt(), 1));
     step.trigger = BuildTrigger(qBound(0, json.value("trigger").toInt(), 3));
@@ -134,6 +185,9 @@ BuildStep stepFromJson(const QJsonObject &json) {
     step.duration = json.value(QStringLiteral("duration")).toDouble(0.6);
     step.easing = QEasingCurve::Type(json.value(QStringLiteral("easing"))
                                          .toInt(int(QEasingCurve::OutCubic)));
+    step.accel = json.value(QStringLiteral("accel")).toDouble(-1);
+    step.decel = json.value(QStringLiteral("decel")).toDouble(-1);
+    step.pptxWas = json.value(QStringLiteral("pptxWas")).toString();
     step.amountX = json.value("amountX").toDouble();
     step.amountY = json.value("amountY").toDouble();
     step.amount = json.value("amount").toDouble();
@@ -141,6 +195,17 @@ BuildStep stepFromJson(const QJsonObject &json) {
     step.pathId = json.value("pathId").toString();
     step.pathReverse = json.value("pathReverse").toBool();
     step.orient = json.value("orient").toBool();
+    step.repeat = qBound(-1.0, json.value("repeat").toDouble(), 1000.0);
+    step.autoReverse = json.value("autoReverse").toBool();
+    step.rewind = json.value("rewind").toBool();
+    step.motionPath = json.value("motionPath").toString();
+    step.rangeFrom = json.value("rangeFrom").toInt(-1);
+    step.rangeTo = json.value("rangeTo").toInt(-1);
+    step.pptxXml = json.value("pptx").toString();
+    step.pptxSig = json.value("pptxSig").toString();
+    step.pptxName = json.value("pptxName").toString();
+    step.pptxDuration = json.value("pptxDuration").toDouble();
+    step.pptxBuild = json.value("pptxBuild").toString();
     return step;
 }
 
@@ -159,6 +224,10 @@ QByteArray slideToJson(const Slide &slide) {
     json["transitionDirection"] = slide.transitionDirection;
     json["transitionSeconds"] = slide.transitionSeconds;
     json["advanceAfter"] = slide.advanceAfter;
+    // ANIM-INTEROP: PowerPoint triggers (click a shape to play), kept as written.
+    if (!slide.pptxInteractive.isEmpty()) json["pptxInteractive"] = QJsonArray::fromStringList(slide.pptxInteractive);
+    if (!slide.pptxInteractiveTargets.isEmpty()) json["pptxInteractiveTargets"] = QJsonArray::fromStringList(slide.pptxInteractiveTargets);
+    if (!slide.pptxInteractiveBuilds.isEmpty()) json["pptxInteractiveBuilds"] = QJsonArray::fromStringList(slide.pptxInteractiveBuilds);
     QJsonArray reading;
     for (const auto &id : slide.readingOrder) reading.append(id);
     json["readingOrder"] = reading;
@@ -198,6 +267,9 @@ Slide slideFromJson(const QByteArray &raw, bool *ok) {
     slide.transitionDirection = json.value("transitionDirection").toInt(0);
     slide.transitionSeconds = json.value("transitionSeconds").toDouble(-1);
     slide.advanceAfter = json.value("advanceAfter").toDouble(-1);
+    for (const auto &v : json.value("pptxInteractive").toArray()) slide.pptxInteractive.append(v.toString());
+    for (const auto &v : json.value("pptxInteractiveTargets").toArray()) slide.pptxInteractiveTargets.append(v.toString());
+    for (const auto &v : json.value("pptxInteractiveBuilds").toArray()) slide.pptxInteractiveBuilds.append(v.toString());
     if (slide.transition < -1 || slide.transition > Presentation::LastKind ||
         slide.transitionDirection < 0 || slide.transitionDirection > 3 ||
         !std::isfinite(slide.transitionSeconds) || slide.transitionSeconds < -1 ||
@@ -286,6 +358,18 @@ QJsonObject themeJson(const Document &document) {
     for (auto it = document.theme.fonts.cbegin(); it != document.theme.fonts.cend(); ++it)
         fonts[it.key()] = it.value();
     theme["colors"] = colors; theme["fonts"] = fonts;
+    if (!document.theme.fontOrigins.isEmpty()) {
+        QJsonObject origins;
+        for (auto it = document.theme.fontOrigins.cbegin(); it != document.theme.fontOrigins.cend(); ++it)
+            origins[it.key()] = it.value();
+        theme["fontOrigins"] = origins;
+    }
+    if (!document.theme.fontFallbacks.isEmpty()) {
+        QJsonObject fallbacks;
+        for (auto it = document.theme.fontFallbacks.cbegin(); it != document.theme.fontFallbacks.cend(); ++it)
+            fallbacks[it.key()] = it.value();
+        theme["fontFallbacks"] = fallbacks;
+    }
     return theme;
 }
 
@@ -448,6 +532,12 @@ Bundle::ReadResult Bundle::fromBytes(const QByteArray &raw) {
             document.theme.colors[it.key()] = color;
         }
         for (auto it = fonts.begin(); it != fonts.end(); ++it) document.theme.fonts[it.key()] = it.value().toString();
+        const auto origins = theme.value("fontOrigins").toObject();
+        for (auto it = origins.begin(); it != origins.end(); ++it)
+            if (it.value().isString() && it.value().toString().size() <= 256) document.theme.fontOrigins[it.key()] = it.value().toString();
+        const auto fallbacks = theme.value("fontFallbacks").toObject();
+        for (auto it = fallbacks.begin(); it != fallbacks.end(); ++it)
+            if (it.key().size() <= 256 && it.value().isString() && it.value().toString().size() <= 256) document.theme.fontFallbacks[it.key()] = it.value().toString();
         QSet<QString> masterIds, layoutIds;
         for (const auto &value : design.value("masters").toArray()) {
             const auto json = value.toObject(); Master m;

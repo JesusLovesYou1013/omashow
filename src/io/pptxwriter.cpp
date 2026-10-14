@@ -4,6 +4,7 @@
 #include "core/chart.h"
 #include "core/design.h"
 #include "core/fonts.h"
+#include "core/fontswap.h"
 #include "core/mediaasset.h"
 #include "core/shape.h"
 #include "core/table.h"
@@ -15,9 +16,15 @@
 #include <QFileInfo>
 #include <QLocale>
 #include <QPainter>
+#include <QProcess>
+#include <QFont>
+#include <QRawFont>
+#include <QTextLayout>
+#include <QGlyphRun>
 #include <QSaveFile>
 #include <QUrl>
 #include <QSet>
+#include <QRegularExpression>
 #include <QUuid>
 #include <QXmlStreamWriter>
 #include <QtMath>
@@ -50,6 +57,8 @@ public:
     Xml &text(const QString &words) { m_writer.writeCharacters(words); return *this; }
     Xml &end() { m_writer.writeEndElement(); return *this; }
     Xml &empty(const char *tag) { m_writer.writeEmptyElement(QString::fromLatin1(tag)); return *this; }
+    // ANIM-INTEROP: a fragment kept from PowerPoint, written as it is.
+    Xml &raw(const QString &xml) { m_writer.writeCharacters(QString()); m_writer.device()->write(xml.toUtf8()); return *this; }
     QByteArray finish() { m_writer.writeEndDocument(); return m_bytes; }
 private:
     QByteArray m_bytes;
@@ -155,6 +164,229 @@ QString columnLetters(int index) {
     return out;
 }
 
+// ---- typefaces carried inside the deck
+//
+// PowerPoint draws a typeface it lacks with a stand-in, so a deck made with
+// fonts Windows does not ship looked different there. A family installed here
+// under its exact name, as plain TrueType whose licence allows embedding, is
+// carried as PowerPoint carries fonts: an Embedded OpenType (.fntdata) part
+// listed in presentation.xml's embeddedFontLst.
+namespace Embed {
+
+struct Face { QString file; QByteArray data; };
+struct Family { QString name; Face styles[4]; QString refused; }; // regular, bold, italic, bold italic; why not carried
+
+quint16 be16(const QByteArray &d, int at) { return at + 2 <= d.size() ? quint16((uchar(d[at]) << 8) | uchar(d[at + 1])) : 0; }
+quint32 be32(const QByteArray &d, int at) { return (quint32(be16(d, at)) << 16) | be16(d, at + 2); }
+
+// Offset of a table, or -1.
+int table(const QByteArray &d, const char *tag) {
+    const int n = be16(d, 4);
+    for (int i = 0; i < n; ++i) {
+        const int rec = 12 + 16 * i;
+        if (rec + 16 > d.size()) return -1;
+        if (d.mid(rec, 4) == QByteArray(tag, 4)) {
+            const quint32 off = be32(d, rec + 8);
+            return off < quint32(d.size()) ? int(off) : -1;
+        }
+    }
+    return -1;
+}
+
+// Why a font file cannot be carried, or empty when it can: static TrueType
+// outlines (no collection, no variable font, which would arrive without a
+// real bold), and a licence that allows editable embedding. Preview-and-print
+// (fsType 4) would make PowerPoint open the deck read-only, so it is refused too.
+QString refusal(const QByteArray &d) {
+    if (d.size() < 12 || be32(d, 0) != 0x00010000u) return QStringLiteral("not plain TrueType");
+    if (table(d, "glyf") < 0 || table(d, "head") < 0 || table(d, "name") < 0) return QStringLiteral("not plain TrueType");
+    if (table(d, "fvar") >= 0) return QStringLiteral("a variable font");
+    const int os2 = table(d, "OS/2");
+    if (os2 < 0) return QStringLiteral("not plain TrueType");
+    const quint16 fsType = be16(d, os2 + 8);
+    if ((fsType & 0x0002) || (fsType & 0x0200)) return QStringLiteral("its licence does not allow embedding");
+    if ((fsType & 0x000E) == 0x0004) return QStringLiteral("its licence allows only preview and print");
+    return QString();
+}
+
+// A name (1 family, 2 style, 4 full, 5 version) in UTF-16LE, Windows Unicode record.
+QByteArray name(const QByteArray &d, int id) {
+    const int t = table(d, "name");
+    const int count = be16(d, t + 2), strings = t + be16(d, t + 4);
+    // US English first, so the EOT's family matches the typeface the slides name.
+    for (int pass = 0; pass < 2; ++pass)
+    for (int i = 0; i < count; ++i) {
+        const int r = t + 6 + 12 * i;
+        if (be16(d, r) == 3 && be16(d, r + 2) == 1 && be16(d, r + 6) == id && (pass || be16(d, r + 4) == 0x409)) {
+            QByteArray s = d.mid(strings + be16(d, r + 10), be16(d, r + 8));
+            for (int k = 0; k + 1 < s.size(); k += 2) std::swap(s[k], s[k + 1]);
+            return s;
+        }
+    }
+    return QByteArray();
+}
+
+// An uncompressed EOT (version 0x00020001) around the font file.
+QByteArray eot(const QByteArray &font) {
+    QByteArray h;
+    auto u8 = [&](quint8 v) { h.append(char(v)); };
+    auto u16 = [&](quint16 v) { u8(v & 0xff); u8(v >> 8); };
+    auto u32 = [&](quint32 v) { u16(v & 0xffff); u16(v >> 16); };
+    const int os2 = table(font, "OS/2"), head = table(font, "head");
+    u32(0); u32(quint32(font.size())); u32(0x00020001); u32(0);
+    for (int i = 0; i < 10; ++i) u8(uchar(font[os2 + 32 + i]));
+    u8(1);                                      // DEFAULT_CHARSET
+    u8(be16(font, os2 + 62) & 1);               // fsSelection italic
+    u32(be16(font, os2 + 4));                   // weight
+    u16(be16(font, os2 + 8));                   // fsType
+    u16(0x504C);
+    for (int i = 0; i < 4; ++i) u32(be32(font, os2 + 42 + 4 * i));
+    const bool v1 = be16(font, os2) >= 1;
+    u32(v1 ? be32(font, os2 + 78) : 1); u32(v1 ? be32(font, os2 + 82) : 0);
+    u32(be32(font, head + 8));                  // checkSumAdjustment
+    for (int i = 0; i < 4; ++i) u32(0);
+    for (int id : {1, 2, 5, 4}) { const auto s = name(font, id); u16(0); u16(quint16(s.size())); h.append(s); }
+    u16(0); u16(0);                             // Padding5, no root string
+    const quint32 total = quint32(h.size() + font.size());
+    for (int i = 0; i < 4; ++i) h[i] = char((total >> (8 * i)) & 0xff);
+    return h + font;
+}
+
+// Families Windows and Office already have: no need to carry them.
+bool shipsWithOffice(const QString &family) {
+    static const QSet<QString> known = {
+        QStringLiteral("arial"), QStringLiteral("calibri"), QStringLiteral("calibri light"), QStringLiteral("cambria"),
+        QStringLiteral("candara"), QStringLiteral("consolas"), QStringLiteral("constantia"), QStringLiteral("corbel"),
+        QStringLiteral("courier new"), QStringLiteral("georgia"), QStringLiteral("segoe ui"), QStringLiteral("tahoma"),
+        QStringLiteral("times new roman"), QStringLiteral("trebuchet ms"), QStringLiteral("verdana"), QStringLiteral("aptos"),
+        QStringLiteral("aptos display"), QStringLiteral("century gothic"), QStringLiteral("garamond"), QStringLiteral("gill sans mt")};
+    // Every Windows and Office family the font map knows ships with Office
+    // (or is fetched by it): never carried, never renamed to a weight face.
+    return known.contains(family.toLower()) || FontSwap::isOffice(family);
+}
+
+// The installed files of exactly this family, by style slot.
+Family find(const QString &family) {
+    Family out{family, {}, {}};
+    if (family.isEmpty() || shipsWithOffice(family)) return out;
+    // A family OmaShow carries itself is embedded from its own copy, so it is
+    // carried even where it is not installed.
+    const auto bundled = Fonts::bundledFiles(family);
+    if (!bundled.isEmpty()) {
+        for (int slot = 0; slot < 4 && slot < bundled.size(); ++slot) {
+            QFile f(bundled[slot]);
+            if (!f.open(QIODevice::ReadOnly)) continue;
+            const QByteArray data = f.readAll();
+            const QString why = refusal(data);
+            if (why.isEmpty()) out.styles[slot] = {bundled[slot], data};
+            else out.refused = why;
+        }
+        return out;
+    }
+    QProcess fc;
+    // Escape what fontconfig patterns treat specially (a hyphen starts the size).
+    QString escaped;
+    for (const QChar c : family) { if (c == QLatin1Char('-') || c == QLatin1Char(':') || c == QLatin1Char(',') || c == QLatin1Char('\\')) escaped += QLatin1Char('\\'); escaped += c; }
+    fc.start(QStringLiteral("fc-list"), {QStringLiteral(":family=%1").arg(escaped), QStringLiteral("file"), QStringLiteral("weight"), QStringLiteral("slant")},
+             QIODevice::ReadOnly);
+    if (!fc.waitForFinished(5000)) return out;
+    // "/path/X.ttf: :weight=200:slant=0" -- weight 80 regular, 200 bold; slant 0 upright.
+    static const QRegularExpression line(QStringLiteral("^(.*): :?(?:slant=(\\d+):)?weight=(\\d+)(?::slant=(\\d+))?"), QRegularExpression::MultilineOption);
+    static const QRegularExpression range(QStringLiteral("weight=\\["));
+    const QString listing = QString::fromUtf8(fc.readAllStandardOutput());
+    if (range.match(listing).hasMatch()) out.refused = QStringLiteral("a variable font");
+    for (auto it = line.globalMatch(listing); it.hasNext();) {
+        const auto m = it.next();
+        const QString file = m.captured(1);
+        const int weight = m.captured(3).toInt();
+        const int slant = (m.captured(2).isEmpty() ? m.captured(4) : m.captured(2)).toInt();
+        if (weight != 80 && weight != 200) continue;
+        const int slot = (weight == 200 ? 1 : 0) + (slant ? 2 : 0);
+        if (!out.styles[slot].file.isEmpty()) continue;
+        QFile f(file);
+        if (!f.open(QIODevice::ReadOnly)) continue;
+        const QByteArray data = f.readAll();
+        const QString why = refusal(data);
+        if (!why.isEmpty()) { out.refused = why; continue; }
+        out.styles[slot] = {file, data};
+    }
+    return out;
+}
+
+// The weight OmaShow really draws for a family at a weight: Qt picks the
+// nearest face that exists (Noto Serif at 600 is its Medium, Inter at 600 its Bold).
+int drawnWeightUncached(const QString &family, int weight, bool italic);
+int drawnWeight(const QString &family, int weight, bool italic) {
+    static QHash<QString, int> cache;   // writer runs on one worker at a time
+    const QString key = family + QLatin1Char('|') + QString::number(weight) + (italic ? QLatin1String("|i") : QLatin1String(""));
+    auto it = cache.constFind(key);
+    if (it != cache.constEnd()) return *it;
+    const int w = drawnWeightUncached(family, weight, italic);
+    cache.insert(key, w);
+    return w;
+}
+int drawnWeightUncached(const QString &family, int weight, bool italic) {
+    QFont f(family);              // built as render/textlayout.cpp builds it
+    f.setPixelSize(48);
+    f.setWeight(QFont::Weight(weight));
+    f.setItalic(italic);
+    // The face text layout really draws with (QFontInfo echoes the request,
+    // and QRawFont::fromFont can resolve differently from layout).
+    QTextLayout layout(QStringLiteral("Hg"), f);
+    layout.beginLayout();
+    layout.createLine();
+    layout.endLayout();
+    const auto runs = layout.glyphRuns();
+    if (runs.isEmpty() || !runs.first().rawFont().isValid()) return weight;
+    // The loaded file's own OS/2 usWeightClass: rawFont().weight() also echoes the request.
+    // A variable font's OS/2 holds its default instance, not the one drawn.
+    if (!runs.first().rawFont().fontTable("fvar").isEmpty()) return weight;
+    const QByteArray os2 = runs.first().rawFont().fontTable("OS/2");
+    return os2.size() >= 6 ? int(be16(os2, 4)) : weight;
+}
+
+int fcWeight(int css) {
+    static const int map[][2] = {{100, 0}, {200, 40}, {300, 50}, {350, 55}, {400, 80}, {500, 100}, {600, 180}, {700, 200}, {800, 205}, {900, 210}};
+    for (const auto &m : map) if (m[0] == css) return m[1];
+    return -1;
+}
+
+// A face of one weight that PowerPoint can only name by its own family,
+// e.g. "Noto Serif Medium" (name ID 1): carried as that family's regular
+// (and italic). Empty name when no static file of exactly that weight exists.
+Family weightFace(const QString &family, int weight) {
+    Family out;
+    const int fc = fcWeight(weight);
+    if (fc < 0 || family.isEmpty()) return out;
+    QString escaped;
+    for (const QChar c : family) { if (c == QLatin1Char('-') || c == QLatin1Char(':') || c == QLatin1Char(',') || c == QLatin1Char('\\')) escaped += QLatin1Char('\\'); escaped += c; }
+    for (int slant : {0, 100}) {
+        QProcess fcl;
+        fcl.start(QStringLiteral("fc-list"), {QStringLiteral(":family=%1:weight=%2:slant=%3").arg(escaped).arg(fc).arg(slant), QStringLiteral("file")}, QIODevice::ReadOnly);
+        if (!fcl.waitForFinished(5000)) continue;
+        const QString file = QString::fromUtf8(fcl.readAllStandardOutput()).section(QLatin1Char('\n'), 0, 0).section(QStringLiteral(": "), 0, 0).trimmed().remove(QRegularExpression(QStringLiteral(":$")));
+        if (file.isEmpty()) continue;
+        QFile f(file);
+        if (!f.open(QIODevice::ReadOnly)) continue;
+        const QByteArray data = f.readAll();
+        const QString why = refusal(data);
+        if (!why.isEmpty()) { out.refused = why; continue; }
+        if (slant == 0) {
+            const QByteArray n = name(data, 1);   // UTF-16LE
+            out.name = QString::fromUtf16(reinterpret_cast<const char16_t *>(n.constData()), n.size() / 2);
+            out.styles[0] = {file, data};
+        } else {
+            out.styles[2] = {file, data};
+        }
+    }
+    // Some files name the weight's family as the base family: carrying it
+    // under that name would collide with the real regular.
+    if (out.styles[0].file.isEmpty() || out.name.compare(family, Qt::CaseInsensitive) == 0) { out.name.clear(); out.styles[0] = {}; out.styles[2] = {}; }
+    return out;
+}
+
+} // namespace Embed
+
 struct Writer {
     const Document &doc;
     Warnings warnings;
@@ -170,6 +402,11 @@ struct Writer {
     // Media are shared: one part per picture identity.
     QHash<QString, QString> mediaByIdentity;
     int mediaCount = 0, chartCount = 0, commentCount = 0;
+    QStringList embedded;    // families carried inside the deck
+    QStringList notCarried;  // "Family (why)" for installed families that could not be
+    // Weights PowerPoint has no switch for (only bold on/off) travel as their own
+    // family name, e.g. "Noto Serif Medium"; key "family|weight".
+    mutable QHash<QString, Embed::Family> weightFaces;
 
     explicit Writer(const Document &document) : doc(document) {
         e = 12192000.0 / qMax(1.0, doc.size.width());
@@ -373,8 +610,22 @@ struct Writer {
         x.start(tag).attr("lang", lang);
         const qreal size = run && run->fontSize > 0 ? run->fontSize : o.fontSize;
         x.attr("sz", hundredthsPt(size));
-        const bool bold = run && run->weight ? run->weight >= 600 : o.fontWeight >= 600;
+        const int weight = run && run->weight ? run->weight : o.fontWeight;
         const bool italic = run && run->italic ? run->italic == 1 : o.italic;
+        QString family = run && !run->fontFamily.isEmpty() ? run->fontFamily : o.fontFamily;
+        // Write the face OmaShow draws, not the nearest switch PowerPoint has:
+        // 400 and 700 are plain and bold; any other drawn weight is named by its
+        // own family and carried, so PowerPoint draws the same face.
+        bool bold = weight >= 600;
+        const int drawn = Embed::drawnWeight(family, weight, italic);
+        // 400 under a bold request is Qt's synthetic bold (no bold file): stay bold.
+        if (drawn == 700) bold = true;
+        else if (drawn != 400 && !Embed::shipsWithOffice(family)) {
+            const QString key = family + QLatin1Char('|') + QString::number(drawn);
+            auto it = weightFaces.find(key);
+            if (it == weightFaces.end()) it = weightFaces.insert(key, Embed::weightFace(family, drawn));
+            if (!it->name.isEmpty()) { family = it->name; bold = false; }
+        }
         const bool underline = run && run->underline ? run->underline == 1 : o.underline;
         x.attr("b", bold ? "1" : "0").attr("i", italic ? "1" : "0").attr("u", underline ? "sng" : "none");
         const bool strike = run && run->strike ? run->strike == 1 : o.strike;
@@ -385,7 +636,6 @@ struct Writer {
         if (!qFuzzyIsNull(o.letterSpacing)) x.attr("spc", qRound(o.letterSpacing * e / 12700.0 * 100));
         const QColor color = run && run->color.isValid() ? run->color : o.textColor;
         writeSolidFill(x, color, o.opacity);
-        const QString family = run && !run->fontFamily.isEmpty() ? run->fontFamily : o.fontFamily;
         x.start("a:latin").attr("typeface", family).end();
         if (!linkRel.isEmpty()) {
             x.start("a:hlinkClick").attr("r:id", linkRel);
@@ -402,7 +652,8 @@ struct Writer {
             .attr("rtlCol", o.direction == 2 ? "1" : "0")
             .attr("anchor", o.verticalAlign == 1 ? "ctr" : o.verticalAlign == 2 ? "b" : "t");
         if (o.columns > 1) x.attr("numCol", o.columns);
-        if (o.textFit == 1) x.empty("a:normAutofit"); else x.empty("a:noAutofit");
+        // Cut off (0) has no PowerPoint counterpart: it is written as no autofit.
+        if (o.textFit == 1) x.empty("a:normAutofit"); else if (o.textFit == 3 && !inTable) x.empty("a:spAutoFit"); else x.empty("a:noAutofit");
         x.end();
         x.empty("a:lstStyle");
 
@@ -1112,107 +1363,404 @@ struct Writer {
         x.end();
     }
 
+    // ANIM-INTEROP: a kept PowerPoint fragment with the new shape ids, fresh
+    // node ids and (for the effect itself) the current timing. Empty when an
+    // object it names is gone.
+    QString placeIds(QString xml, const SlideCtx &ctx) const {
+        static const QRegularExpression ref(QStringLiteral("@\\{([^}]*)\\}"));
+        QString out; int last = 0;
+        for (auto it = ref.globalMatch(xml); it.hasNext();) {
+            const auto m = it.next();
+            const int spid = ctx.spidByObject.value(m.captured(1), 0);
+            if (!spid) return QString();
+            out += xml.mid(last, m.capturedStart() - last) + QString::number(spid);
+            last = m.capturedEnd();
+        }
+        return out + xml.mid(last);
+    }
+    static QString renumber(const QString &xml, int &id) {
+        static const QRegularExpression cTn(QStringLiteral("<p:cTn( [^>]*?)? id=\"\\d+\""));
+        QString out; int last = 0;
+        for (auto it = cTn.globalMatch(xml); it.hasNext();) {
+            const auto m = it.next();
+            out += xml.mid(last, m.capturedStart() - last) + QStringLiteral("<p:cTn") + m.captured(1) + QStringLiteral(" id=\"%1\"").arg(id++);
+            last = m.capturedEnd();
+        }
+        return out + xml.mid(last);
+    }
+    // Sets attributes on the first tag matching `tagStart` (empty value: removes).
+    static QString setAttrs(const QString &xml, int at, const QList<QPair<QString, QString>> &values) {
+        const int close = xml.indexOf(QLatin1Char('>'), at);
+        if (close < 0) return xml;
+        QString tag = xml.mid(at, close - at);
+        const bool selfClosing = tag.endsWith(QLatin1Char('/'));
+        if (selfClosing) tag.chop(1);
+        for (const auto &[k, v] : values) {
+            const QRegularExpression re(QStringLiteral(" %1=\"[^\"]*\"").arg(QRegularExpression::escape(k)));
+            tag.remove(re);
+            if (!v.isEmpty()) tag += QStringLiteral(" %1=\"%2\"").arg(k, v);
+        }
+        return xml.left(at) + tag + (selfClosing ? QStringLiteral("/") : QString()) + xml.mid(close);
+    }
+    static QString scaleDurations(QString xml, qreal ratio) {
+        if (std::abs(ratio - 1.0) < 1e-6) return xml;
+        static const QRegularExpression dur(QStringLiteral(" (dur|delay)=\"(\\d+)\""));
+        QString out; int last = 0;
+        for (auto it = dur.globalMatch(xml); it.hasNext();) {
+            const auto m = it.next();
+            const qint64 v = m.captured(2).toLongLong();
+            // Parts keep their place in the effect: lengths and inner delays scale together.
+            out += xml.mid(last, m.capturedStart() - last) + QStringLiteral(" %1=\"%2\"").arg(m.captured(1)).arg(v <= 1 ? v : qMax<qint64>(1, qRound64(v * ratio)));
+            last = m.capturedEnd();
+        }
+        return out + xml.mid(last);
+    }
+
     void writeBuilds(Xml &x, int number, const Slide &slide, const SlideCtx &ctx) {
-        struct Step { const BuildStep *step; int spid; };
-        QVector<Step> steps;
-        bool emphasisDropped = false, revealDropped = false;
+        // One PowerPoint effect each. A Reveal of a whole text by paragraph is
+        // one effect per paragraph, each straight after the last (ANIM-INTEROP).
+        struct Emit { const BuildStep *step; int spid; BuildTrigger trigger; qreal delay; qreal duration; int from, to; bool raw; int group; };
+        // Groups PowerPoint already numbered (kept effects and triggers) keep their numbers.
+        static const QRegularExpression grpRe(QStringLiteral("presetClass=[^>]*?grpId=\"(\\d+)\"|grpId=\"(\\d+)\"[^>]*?presetClass="));
+        QHash<int, QSet<int>> taken;
+        QHash<QPair<int, int>, QString> keptBuild;
+        const auto rawGroup = [&](const QString &xml) { const auto m = grpRe.match(xml); return m.hasMatch() ? (m.captured(1).isEmpty() ? m.captured(2) : m.captured(1)).toInt() : -1; };
         for (const auto &s : slide.timeline.steps) {
-            if (s.effect == Effect::None || s.effect == Effect::Media || s.effect == Effect::Path) {
-                if (s.effect == Effect::Path) warnings.add(QStringLiteral("A build along a path was left out"), number);
-                continue;
-            }
+            const int sp = ctx.spidByObject.value(s.targetId, 0);
+            if (!sp || s.pptxXml.isEmpty() || s.pptxSig != s.interopSig()) continue;
+            const int g = rawGroup(s.pptxXml);
+            if (g >= 0) { taken[sp].insert(g); if (s.pptxBuild != QLatin1String("-")) keptBuild.insert({sp, g}, s.pptxBuild); }
+        }
+        QVector<QPair<int, int>> triggerGroups;
+        for (const auto &entry : slide.pptxInteractiveBuilds) {
+            const auto parts = entry.split(QLatin1Char('|'));
+            const int sp = parts.size() >= 3 ? ctx.spidByObject.value(parts.at(0), 0) : 0;
+            if (!sp) continue;
+            const int g = parts.at(1).toInt();
+            taken[sp].insert(g); triggerGroups.append({sp, g});
+            if (parts.at(2) != QLatin1String("-")) keptBuild.insert({sp, g}, parts.mid(2).join(QLatin1Char('|')));
+        }
+        const auto freeGroup = [&](int sp) { int g = 0; while (taken[sp].contains(g)) ++g; taken[sp].insert(g); return g; };
+        QVector<Emit> emits;
+        bool timedLater = false, legacyApproximated = false, floatSideways = false, pathless = false;
+        bool keptRangeGone = false, orientLost = false, timedEarly = false;
+        QStringList convertedNames;
+        QHash<int, int> kindOf;             // spid -> 0 shape, 1 text box, 2 other
+        QSet<QPair<int, int>> paragraphGroups;
+        QHash<QPair<int, int>, int> paragraphRun, paragraphRunNext;   // (spid, phase) -> group, next paragraph
+        for (const auto &o : slide.objects) if (const int sp = ctx.spidByObject.value(o.id, 0)) kindOf[sp] = o.type == ObjectType::Rect ? 0 : o.type == ObjectType::Text ? 1 : 2;
+        const auto paragraphsOf = [&](const QString &id) { for (const auto &o : slide.objects) if (o.id == id) return int(o.text.split(QLatin1Char('\n')).size()); return 1; };
+        for (const auto &s : slide.timeline.steps) {
+            if (s.effect == Effect::None || s.effect == Effect::Media) continue;
             const int spid = ctx.spidByObject.value(s.targetId, 0);
             if (!spid) continue;
-            if (s.effect == Effect::Reveal) revealDropped = true;
-            if (s.effect == Effect::Pulse) emphasisDropped = true;
-            steps.append({&s, spid});
+            const bool rangeGone = s.rangeFrom >= 0 && s.rangeTo > paragraphsOf(s.targetId);
+            if (!s.pptxXml.isEmpty() && rangeGone) keptRangeGone = true;
+            const bool raw = !s.pptxXml.isEmpty() && s.pptxSig == s.interopSig() && !rangeGone && !placeIds(s.pptxXml, ctx).isEmpty();
+            if (!raw && !s.pptxWas.isEmpty()) convertedNames << s.pptxWas;
+            if (!raw && s.effect == Effect::Path && s.orient) orientLost = true;
+            if (!raw && s.effect == Effect::Path && s.motionPath.isEmpty()) {
+                const auto *guide = slide.find(s.pathId);
+                if (!guide || Shape::worldPath(*guide).isEmpty()) { pathless = true; continue; }
+            }
+            if (!raw && (s.effect == Effect::Move || s.effect == Effect::Scale || s.effect == Effect::Spin)) legacyApproximated = true;
+            if (!raw && s.effect == Effect::Float && (s.direction == 1 || s.direction == 2)) floatSideways = true;
+            const bool paragraphPart = s.effect == Effect::Reveal && s.unit == 0 && s.rangeFrom >= 0;
+            const auto partKey = qMakePair(spid, int(s.phase));
+            const int group = raw ? rawGroup(s.pptxXml)
+                            : paragraphPart && paragraphRun.contains(partKey) && paragraphRunNext.value(partKey) == s.rangeFrom ? paragraphRun.value(partKey) : freeGroup(spid);
+            if (paragraphPart) { paragraphRun[partKey] = group; paragraphRunNext[partKey] = s.rangeTo; } else paragraphRun.remove(partKey);
+            if (!raw && s.effect == Effect::Reveal && s.unit == 0 && s.rangeFrom < 0) {
+                const int n = qMax(1, paragraphsOf(s.targetId));
+                for (int k = 0; k < n; ++k)
+                    emits.append({&s, spid, k == 0 ? s.trigger : BuildTrigger::AfterPrevious, k == 0 ? s.delay : 0.0, s.duration / n, k, k + 1, false, group});
+                paragraphGroups.insert({spid, group});
+                continue;
+            }
+            if (s.effect == Effect::Reveal && s.unit == 0) paragraphGroups.insert({spid, group});
+            // A range past the text's last paragraph reveals the whole text instead.
+            emits.append({&s, spid, s.trigger, s.delay, s.duration, rangeGone ? -1 : s.rangeFrom, rangeGone ? -1 : s.rangeTo, raw, group});
         }
-        if (revealDropped) warnings.add(QStringLiteral("A text reveal was written as a fade of the whole box"), number);
-        if (emphasisDropped) warnings.add(QStringLiteral("An emphasis build was written as a grow and shrink"), number);
-        if (steps.isEmpty()) return;
+        if (floatSideways) warnings.add(QStringLiteral("A float in from the side was written as a float up (PowerPoint floats only up or down)"), number);
+        if (legacyApproximated) warnings.add(QStringLiteral("An older move, scale or spin build was written as fly in, zoom or spin"), number);
+        if (pathless) warnings.add(QStringLiteral("A build along a path with no path chosen was left out"), number);
+        if (keptRangeGone) warnings.add(QStringLiteral("A PowerPoint text animation whose paragraphs are gone was written as OmaShow's own"), number);
+        if (orientLost) warnings.add(QStringLiteral("Turning with the path has no PowerPoint equivalent; the object keeps its angle there"), number);
+        if (!convertedNames.isEmpty()) {
+            convertedNames.removeDuplicates();
+            warnings.add(QStringLiteral("PowerPoint effects changed here are written as OmaShow's nearest: %1").arg(convertedNames.join(QStringLiteral(", "))), number);
+        }
+        QStringList interactive;
         int id = 1;
+        if (emits.isEmpty() && slide.pptxInteractive.isEmpty()) return;
         x.start("p:timing");
         x.start("p:tnLst"); x.start("p:par");
         x.start("p:cTn").attr("id", id++).attr("dur", "indefinite").attr("restart", "never").attr("nodeType", "tmRoot");
         x.start("p:childTnLst");
+        const bool main = !emits.isEmpty();
+        if (main) {
         x.start("p:seq").attr("concurrent", "1").attr("nextAc", "seek");
         x.start("p:cTn").attr("id", id++).attr("dur", "indefinite").attr("nodeType", "mainSeq");
         x.start("p:childTnLst");
-        bool clickOpen = false;
-        qreal previousEnd = 0;
+        }
         const auto cond = [&](const char *delay) { x.start("p:stCondLst"); x.start("p:cond").attr("delay", delay).end(); x.end(); };
-        // A first step that starts by itself: the group waits for the slide,
-        // not for a click.
         const auto groupCond = [&](bool automatic) {
             x.start("p:stCondLst");
             x.start("p:cond").attr("delay", "indefinite").end();
             if (automatic) { x.start("p:cond").attr("evt", "onBegin").attr("delay", "0"); x.start("p:tn").attr("val", 2).end(); x.end(); }
             x.end();
         };
-        const auto target = [&](int spid) { x.start("p:tgtEl"); x.start("p:spTgt").attr("spid", spid).end(); x.end(); };
-        for (int i = 0; i < steps.size(); ++i) {
-            const auto &s = *steps[i].step;
-            const int spid = steps[i].spid;
-            const bool automatic = i == 0 && (s.trigger == BuildTrigger::WithPrevious || s.trigger == BuildTrigger::AfterPrevious);
-            const bool click = i == 0 || s.trigger == BuildTrigger::OnClick || s.trigger == BuildTrigger::Absolute;
-            if (click) {
-                if (clickOpen) { x.end(); x.end(); x.end(); x.end(); x.end(); x.end(); }
+        const auto target = [&](int spid, int from, int to) {
+            x.start("p:tgtEl"); x.start("p:spTgt").attr("spid", spid);
+            if (from >= 0) { x.start("p:txEl"); x.start("p:pRg").attr("st", from).attr("end", qMax(from, to - 1)).end(); x.end(); }
+            x.end(); x.end(); };
+        // PowerPoint's structure (and OmaShow's Timeline::resolvedSteps): a click
+        // opens a group; within it a run starts with the click and with each
+        // After previous; With previous joins the run. Delays are the effect's own.
+        bool groupOpen = false, runOpen = false, clicked = false;
+        qreal sinceClick = 0, runStart = 0;
+        for (int i = 0; i < emits.size(); ++i) {
+            const auto &em = emits[i];
+            const auto &s = *em.step;
+            const int spid = em.spid;
+            // A first animation that starts by itself starts with the slide.
+            const bool automatic = i == 0 && em.trigger != BuildTrigger::OnClick;
+            const bool atTime = em.trigger == BuildTrigger::Absolute;
+            // At a time = With previous plus a delay (PowerPoint's own form); exact
+            // unless a click came before it.
+            if (atTime && clicked) timedLater = true;
+            const bool newClick = i == 0 || em.trigger == BuildTrigger::OnClick;
+            if (newClick && !automatic) clicked = true;
+            if (newClick) {
+                if (runOpen) { x.end(); x.end(); x.end(); runOpen = false; }
+                if (groupOpen) { x.end(); x.end(); x.end(); }
                 x.start("p:par"); x.start("p:cTn").attr("id", id++).attr("fill", "hold"); groupCond(automatic); x.start("p:childTnLst");
-                x.start("p:par"); x.start("p:cTn").attr("id", id++).attr("fill", "hold"); cond("0"); x.start("p:childTnLst");
-                clickOpen = true;
-                previousEnd = 0;
+                groupOpen = true;
+                sinceClick = runStart = 0;
             }
-            const qint64 ms = qMax<qint64>(1, qRound64(s.duration * 1000));
-            const qint64 delay = qRound64(s.delay * 1000) + (s.trigger == BuildTrigger::AfterPrevious ? qRound64(previousEnd * 1000) : 0);
+            const qreal runAt = newClick ? 0.0 : em.trigger == BuildTrigger::AfterPrevious ? sinceClick : -1;
+            if (runAt >= 0) {
+                if (runOpen) { x.end(); x.end(); x.end(); }
+                x.start("p:par"); x.start("p:cTn").attr("id", id++).attr("fill", "hold"); cond(QByteArray::number(qRound64(runAt * 1000)).constData()); x.start("p:childTnLst");
+                runOpen = true; runStart = runAt;
+            }
+            const qint64 ms = qMax<qint64>(1, qRound64(em.duration * 1000));
+            if (atTime && s.start + em.delay < runStart - 1e-6) timedEarly = true;
+            const qreal ownDelay = atTime ? qMax<qreal>(0.0, s.start + em.delay - runStart) : em.delay;
+            const qint64 delay = qRound64(ownDelay * 1000);
+            const char *nodeType = newClick && !automatic ? "clickEffect" : em.trigger == BuildTrigger::AfterPrevious ? "afterEffect" : "withEffect";
+            const QString repeat = s.repeat < 0 ? QStringLiteral("indefinite") : s.repeat > 1 ? QString::number(qRound64(s.repeat * 1000)) : QString();
+            const qreal span = em.duration * (s.autoReverse ? 2.0 : 1.0) * (s.repeat > 1 ? s.repeat : 1.0);
+            sinceClick = qMax(sinceClick, runStart + ownDelay + span);
+            if (em.raw) {
+                // As PowerPoint wrote it, with today's ids, start, delay, length and repeats.
+                QString xml = renumber(placeIds(s.pptxXml, ctx), id);
+                const int at = xml.indexOf(QStringLiteral("presetClass="));
+                const int tag = at < 0 ? -1 : xml.lastIndexOf(QStringLiteral("<p:cTn"), at);
+                if (tag >= 0) {
+                    QList<QPair<QString, QString>> set{{QStringLiteral("nodeType"), QString::fromLatin1(nodeType)}, {QStringLiteral("repeatCount"), repeat},
+                                                       {QStringLiteral("autoRev"), s.autoReverse ? QStringLiteral("1") : QString()}};
+                    // Fill only changes when rewinding was switched on or off.
+                    const QString head = xml.mid(tag, xml.indexOf(QLatin1Char('>'), tag) - tag);
+                    const bool removes = head.contains(QStringLiteral("fill=\"remove\""));
+                    if (s.rewind != removes) set.append({QStringLiteral("fill"), s.rewind ? QStringLiteral("remove") : QStringLiteral("hold")});
+                    // The curve, only when it was changed here: the reader plays PowerPoint's
+                    // own (effect node, else its first eased part); approximations play ours.
+                    QEasingCurve::Type was = QEasingCurve::Linear;
+                    int exactA = -1, exactD = -1;   // the file's own amounts, when the curve came from it
+                    if (s.effect != Effect::Reveal) {
+                        if (!s.pptxName.isEmpty() || s.effect == Effect::Appear) was = Effects::defaultEasing(s.effect);
+                        else {
+                            static const QRegularExpression ad(QStringLiteral(" (accel|decel)=\"(\\d+)\""));
+                            static const QRegularExpression easedTag(QStringLiteral("<p:cTn [^>]*(accel|decel)=\"\\d+\"[^>]*>"));
+                            QString where = head;
+                            if (!ad.match(head).hasMatch()) {
+                                const auto m = easedTag.match(xml, xml.indexOf(QLatin1Char('>'), tag));
+                                where = m.hasMatch() ? m.captured(0) : QString();
+                            }
+                            qreal accel = 0, decel = 0;
+                            for (auto it = ad.globalMatch(where); it.hasNext();) { const auto m = it.next(); (m.captured(1) == QLatin1String("accel") ? accel : decel) = m.captured(2).toDouble() / 100000.0; }
+                            was = Effects::easingFromPpt(accel, decel);
+                            exactA = qRound(accel * 100000); exactD = qRound(decel * 100000);
+                        }
+                    }
+                    int a0 = 0, d0 = 0, a1 = 0, d1 = 0;
+                    Effects::pptFromEasing(was, a0, d0); Effects::pptFromEasing(s.easing, a1, d1);
+                    if (exactA >= 0) { a0 = exactA; d0 = exactD; }
+                    if (s.accel >= 0 && s.decel >= 0) { a1 = qRound(s.accel * 100000); d1 = qRound(s.decel * 100000); }
+                    // Unchanged in OmaShow terms (the preset the file's amounts read as): leave the file's own.
+                    else if (exactA >= 0 && s.easing == was) { a1 = a0; d1 = d0; }
+                    if (a0 != a1 || d0 != d1)
+                    {
+                        set.append({QStringLiteral("accel"), a1 ? QString::number(a1) : QString()});
+                        set.append({QStringLiteral("decel"), d1 ? QString::number(d1) : QString()});
+                    }
+                    xml = setAttrs(xml, tag, set);
+                    const int st = xml.indexOf(QStringLiteral("<p:stCondLst>"), tag), stEnd = xml.indexOf(QStringLiteral("</p:stCondLst>"), tag);
+                    const int firstChild = xml.indexOf(QLatin1Char('>'), tag) + 1;
+                    const QString own = QStringLiteral("<p:stCondLst><p:cond delay=\"%1\"/></p:stCondLst>").arg(delay);
+                    if (st == firstChild && stEnd > st) xml = xml.left(st) + own + xml.mid(stEnd + 14);
+                    else xml.insert(firstChild, own);
+                    if (s.pptxDuration > 0 && s.effect != Effect::Appear) {
+                        const int body = xml.indexOf(QStringLiteral("<p:childTnLst>"), tag);
+                        if (body > 0) xml = xml.left(body) + scaleDurations(xml.mid(body), s.duration / s.pptxDuration);
+                    }
+                }
+                x.raw(xml);
+                continue;
+            }
             const bool out = s.phase == BuildPhase::Out;
-            const char *presetClass = s.effect == Effect::Pulse ? "emph" : out ? "exit" : "entr";
-            const int presetId = s.effect == Effect::Pulse ? 6 : s.effect == Effect::Rise ? 2 : s.effect == Effect::Scale ? 53 : s.effect == Effect::Spin ? 49 : 10;
+            const bool emphasis = Effects::isEmphasis(s.effect);
+            const bool motion = s.effect == Effect::Path;
+            const bool reveal = s.effect == Effect::Reveal;
+            const char *presetClass = motion ? "path" : emphasis ? "emph" : out ? "exit" : "entr";
+            const int presetId = motion ? 0 : s.effect == Effect::Rotate ? 8 : s.effect == Effect::Pulse ? 26 : emphasis ? 6
+                               : reveal ? (s.duration <= 0 ? 1 : 10) : s.effect == Effect::Appear ? 1 : s.effect == Effect::Fly || s.effect == Effect::Move ? 2
+                               : s.effect == Effect::Rise || s.effect == Effect::Float ? (s.effect == Effect::Float && s.direction == 3 ? 47 : 42)
+                               : s.effect == Effect::Wipe ? 22 : s.effect == Effect::Scale || s.effect == Effect::Zoom ? 53
+                               : s.effect == Effect::Spin || s.effect == Effect::Turn ? 49 : 10;
+            static const int subtypes[4] = {4, 8, 2, 1};   // from bottom, left, right, top
+            // Zoom is PowerPoint's "Zoom, In" (subtype 16).
+            const int subtype = s.effect == Effect::Fly || s.effect == Effect::Wipe ? subtypes[qBound(0, s.direction, 3)]
+                              : presetId == 53 ? 16 : 0;
             x.start("p:par");
-            x.start("p:cTn").attr("id", id++).attr("presetID", presetId).attr("presetClass", presetClass).attr("presetSubtype", s.effect == Effect::Rise ? 4 : 0).attr("fill", "hold")
-                .attr("nodeType", click && !automatic ? "clickEffect" : s.trigger == BuildTrigger::AfterPrevious ? "afterEffect" : "withEffect");
+            x.start("p:cTn").attr("id", id++).attr("presetID", presetId).attr("presetClass", presetClass).attr("presetSubtype", subtype);
+            {
+                // The step's curve as PowerPoint's Smooth start / Smooth end.
+                int accel = 0, decel = 0;
+                Effects::pptFromEasing(s.easing, accel, decel);
+                if (s.accel >= 0 && s.decel >= 0) { accel = qRound(s.accel * 100000); decel = qRound(s.decel * 100000); }
+                if (accel) x.attr("accel", accel);
+                if (decel) x.attr("decel", decel);
+            }
+            if (!repeat.isEmpty()) x.attr("repeatCount", repeat);
+            if (s.autoReverse) x.attr("autoRev", "1");
+            x.attr("fill", s.rewind ? "remove" : "hold").attr("grpId", em.group).attr("nodeType", nodeType);
             cond(QByteArray::number(delay).constData());
-            x.start("p:childTnLst");
-            if (s.effect == Effect::Pulse) {
-                x.start("p:animScale"); x.start("p:cBhvr"); x.start("p:cTn").attr("id", id++).attr("dur", ms / 2).attr("autoRev", "1").attr("fill", "hold").end(); target(spid); x.end();
-                x.start("p:by").attr("x", qRound(100000 + qMax(0.05, s.amount > 0 ? s.amount : 0.2) * 100000)).attr("y", qRound(100000 + qMax(0.05, s.amount > 0 ? s.amount : 0.2) * 100000)).end();
+            const int from = reveal && s.unit == 0 ? em.from : -1, to = em.to;
+            qint64 each = ms;
+            if (reveal && s.unit != 0) {
+                // By word or letter: PowerPoint iterates; each unit its share, one
+                // after another (the iterate element comes before childTnLst).
+                const QString text = [&]{ for (const auto &o : slide.objects) if (o.id == s.targetId) return o.text; return QString(); }();
+                const int n = qMax(1, s.unit == 2 ? int(text.size()) : int(text.split(QRegularExpression(QStringLiteral("\\s+")), Qt::SkipEmptyParts).size()));
+                each = qMax<qint64>(1, qRound64(em.duration * 1000 / n));
+                x.start("p:iterate").attr("type", s.unit == 2 ? "lt" : "wd");
+                if (s.duration <= 0) x.start("p:tmAbs").attr("val", 0).end(); else x.start("p:tmPct").attr("val", 100000).end();
                 x.end();
-            } else {
+            }
+            x.start("p:childTnLst");
+            if (reveal && s.unit != 0) {
                 if (!out) {
-                    x.start("p:set"); x.start("p:cBhvr"); x.start("p:cTn").attr("id", id++).attr("dur", 1).attr("fill", "hold"); cond("0"); x.end(); target(spid);
+                    x.start("p:set"); x.start("p:cBhvr"); x.start("p:cTn").attr("id", id++).attr("dur", 1).attr("fill", "hold"); cond("0"); x.end(); target(spid, -1, -1);
                     x.start("p:attrNameLst"); x.start("p:attrName").text(QStringLiteral("style.visibility")).end(); x.end(); x.end();
                     x.start("p:to"); x.start("p:strVal").attr("val", "visible").end(); x.end(); x.end();
                 }
-                x.start("p:animEffect").attr("transition", out ? "out" : "in").attr("filter", "fade");
-                x.start("p:cBhvr"); x.start("p:cTn").attr("id", id++).attr("dur", ms).end(); target(spid); x.end(); x.end();
-                if (s.effect == Effect::Rise || s.effect == Effect::Move) {
-                    // Arrives from below (or from where the move says), settling in place.
+                if (s.duration > 0) {
+                    x.start("p:animEffect").attr("transition", out ? "out" : "in").attr("filter", "fade");
+                    x.start("p:cBhvr"); x.start("p:cTn").attr("id", id++).attr("dur", each).end(); target(spid, -1, -1); x.end(); x.end();
+                }
+                if (out) {
+                    x.start("p:set"); x.start("p:cBhvr"); x.start("p:cTn").attr("id", id++).attr("dur", 1).attr("fill", "hold"); cond(QByteArray::number(qMax<qint64>(0, each - 1)).constData()); x.end(); target(spid, -1, -1);
+                    x.start("p:attrNameLst"); x.start("p:attrName").text(QStringLiteral("style.visibility")).end(); x.end(); x.end();
+                    x.start("p:to"); x.start("p:strVal").attr("val", "hidden").end(); x.end(); x.end();
+                }
+            } else if (motion) {
+                QString path = s.motionPath;
+                if (path.isEmpty()) {
+                    // A guide object's outline: written from where the object starts
+                    // (writeSlide places it there) to where it lands.
+                    QPainterPath route = Shape::worldPath(*slide.find(s.pathId));
+                    if (s.pathReverse) route = route.toReversed();
+                    path = MotionPath::write(route, route.pointAtPercent(0), doc.size);
+                }
+                x.start("p:animMotion").attr("origin", "layout").attr("path", path).attr("pathEditMode", "relative").attr("ptsTypes", "");
+                x.start("p:cBhvr"); x.start("p:cTn").attr("id", id++).attr("dur", ms).attr("fill", "hold").end(); target(spid, -1, -1);
+                x.start("p:attrNameLst"); x.start("p:attrName").text(QStringLiteral("ppt_x")).end(); x.start("p:attrName").text(QStringLiteral("ppt_y")).end(); x.end(); x.end();
+                x.end();
+            } else if (s.effect == Effect::Grow || s.effect == Effect::Shrink) {
+                const qreal by = s.amount > 0 ? s.amount : s.effect == Effect::Grow ? 1.25 : 0.8;
+                x.start("p:animScale"); x.start("p:cBhvr"); x.start("p:cTn").attr("id", id++).attr("dur", ms).attr("fill", "hold").end(); target(spid, -1, -1); x.end();
+                x.start("p:by").attr("x", qRound(by * 100000)).attr("y", qRound(by * 100000)).end();
+                x.start("p:to").attr("x", qRound(by * 100000)).attr("y", qRound(by * 100000)).end();
+                x.end();
+            } else if (s.effect == Effect::Pulse) {
+                // PowerPoint's Pulse (26) swells and settles; OmaShow's swell.
+                const int swell = qRound(100000 + qMax(0.01, s.amount > 0 ? s.amount : 0.15) * 100000);
+                x.start("p:animScale"); x.start("p:cBhvr"); x.start("p:cTn").attr("id", id++).attr("dur", qMax<qint64>(1, ms / 2)).attr("autoRev", "1").attr("fill", "hold").end(); target(spid, -1, -1); x.end();
+                x.start("p:by").attr("x", swell).attr("y", swell).end();
+                x.end();
+            } else if (s.effect == Effect::Rotate) {
+                x.start("p:animRot").attr("by", qRound64((s.amount != 0 ? s.amount : 360) * 60000));
+                x.start("p:cBhvr"); x.start("p:cTn").attr("id", id++).attr("dur", ms).attr("fill", "hold").end(); target(spid, -1, -1);
+                x.start("p:attrNameLst"); x.start("p:attrName").text(QStringLiteral("r")).end(); x.end(); x.end(); x.end();
+            } else {
+                if (!out) {
+                    x.start("p:set"); x.start("p:cBhvr"); x.start("p:cTn").attr("id", id++).attr("dur", 1).attr("fill", "hold"); cond("0"); x.end(); target(spid, from, to);
+                    x.start("p:attrNameLst"); x.start("p:attrName").text(QStringLiteral("style.visibility")).end(); x.end(); x.end();
+                    x.start("p:to"); x.start("p:strVal").attr("val", "visible").end(); x.end(); x.end();
+                }
+                // Fly travels without fading and Appear has no transition at all.
+                static const char *wipes[4] = {"wipe(down)", "wipe(left)", "wipe(right)", "wipe(up)"};
+                const char *filter = s.effect == Effect::Wipe ? wipes[qBound(0, s.direction, 3)]
+                                   : s.effect == Effect::Fly || s.effect == Effect::Appear || (reveal && s.duration <= 0) ? nullptr : "fade";
+                if (filter) {
+                    x.start("p:animEffect").attr("transition", out ? "out" : "in").attr("filter", filter);
+                    x.start("p:cBhvr"); x.start("p:cTn").attr("id", id++).attr("dur", ms).end(); target(spid, from, to); x.end(); x.end();
+                }
+                const auto keyframes = [&](const char *axis, const QString &away) {
+                    const QString rest = QStringLiteral("#") + QString::fromLatin1(axis);
+                    x.start("p:anim").attr("calcmode", "lin").attr("valueType", "num");
+                    x.start("p:cBhvr").attr("additive", "base"); x.start("p:cTn").attr("id", id++).attr("dur", ms).attr("fill", "hold").end(); target(spid, -1, -1);
+                    x.start("p:attrNameLst"); x.start("p:attrName").text(QString::fromLatin1(axis)).end(); x.end(); x.end();
+                    x.start("p:tavLst");
+                    x.start("p:tav").attr("tm", 0); x.start("p:val"); x.start("p:strVal").attr("val", out ? rest : away).end(); x.end(); x.end();
+                    x.start("p:tav").attr("tm", 100000); x.start("p:val"); x.start("p:strVal").attr("val", out ? away : rest).end(); x.end(); x.end();
+                    x.end(); x.end();
+                };
+                if (s.effect == Effect::Fly) {
+                    const int d = qBound(0, s.direction, 3);
+                    if (d == 0) keyframes("ppt_y", QStringLiteral("1+#ppt_h/2"));
+                    else if (d == 3) keyframes("ppt_y", QStringLiteral("0-#ppt_h/2"));
+                    else if (d == 1) keyframes("ppt_x", QStringLiteral("0-#ppt_w/2"));
+                    else keyframes("ppt_x", QStringLiteral("1+#ppt_w/2"));
+                } else if (s.effect == Effect::Float) {
+                    // PowerPoint's Float In drifts a tenth of the slide height.
+                    const int d = qBound(0, s.direction, 3);
+                    const bool xAxis = d == 1 || d == 2;
+                    const qreal rel = d == 1 || d == 3 ? -0.1 : 0.1;
+                    keyframes(xAxis ? "ppt_x" : "ppt_y", QStringLiteral("#") + (xAxis ? "ppt_x" : "ppt_y") + QStringLiteral("+") + QString::number(rel, 'f', 4));
+                } else if (s.effect == Effect::Zoom) {
+                    const int from = qRound((s.amount > 0 && s.amount < 1 ? s.amount : 0.3) * 100000);
+                    x.start("p:animScale"); x.start("p:cBhvr"); x.start("p:cTn").attr("id", id++).attr("dur", ms).attr("fill", "hold").end(); target(spid, -1, -1); x.end();
+                    x.start("p:from").attr("x", out ? 100000 : from).attr("y", out ? 100000 : from).end();
+                    x.start("p:to").attr("x", out ? from : 100000).attr("y", out ? from : 100000).end();
+                    x.end();
+                } else if (s.effect == Effect::Turn) {
+                    x.start("p:animRot").attr("by", qRound64((s.amount != 0 ? s.amount : 360) * 60000 * (out ? 1 : -1)));
+                    x.start("p:cBhvr"); x.start("p:cTn").attr("id", id++).attr("dur", ms).attr("fill", "hold").end(); target(spid, -1, -1);
+                    x.start("p:attrNameLst"); x.start("p:attrName").text(QStringLiteral("r")).end(); x.end(); x.end(); x.end();
+                } else if (s.effect == Effect::Rise || s.effect == Effect::Move) {
                     const qreal fromX = s.effect == Effect::Move ? s.amountX : 0, fromY = s.effect == Effect::Move ? s.amountY : doc.size.height() * 0.1;
                     for (const auto *axis : {"ppt_x", "ppt_y"}) {
                         const bool xAxis = QLatin1String(axis) == QLatin1String("ppt_x");
                         const qreal offset = (xAxis ? fromX : fromY) / (xAxis ? doc.size.width() : doc.size.height());
                         if (qFuzzyIsNull(offset)) continue;
-                        x.start("p:anim").attr("calcmode", "lin").attr("valueType", "num");
-                        x.start("p:cBhvr").attr("additive", "base"); x.start("p:cTn").attr("id", id++).attr("dur", ms).attr("fill", "hold").end(); target(spid);
-                        x.start("p:attrNameLst"); x.start("p:attrName").text(QString::fromLatin1(axis)).end(); x.end(); x.end();
-                        x.start("p:tavLst");
                         const QString rest = QStringLiteral("#") + QString::fromLatin1(axis);
-                        const QString away = rest + QStringLiteral("+") + QString::number(offset, 'f', 4);
-                        x.start("p:tav").attr("tm", 0); x.start("p:val"); x.start("p:strVal").attr("val", out ? rest : away).end(); x.end(); x.end();
-                        x.start("p:tav").attr("tm", 100000); x.start("p:val"); x.start("p:strVal").attr("val", out ? away : rest).end(); x.end(); x.end();
-                        x.end(); x.end();
+                        keyframes(axis, rest + QStringLiteral("+") + QString::number(offset, 'f', 4));
                     }
                 } else if (s.effect == Effect::Scale) {
-                    x.start("p:animScale"); x.start("p:cBhvr"); x.start("p:cTn").attr("id", id++).attr("dur", ms).attr("fill", "hold").end(); target(spid); x.end();
+                    x.start("p:animScale"); x.start("p:cBhvr"); x.start("p:cTn").attr("id", id++).attr("dur", ms).attr("fill", "hold").end(); target(spid, -1, -1); x.end();
                     x.start("p:from").attr("x", out ? 100000 : 10000).attr("y", out ? 100000 : 10000).end();
                     x.start("p:to").attr("x", out ? 10000 : 100000).attr("y", out ? 10000 : 100000).end();
                     x.end();
                 } else if (s.effect == Effect::Spin) {
                     x.start("p:animRot").attr("by", qRound64((s.amount > 0 ? s.amount : 360) * 60000));
-                    x.start("p:cBhvr"); x.start("p:cTn").attr("id", id++).attr("dur", ms).attr("fill", "hold").end(); target(spid);
+                    x.start("p:cBhvr"); x.start("p:cTn").attr("id", id++).attr("dur", ms).attr("fill", "hold").end(); target(spid, -1, -1);
                     x.start("p:attrNameLst"); x.start("p:attrName").text(QStringLiteral("r")).end(); x.end(); x.end(); x.end();
                 }
                 if (out) {
-                    x.start("p:set"); x.start("p:cBhvr"); x.start("p:cTn").attr("id", id++).attr("dur", 1).attr("fill", "hold"); cond(QByteArray::number(qint64(ms - 1)).constData()); x.end(); target(spid);
+                    x.start("p:set"); x.start("p:cBhvr"); x.start("p:cTn").attr("id", id++).attr("dur", 1).attr("fill", "hold"); cond(QByteArray::number(qint64(ms - 1)).constData()); x.end(); target(spid, from, to);
                     x.start("p:attrNameLst"); x.start("p:attrName").text(QStringLiteral("style.visibility")).end(); x.end(); x.end();
                     x.start("p:to"); x.start("p:strVal").attr("val", "hidden").end(); x.end(); x.end();
                 }
@@ -1220,26 +1768,46 @@ struct Writer {
             x.end(); // childTnLst
             x.end(); // cTn
             x.end(); // par (effect)
-            previousEnd = (delay + ms) / 1000.0;
         }
-        if (clickOpen) { x.end(); x.end(); x.end(); x.end(); x.end(); x.end(); }
+        if (runOpen) { x.end(); x.end(); x.end(); }
+        if (groupOpen) { x.end(); x.end(); x.end(); }
+        if (timedEarly) warnings.add(QStringLiteral("An animation set to start at a time earlier than the one before it ends was written to start with it"), number);
+        if (timedLater) warnings.add(QStringLiteral("An animation set to start at a time after a click was written as With previous, timed from that click"), number);
+        if (main) {
         x.end(); // childTnLst of mainSeq
         x.end(); // cTn mainSeq
         x.start("p:prevCondLst"); x.start("p:cond").attr("evt", "onPrev").attr("delay", "0"); x.start("p:tgtEl"); x.empty("p:sldTgt"); x.end(); x.end(); x.end();
         x.start("p:nextCondLst"); x.start("p:cond").attr("evt", "onNext").attr("delay", "0"); x.start("p:tgtEl"); x.empty("p:sldTgt"); x.end(); x.end(); x.end();
         x.end(); // seq
+        }
+        // PowerPoint triggers kept from the import, with today's ids and their own build groups.
+        for (const auto &kept : slide.pptxInteractive) {
+            QString xml = placeIds(kept, ctx);
+            if (xml.isEmpty()) { warnings.add(QStringLiteral("A PowerPoint trigger animation on an object that is gone was left out"), number); continue; }
+            xml = renumber(xml, id);
+            x.raw(xml);
+        }
         x.end(); // childTnLst root
         x.end(); // cTn root
         x.end(); // par
         x.end(); // tnLst
-        x.start("p:bldLst");
-        QSet<int> listed;
-        for (const auto &s : steps) {
-            if (listed.contains(s.spid)) continue;
-            listed.insert(s.spid);
-            x.start("p:bldP").attr("spid", s.spid).attr("grpId", 0).end();
+        // One entry per shape and build group, as PowerPoint lists them: text by
+        // paragraph says so; a plain shape animates with its background.
+        // Kept effects say what their entry was; ordered by shape, then group, as PowerPoint does.
+        QVector<QPair<int, int>> builds;
+        for (const auto &em : emits) if (em.group >= 0 && !builds.contains(QPair<int, int>(em.spid, em.group)) && (!em.raw || keptBuild.contains({em.spid, em.group}))) builds.append({em.spid, em.group});
+        for (const auto &g : triggerGroups) if (!builds.contains(g) && keptBuild.contains(g)) builds.append(g);
+        std::sort(builds.begin(), builds.end());
+        QString list;
+        for (const auto &[sp, g] : builds) {
+            QString attrs;
+            if (keptBuild.contains({sp, g})) attrs = keptBuild.value({sp, g});
+            else if (kindOf.value(sp, 2) == 2) continue;
+            else if (paragraphGroups.contains({sp, g})) attrs = QStringLiteral("build=\"p\"");
+            else if (kindOf.value(sp) == 0) attrs = QStringLiteral("animBg=\"1\"");
+            list += QStringLiteral("<p:bldP spid=\"%1\" grpId=\"%2\"%3/>").arg(sp).arg(g).arg(attrs.isEmpty() ? QString() : QLatin1Char(' ') + attrs);
         }
-        x.end();
+        if (!list.isEmpty()) x.raw(QStringLiteral("<p:bldLst>") + list + QStringLiteral("</p:bldLst>"));
         x.end(); // timing
     }
 
@@ -1266,9 +1834,23 @@ struct Writer {
         startTree(x);
         SlideCtx ctx; ctx.partPath = path; ctx.rels = &rels; ctx.number = number;
         QVector<SceneObject> objects;
-        for (const auto &o : resolved.objects) {
+        // ANIM-INTEROP: PowerPoint moves an object along a path from where it is;
+        // an OmaShow guide path lands it where it is. So an object whose first
+        // path follows a guide is written where that path starts.
+        QHash<QString, QPointF> pathStart;
+        for (const auto &s : slide.timeline.steps) {
+            if (s.effect != Effect::Path || !s.motionPath.isEmpty() || pathStart.contains(s.targetId) ||
+                (!s.pptxXml.isEmpty() && s.pptxSig == s.interopSig())) continue;
+            const auto *guide = slide.find(s.pathId);
+            if (!guide) continue;
+            const QPainterPath route = Shape::worldPath(*guide);
+            if (route.isEmpty()) continue;
+            pathStart.insert(s.targetId, route.pointAtPercent(s.pathReverse ? 1.0 : 0.0) - route.pointAtPercent(s.pathReverse ? 0.0 : 1.0));
+        }
+        for (auto o : resolved.objects) {
             // The master's own shapes are on the master; fields are written as words.
             if (o.id.startsWith(QLatin1String("@master/"))) continue;
+            if (pathStart.contains(o.id)) o.rect.translate(pathStart.value(o.id));
             objects.append(o);
         }
         writeObjects(x, objects, ctx);
@@ -1346,7 +1928,7 @@ struct Writer {
         // The presentation part ties it together.
         Rels rels;
         Xml x;
-        x.start("p:presentation").attr("xmlns:a", nsA).attr("xmlns:r", nsR).attr("xmlns:p", nsP).attr("saveSubsetFonts", "1");
+        x.start("p:presentation").attr("xmlns:a", nsA).attr("xmlns:r", nsR).attr("xmlns:p", nsP).attr("saveSubsetFonts", "1").attr("embedTrueTypeFonts", "1");
         x.start("p:sldMasterIdLst");
         const int masterCount = doc.masters.isEmpty() ? 1 : doc.masters.size();
         for (int i = 1; i <= masterCount; ++i) {
@@ -1367,6 +1949,44 @@ struct Writer {
         x.end();
         x.start("p:sldSz").attr("cx", cx).attr("cy", cy).end();
         x.start("p:notesSz").attr("cx", 6858000).attr("cy", 9144000).end();
+        // Typefaces the deck names and Windows may lack travel inside it.
+        {
+            static const char *slotTag[4] = {"p:regular", "p:bold", "p:italic", "p:boldItalic"};
+            QVector<Embed::Family> carried;
+            qint64 budget = 20 * 1024 * 1024;   // whole files are carried; keep decks mailable
+            QVector<Embed::Family> candidates;
+            for (const auto &family : Fonts::families(doc).keys()) candidates.append(Embed::find(family));
+            for (const auto &w : std::as_const(weightFaces)) if (!w.name.isEmpty()) candidates.append(w);
+            for (auto f : candidates) {
+                const QString family = f.name;
+                qint64 size = 0;
+                for (const auto &face : f.styles) size += face.data.size();
+                if (f.styles[0].file.isEmpty() && f.styles[1].file.isEmpty()) {
+                    if (!f.refused.isEmpty()) notCarried.append(QStringLiteral("%1 (%2)").arg(family, f.refused));
+                    continue;
+                }
+                if (size > budget) { notCarried.append(QStringLiteral("%1 (too large to carry)").arg(family)); continue; }
+                budget -= size;
+                carried.append(f);
+            }
+            if (!carried.isEmpty()) {
+                x.start("p:embeddedFontLst");
+                int n = 0;
+                for (const auto &f : carried) {
+                    x.start("p:embeddedFont");
+                    x.start("p:font").attr("typeface", f.name).end();
+                    for (int k = 0; k < 4; ++k) {
+                        if (f.styles[k].file.isEmpty()) continue;
+                        const QString path = QStringLiteral("fonts/font%1.fntdata").arg(++n);
+                        binary(QStringLiteral("ppt/") + path, Embed::eot(f.styles[k].data), QStringLiteral("fntdata"), QStringLiteral("application/x-fontdata"));
+                        x.start(slotTag[k]).attr("r:id", rels.add(relBase + QStringLiteral("font"), path)).end();
+                    }
+                    x.end();
+                    embedded.append(f.name);
+                }
+                x.end();
+            }
+        }
         if (!doc.shows.isEmpty()) {
             x.start("p:custShowLst");
             int showId = 0;
@@ -1429,7 +2049,16 @@ struct Writer {
 
 namespace PptxWriter {
 
-QByteArray bytes(const Document &document, QStringList *warnings, const std::shared_ptr<Workers::Job> &job) {
+// What PowerPoint is given: the deck with every Office font that was swapped
+// for a free match on import named again, at its own size (FontSwap::revert).
+static Document forPowerPoint(const Document &document) {
+    Document copy = document;
+    FontSwap::revert(copy);
+    return copy;
+}
+
+QByteArray bytes(const Document &original, QStringList *warnings, const std::shared_ptr<Workers::Job> &job) {
+    const Document document = forPowerPoint(original);
     Writer writer(document);
     writer.job = job;
     const auto out = writer.run();
@@ -1437,11 +2066,14 @@ QByteArray bytes(const Document &document, QStringList *warnings, const std::sha
     return out;
 }
 
-Report write(const Document &document, const QString &path, const std::shared_ptr<Workers::Job> &job) {
+Report write(const Document &original, const QString &path, const std::shared_ptr<Workers::Job> &job) {
     Report report;
+    const Document document = forPowerPoint(original);
     if (document.slides.isEmpty()) { report.error = QStringLiteral("The deck has no slides to write."); return report; }
-    QStringList warnings;
-    const auto data = bytes(document, &warnings, job);
+    Writer writer(document);
+    writer.job = job;
+    const auto data = writer.run();
+    const QStringList warnings = writer.warnings.lines();
     if (job && job->canceled) { report.error = QStringLiteral("Cancelled."); return report; }
     if (data.isEmpty()) { report.error = QStringLiteral("The deck could not be written as PowerPoint."); return report; }
     QSaveFile file(path);
@@ -1455,8 +2087,17 @@ Report write(const Document &document, const QString &path, const std::shared_pt
     report.lines.prepend(QStringLiteral("Wrote %1 slides as PowerPoint.").arg(document.slides.size()));
     // The deck names its typefaces and cannot carry them: say which, so the
     // person it goes to can be told.
-    const auto families = Fonts::families(document);
-    if (!families.isEmpty()) report.lines.append(QStringLiteral("It asks for the typefaces %1; anyone opening it needs them installed to see it as designed.").arg(families.keys().join(QStringLiteral(", "))));
+    QStringList needed;
+    for (const auto &family : Fonts::families(document).keys()) {
+        if (writer.embedded.contains(family) || Embed::shipsWithOffice(family)) continue;
+        bool refused = false;
+        for (const auto &n : writer.notCarried) refused |= n.startsWith(family + QLatin1String(" ("));
+        if (!refused) needed.append(family);
+    }
+    const QStringList &carried = writer.embedded;
+    if (!writer.notCarried.isEmpty()) report.lines.append(QStringLiteral("Could not carry the typefaces %1; anyone opening it needs them installed.").arg(writer.notCarried.join(QStringLiteral(", "))));
+    if (!carried.isEmpty()) report.lines.append(QStringLiteral("Carries the typefaces %1 inside the deck.").arg(carried.join(QStringLiteral(", "))));
+    if (!needed.isEmpty()) report.lines.append(QStringLiteral("It asks for the typefaces %1, which are not installed here to carry; anyone opening it needs them installed to see it as designed.").arg(needed.join(QStringLiteral(", "))));
     return report;
 }
 

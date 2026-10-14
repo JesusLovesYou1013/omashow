@@ -1,3 +1,4 @@
+#include <QSet>
 #include "backend.h"
 #include "core/textruns.h"
 #include "core/punctuation.h"
@@ -77,6 +78,23 @@ QVariantMap Backend::selection() const {
     values["type"] = "group";
     if (primary->type == ObjectType::Text) values["fill"] = primary->textColor.name(QColor::HexArgb);
     values["placeholderId"] = "";
+    // MULTI-1: several objects. Settings that differ between them are listed
+    // as "mixed" (the Inspector shows those fields blank); changing one sets
+    // it on all. When every one is a text box the Text tab serves them all.
+    bool allText = true;
+    QSet<QString> mixed;
+    const auto mine = Design::properties(*primary);
+    for (const auto &id : ids) {
+      const auto *o = slide.find(id);
+      if (!o) continue;
+      if (o->type != ObjectType::Text) allText = false;
+      if (o == primary) continue;
+      const auto theirs = Design::properties(*o);
+      for (auto it = mine.cbegin(); it != mine.cend(); ++it)
+        if (theirs.value(it.key()) != it.value()) mixed.insert(it.key());
+    }
+    values["textGroup"] = allText;
+    values["mixed"] = QStringList(mixed.cbegin(), mixed.cend());
   }
   const auto units = Arrange::units(slide, ids, m_groupScope);
   values["groupId"] =
@@ -579,10 +597,40 @@ void Backend::fitSelectedTextBox() {
     const auto height=qMax(8.0,TextLayout::measure(copy).naturalHeight+1);
     if (auto *o=m_document.slides[m_currentSlide].find(id)) {
       Arrange::setRect(*o,source->rect,QRectF(source->rect.topLeft(),QSizeF(source->rect.width(),height)));
-      o->textFit=0; Design::markOverride(*o,"textFit");
+      o->textFit=3; Design::markOverride(*o,"textFit");
     }
   }
   m_history.commit(); touch();
+}
+
+void Backend::growEditedTextBox(const QString &slideId, const QString &id, qreal height) {
+  int index=-1;
+  for(int i=0;i<m_document.slides.size();++i) if(m_document.slides.at(i).id==slideId) index=i;
+  if(index<0) return;
+  const auto resolved=Design::resolve(m_document,index);
+  const auto *shown=resolved.find(id);
+  if(!shown || shown->type!=ObjectType::Text || shown->textFit!=3) return;
+  // Both ways, as in growTextBox: a placeholder only grows.
+  const qreal wanted=qMax(8.0,std::ceil(height+1));
+  if(std::abs(wanted-shown->rect.height())<=.5 || (wanted<shown->rect.height() && !shown->placeholderId.isEmpty())) return;
+  auto *object=m_document.slides[index].find(id); if(!object) return;
+  if(m_editGrowId!=id || m_editGrowSlide!=slideId) { m_editGrowSlide=slideId; m_editGrowId=id; m_editGrowRect=shown->rect; }
+  Arrange::setRect(*object,shown->rect,QRectF(shown->rect.topLeft(),QSizeF(shown->rect.width(),wanted)));
+  // Not an edit of its own: no undo step, no "unsaved" yet. Nothing else moves.
+  ++m_revision;
+  emit documentChanged();
+  emit selectionChanged();
+}
+// The typing is over: the box goes back to what it was, so the edit's undo
+// step starts from there; touch() then grows it to its text again.
+void Backend::endEditGrowth() {
+  if(m_editGrowId.isEmpty()) return;
+  for(int i=0;i<m_document.slides.size();++i) if(m_document.slides.at(i).id==m_editGrowSlide) {
+    const auto resolved=Design::resolve(m_document,i);
+    if(const auto *shown=resolved.find(m_editGrowId)) if(auto *object=m_document.slides[i].find(m_editGrowId))
+      Arrange::setRect(*object,shown->rect,m_editGrowRect);
+  }
+  m_editGrowSlide.clear(); m_editGrowId.clear();
 }
 
 void Backend::commitTextDocument(const QString &slideId,const QString &id,QQuickTextDocument *editor) {
@@ -592,6 +640,8 @@ void Backend::commitTextDocument(const QString &slideId,const QString &id,QQuick
   if(index<0) return;
   const auto *source=m_document.slides.at(index).find(id);
   if(!source || source->type!=ObjectType::Text) return;
+  const bool grew=!m_editGrowId.isEmpty();
+  endEditGrowth();
   const auto resolved=Design::resolve(m_document,index);
   const auto *authored=resolved.find(id); if(!authored) return;
   QStringList paragraphs;
@@ -608,6 +658,8 @@ void Backend::commitTextDocument(const QString &slideId,const QString &id,QQuick
       m_typingFormat.clear();
       emit typingFormatChanged();
     }
+    // Nothing was typed after all: the box is back at its size; say so.
+    if (grew) { ++m_revision; emit documentChanged(); emit selectionChanged(); }
     return;
   }
   // Where new letters landed, so a caret format can cover them.
@@ -630,6 +682,8 @@ void Backend::commitTextDocument(const QString &slideId,const QString &id,QQuick
   }
   m_typingFormat.clear();
   emit typingFormatChanged();
+  // The box that was typed in, whether or not it is still the selection.
+  growTextBox(index, id);
   m_history.commit(); touch();
 }
 

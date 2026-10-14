@@ -7,6 +7,7 @@
 #include <QTextDocument>
 #include <QTextList>
 #include <QCache>
+#include "core/fontswap.h"
 #include "core/textruns.h"
 #include "render/mathlayout.h"
 #include "core/shape.h"
@@ -137,7 +138,7 @@ MathLayout::Rendered equation(const SceneObject &o, qreal size) {
     return MathLayout::build(o.text, fontFor(o, size), size, o.textAlign);
 }
 bool legacy(const SceneObject &o) {
-    return !maths(o) && !onPath(o) && o.runs.isEmpty() && o.textAlign == 0 && o.verticalAlign == 1 && o.lineHeight == 100 &&
+    return !maths(o) && !onPath(o) && o.origFont.isEmpty() && o.runs.isEmpty() && o.textAlign == 0 && o.verticalAlign == 1 && o.lineHeight == 100 &&
            o.paragraphSpacing == 0 && o.textIndent == 0 && o.listStyle == 0 && o.textFit == 0 &&
            o.tabStop == 0 && o.columns <= 1 && o.direction == 0;
 }
@@ -161,7 +162,7 @@ std::shared_ptr<QTextDocument> layout(const SceneObject &o, qreal size) {
     stream << o.text << o.fontFamily << size << o.rect.width() << o.rect.height()
            << o.tabStop << o.columns << o.columnGap << o.direction << o.fontWeight
            << o.italic << o.underline << o.strike << o.letterSpacing << o.uppercase
-           << o.textAlign << o.lineHeight << o.paragraphSpacing << o.textIndent
+           << o.textAlign << o.lineHeight << o.origFont << o.fontScale << o.paragraphSpacing << o.textIndent
            << o.listStyle << o.listStart << o.textColor;
     for (const auto &run : o.runs)
         stream << run.start << run.length << run.weight << run.italic << run.underline
@@ -187,6 +188,7 @@ std::shared_ptr<QTextDocument> layout(const SceneObject &o, qreal size) {
         doc->setPageSize(QSizeF(columnWidth(o, size), qMax(1.0, o.rect.height())));
     QTextCursor cursor(doc.get());
     const auto paragraphs = o.text.split('\n');
+    const auto vertical = FontSwap::verticalFix(o, size);
     QMap<int, QTextList *> lists;
     // Where each paragraph's text starts, in the string and in the document, so
     // runs can be placed after the whole thing is built.
@@ -209,7 +211,7 @@ std::shared_ptr<QTextDocument> layout(const SceneObject &o, qreal size) {
         block.setAlignment(alignment(o.textAlign));
         if (o.direction != 0)
             block.setLayoutDirection(o.direction == 2 ? Qt::RightToLeft : Qt::LeftToRight);
-        block.setLineHeight(o.lineHeight, QTextBlockFormat::ProportionalHeight);
+        block.setLineHeight(qBound(10.0, o.lineHeight * vertical.line, 500.0), QTextBlockFormat::ProportionalHeight);
         block.setBottomMargin(i + 1 < paragraphs.size() ? o.paragraphSpacing : 0);
         block.setLeftMargin(o.textIndent);
         cursor.setBlockFormat(block);
@@ -328,7 +330,7 @@ TextLayout::Metrics TextLayout::measure(const SceneObject &o) {
     // wrap, so shrinking it has to watch its width too.
     const auto fits = [&o](qreal size) {
         const auto room = contentSize(o, size);
-        return room.height() <= o.rect.height() &&
+        return room.height() - FontSwap::verticalFix(o, size).shift <= o.rect.height() &&
                (!maths(o) || room.width() <= o.rect.width());
     };
     if (o.textFit == 1 && !fits(o.fontSize)) {
@@ -344,6 +346,10 @@ TextLayout::Metrics TextLayout::measure(const SceneObject &o) {
         dimensions = contentSize(o, lo);
         m.renderedHeight = dimensions.height();
     }
+    // A free stand-in drawn moved up to sit where the Office font would (see
+    // FontSwap::verticalFix) ends that much higher too.
+    if (const auto fix = FontSwap::verticalFix(o, m.effectiveSize); fix.shift != 0)
+        m.renderedHeight = qMax<qreal>(0, m.renderedHeight - fix.shift);
     m.overflow = m.renderedHeight > o.rect.height() + .5 ||
                  dimensions.width() > o.rect.width() + .5;
     return m;
@@ -384,7 +390,7 @@ void TextLayout::paint(QPainter &painter, const SceneObject &o) {
         const qreal room = qMax(0.0, o.rect.width() - rendered.size.width());
         const qreal dx = o.textAlign == 1 ? room / 2 : o.textAlign == 2 ? room : 0;
         painter.save();
-        painter.setClipRect(o.rect, Qt::IntersectClip);
+        if (o.textFit < 2) painter.setClipRect(o.rect, Qt::IntersectClip);   // spill and grow draw it all
         MathLayout::paint(painter, rendered, o.rect.topLeft() + QPointF(dx, dy),
                           fontFor(o, metrics.effectiveSize), o.textColor);
         painter.restore();
@@ -408,10 +414,10 @@ void TextLayout::paint(QPainter &painter, const SceneObject &o) {
         const qreal gap = columnGap(o, metrics.effectiveSize);
         const qreal height = qMax(1.0, o.rect.height());
         painter.save();
-        painter.setClipRect(o.rect, Qt::IntersectClip);
+        if (o.textFit < 2) painter.setClipRect(o.rect, Qt::IntersectClip);   // spill and grow draw it all
         for (int column = 0; column < qMin(columns, qMax(1, doc->pageCount())); ++column) {
             painter.save();
-            painter.translate(o.rect.topLeft() + QPointF(column * (width + gap), 0));
+            painter.translate(o.rect.topLeft() + QPointF(column * (width + gap), -FontSwap::verticalFix(o, metrics.effectiveSize).shift));
             painter.setClipRect(QRectF(0, 0, width, height), Qt::IntersectClip);
             painter.translate(0, -column * height);
             doc->documentLayout()->draw(&painter, context);
@@ -423,8 +429,8 @@ void TextLayout::paint(QPainter &painter, const SceneObject &o) {
     const qreal spare = qMax(0.0, o.rect.height() - metrics.renderedHeight);
     const qreal dy = o.verticalAlign == 1 ? spare / 2 : o.verticalAlign == 2 ? spare : 0;
     painter.save();
-    painter.setClipRect(o.rect, Qt::IntersectClip);
-    painter.translate(o.rect.topLeft() + QPointF(0, dy));
+    if (o.textFit < 2) painter.setClipRect(o.rect, Qt::IntersectClip);   // spill and grow draw it all
+    painter.translate(o.rect.topLeft() + QPointF(0, dy - FontSwap::verticalFix(o, metrics.effectiveSize).shift));
     doc->documentLayout()->draw(&painter, context);
     painter.restore();
 }
