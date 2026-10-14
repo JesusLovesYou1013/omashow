@@ -662,6 +662,11 @@ int main(int argc, char *argv[]) {
     parser.addOption(showOption);
     parser.addOption(uiSizeOption);
     parser.addPositionalArgument(QStringLiteral("file"), QStringLiteral("Deck to open."));
+    // RECOVER-1: a recovered deck opened in its own window (the recovery
+    // prompt's second and later choices). Not for people to type.
+    QCommandLineOption recoverOption(QStringLiteral("recover"), QStringLiteral("Open a recovery journal in this window."), QStringLiteral("journal"));
+    recoverOption.setFlags(QCommandLineOption::HiddenFromHelp);
+    parser.addOption(recoverOption);
     parser.process(app);
 
     OmarchyTheme theme;
@@ -785,12 +790,16 @@ int main(int argc, char *argv[]) {
     // Belt and braces: whatever route the app exits by, the lock comes back.
     QObject::connect(&app, &QGuiApplication::aboutToQuit, &showGuard, &ShowGuard::release);
 
+    // A window opened to recover one deck does not ask about the others.
+    if (parser.isSet(recoverOption)) backend.setRecoveryPromptSuppressed(true);
     engine.load(QUrl(QStringLiteral("qrc:/Main.qml")));
     if (engine.rootObjects().isEmpty()) {
         qCritical() << "Could not load the omashow interface.";
         return -1;
     }
 
+    if (parser.isSet(recoverOption))
+        backend.openAsync(QUrl::fromLocalFile(parser.value(recoverOption)), true);
     // "Open with", and `omashow somefile` from a terminal.
     const QStringList positional = parser.positionalArguments();
     if (!positional.isEmpty()) {

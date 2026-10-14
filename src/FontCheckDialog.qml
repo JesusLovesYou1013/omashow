@@ -138,7 +138,7 @@ Sheet {
 
         Label {
             objectName: "fontCheckDetailsToggle"
-            text: (root.details ? "▾ " : "▸ ") + qsTr("%n font(s)", "", root.rows.length)
+            text: (root.details ? "▾ " : "▸ ") + (root.rows.length === 1 ? qsTr("1 font") : qsTr("%1 fonts").arg(root.rows.length))
             color: Theme.accent
             MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.details = !root.details }
         }

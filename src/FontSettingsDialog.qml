@@ -81,7 +81,7 @@ Sheet {
         // What is here, and the list of it (the list's room is always kept).
         Label {
             objectName: "fontSettingsListToggle"
-            text: (root.listed ? "▾ " : "▸ ") + qsTr("%n downloaded font(s)", "", root.rows.length) + qsTr(" · %1 MB").arg(root.megabytes.toFixed(0))
+            text: (root.listed ? "▾ " : "▸ ") + (root.rows.length === 1 ? qsTr("1 downloaded font") : qsTr("%1 downloaded fonts").arg(root.rows.length)) + qsTr(" · %1 MB").arg(root.megabytes.toFixed(0))
             color: Theme.accent
             MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.listed = !root.listed }
         }
@@ -138,7 +138,7 @@ Sheet {
                 Layout.fillWidth: true; wrapMode: Text.Wrap
                 text: backend.fontRemoveRunning
                       ? qsTr("Removing fonts… %1 of %2").arg(backend.fontRemoveDone).arg(backend.fontRemoveTotal)
-                      : qsTr("This deletes the %n free font(s) OmaShow has downloaded", "", root.rows.length) + qsTr(" (%1 MB). Presentations will use fallback fonts, or ask to download again.").arg(root.megabytes.toFixed(0))
+                      : (root.rows.length === 1 ? qsTr("This deletes the 1 free font OmaShow has downloaded") : qsTr("This deletes the %1 free fonts OmaShow has downloaded").arg(root.rows.length)) + qsTr(" (%1 MB). Presentations will use fallback fonts, or ask to download again.").arg(root.megabytes.toFixed(0))
             }
             ProgressBar {
                 Layout.fillWidth: true

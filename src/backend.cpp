@@ -205,6 +205,17 @@ QVariantList Backend::recoveryCandidates() const {
     map[QStringLiteral("name")] = journal.displayName();
     map[QStringLiteral("savedAt")] =
         journal.savedAt.toLocalTime().toString(QStringLiteral("d MMM, HH:mm"));
+    // RECOVER-1: enough to tell several "Untitled" apart: how many slides,
+    // and the first words on the first slide.
+    const Bundle::ReadResult read = Bundle::load(journal.journalPath);
+    if (read.ok) {
+      map[QStringLiteral("slides")] = int(read.document.slides.size());
+      QString first;
+      if (!read.document.slides.isEmpty())
+        for (const auto &o : read.document.slides.first().objects)
+          if (o.type == ObjectType::Text && !o.text.trimmed().isEmpty()) { first = o.text.simplified(); break; }
+      map[QStringLiteral("firstWords")] = first.left(60) + (first.size() > 60 ? QStringLiteral("…") : QString());
+    }
     list.append(map);
   }
   return list;
@@ -261,6 +272,12 @@ void Backend::recoverFrom(const QString &journalPath) {
 
 void Backend::discardRecovery(const QString &journalPath) {
   Recovery::forget(journalPath);
+}
+
+bool Backend::recoverInNewWindow(const QString &journalPath) {
+  const auto program = QCoreApplication::applicationFilePath();
+  if (program.isEmpty() || !QFileInfo(journalPath).isFile()) return false;
+  return QProcess::startDetached(program, {QStringLiteral("--recover"), journalPath});
 }
 
 QString Backend::displayNameFor(const QUrl &url) {
