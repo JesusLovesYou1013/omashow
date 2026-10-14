@@ -142,7 +142,11 @@ struct SceneObject {
     qreal paragraphSpacing = 0, textIndent = 0;
     int listStyle = 0;       // none, bullets, numbers; leading tabs nest items
     int listStart = 1;   // where a numbered list starts counting
-    int textFit = 0;         // clip with overflow warning, shrink to fit
+    // Text that does not fit its box (TEXT-FIT-1): 0 cut off at the box (with
+    // a warning), 1 text shrunk to fit, 2 drawn past the box (what PowerPoint
+    // does without autofit), 3 the box grows downwards to hold it (PowerPoint's
+    // "Resize shape to fit text"; the default for new boxes).
+    int textFit = 3;
     int textKind = 0;        // 0 the words as typed, 1 an equation, 2 along a path
     QString language;        // what this box is written in; empty follows the deck
     qreal tabStop = 0;       // 0 uses four times the type size

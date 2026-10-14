@@ -465,7 +465,9 @@ Item {
         x: root.docX(backend.selection.x ?? 0)
         y: root.docY(backend.selection.y ?? 0)
         width: (backend.selection.w ?? 0) * root.s
-        height: (backend.selection.h ?? 0) * root.s
+        // "Grow box to fit" (TEXT-FIT-1): the frame follows the typing; the
+        // box itself takes the height when the edit is committed.
+        height: Math.max(backend.selection.h ?? 0, backend.selection.textFit === 3 ? textEditor.contentHeight : 0) * root.s
         z: 10
 
         Rectangle {
@@ -480,7 +482,7 @@ Item {
             id: textEditor
             objectName: "inlineTextEditor"
             width: backend.selection.w ?? 0
-            height: backend.selection.h ?? 0
+            height: Math.max(backend.selection.h ?? 0, backend.selection.textFit === 3 ? contentHeight : 0)
             scale: root.s
             transformOrigin: Item.TopLeft
             // Drawn at the size it will really be, so what you type is what the

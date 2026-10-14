@@ -652,7 +652,8 @@ struct Writer {
             .attr("rtlCol", o.direction == 2 ? "1" : "0")
             .attr("anchor", o.verticalAlign == 1 ? "ctr" : o.verticalAlign == 2 ? "b" : "t");
         if (o.columns > 1) x.attr("numCol", o.columns);
-        if (o.textFit == 1) x.empty("a:normAutofit"); else x.empty("a:noAutofit");
+        // Cut off (0) has no PowerPoint counterpart: it is written as no autofit.
+        if (o.textFit == 1) x.empty("a:normAutofit"); else if (o.textFit == 3 && !inTable) x.empty("a:spAutoFit"); else x.empty("a:noAutofit");
         x.end();
         x.empty("a:lstStyle");
 

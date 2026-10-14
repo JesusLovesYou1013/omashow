@@ -65,9 +65,18 @@ Rectangle {
         return value !== undefined ? value : ""
     }
 
+    property string tabFor: ""
     Connections {
         target: backend
-        function onSelectionChanged() { if(tabs.currentIndex === 1 && backend.selection.type !== "text") tabs.currentIndex = 0 }
+        // Tabs are Text, Style, Arrange (TEXT-FIT-1, Daniel). Picking another
+        // object lands on Text when it holds text, and never leaves Text
+        // showing for one that does not. A change to the same object (which
+        // also arrives here) leaves the tab alone.
+        function onSelectionChanged() {
+            const text = backend.hasSelection && backend.selection.type === "text"
+            if (backend.selectedId !== root.tabFor) { root.tabFor = backend.selectedId; if (text) tabs.currentIndex = 0 }
+            if (tabs.currentIndex === 0 && !text) tabs.currentIndex = 1
+        }
     }
     component Divider: Rectangle {
         Layout.fillWidth: true
@@ -123,8 +132,8 @@ Rectangle {
         anchors.right: parent.right
         height: Theme.hTab
         visible: backend.hasSelection
-        TabButton { text: qsTr("Style") }
         TabButton { text: qsTr("Text"); enabled: root.isText }
+        TabButton { text: qsTr("Style") }
         TabButton { text: qsTr("Arrange") }
     }
 
@@ -205,7 +214,8 @@ Rectangle {
         visible: backend.hasSelection
         StackLayout {
             width: inspectorScroll.availableWidth
-            currentIndex: tabs.currentIndex
+            // The pages below are in their old order: Style, Text, Arrange.
+            currentIndex: [1, 0, 2][tabs.currentIndex] ?? 0
 
         // ── Style ───────────────────────────────────────────────────────────
         ColumnLayout {
@@ -359,6 +369,33 @@ Rectangle {
                 Button { objectName: "discardOriginalPicture"; Layout.fillWidth: true; visible: root.sel.imageHasOriginal??false; text: qsTr("Discard original to reduce deck size"); onClicked: backend.discardOriginalMedia() }
             }
 
+            // How the box treats text that does not fit it (TEXT-FIT-1). The
+            // list shows the default first; the stored values are 0 cut off,
+            // 1 shrink, 2 spill, 3 grow.
+            Divider { visible: root.isText }
+            FieldRow {
+                visible: root.isText
+                label: qsTr("Text fit")
+                ComboBox {
+                    objectName: "textFitMode"
+                    Layout.fillWidth: true
+                    readonly property var modes: [3, 1, 2, 0]
+                    model: [qsTr("Grow box to fit"), qsTr("Shrink text to fit"), qsTr("Let text spill over"), qsTr("Cut off and warn")]
+                    currentIndex: Math.max(0, modes.indexOf(root.sel.textFit ?? 3))
+                    onActivated: backend.setSelectedProperty("textFit", modes[currentIndex])
+                }
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: Theme.s2
+                visible: root.isText && ((root.sel.textOverflow ?? false) || (root.sel.textFit === 1 && root.sel.effectiveFontSize < root.sel.fontSize))
+                Icon { name: (root.sel.textOverflow ?? false) ? "triangle-alert" : "info"; color: (root.sel.textOverflow ?? false) ? Theme.warning : Theme.textMuted }
+                Label {
+                    Layout.fillWidth: true; wrapMode: Text.Wrap
+                    color: (root.sel.textOverflow ?? false) ? Theme.warning : Theme.textSecondary
+                    text: (root.sel.textOverflow ?? false) ? qsTr("Some text is outside this box.") : qsTr("Displayed at %1 pt to fit.").arg(Math.round((root.sel.effectiveFontSize ?? 0) * root.ptPerUnit * 10) / 10)
+                }
+            }
             Divider {}
             Button { objectName: "objectLinkButton"; Layout.fillWidth: true; icon.name: "link"; text: root.sel.linkKind?qsTr("Edit link or action…"):qsTr("Add link or action…"); onClicked: backend.editSelectedLink() }
             Label { Layout.fillWidth: true; visible: !!root.sel.linkIssue; text: root.sel.linkIssue??""; color: Theme.warning; wrapMode: Text.Wrap }
@@ -680,27 +717,6 @@ Rectangle {
             }
             Label { visible: (root.sel.listStyle ?? 0) > 0; text: qsTr("Leading tabs nest list items."); color: Theme.textMuted; font.pixelSize: Theme.fsLabel }
             Divider {}
-            FieldRow {
-                label: qsTr("Text fit")
-                ComboBox {
-                    objectName: "textFitMode"
-                    Layout.fillWidth: true
-                    model: [qsTr("Clip and warn"),qsTr("Shrink to fit")]
-                    currentIndex: root.sel.textFit ?? 0
-                    onActivated: backend.setSelectedProperty("textFit",currentIndex)
-                }
-            }
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: Theme.s2
-                visible: (root.sel.textOverflow ?? false) || (root.sel.textFit === 1 && root.sel.effectiveFontSize < root.sel.fontSize)
-                Icon { name: (root.sel.textOverflow ?? false) ? "triangle-alert" : "info"; color: (root.sel.textOverflow ?? false) ? Theme.warning : Theme.textMuted }
-                Label {
-                    Layout.fillWidth: true; wrapMode: Text.Wrap
-                    color: (root.sel.textOverflow ?? false) ? Theme.warning : Theme.textSecondary
-                    text: (root.sel.textOverflow ?? false) ? qsTr("Some text is outside this box.") : qsTr("Displayed at %1 pt to fit.").arg(Math.round((root.sel.effectiveFontSize ?? 0) * root.ptPerUnit * 10) / 10)
-                }
-            }
             Button { objectName: "fitTextBox"; Layout.fillWidth: true; text: qsTr("Resize box to fit text"); onClicked: backend.fitSelectedTextBox() }
             Item { Layout.fillHeight: true }
         }

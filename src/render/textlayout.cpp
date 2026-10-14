@@ -390,7 +390,7 @@ void TextLayout::paint(QPainter &painter, const SceneObject &o) {
         const qreal room = qMax(0.0, o.rect.width() - rendered.size.width());
         const qreal dx = o.textAlign == 1 ? room / 2 : o.textAlign == 2 ? room : 0;
         painter.save();
-        painter.setClipRect(o.rect, Qt::IntersectClip);
+        if (o.textFit < 2) painter.setClipRect(o.rect, Qt::IntersectClip);   // spill and grow draw it all
         MathLayout::paint(painter, rendered, o.rect.topLeft() + QPointF(dx, dy),
                           fontFor(o, metrics.effectiveSize), o.textColor);
         painter.restore();
@@ -414,7 +414,7 @@ void TextLayout::paint(QPainter &painter, const SceneObject &o) {
         const qreal gap = columnGap(o, metrics.effectiveSize);
         const qreal height = qMax(1.0, o.rect.height());
         painter.save();
-        painter.setClipRect(o.rect, Qt::IntersectClip);
+        if (o.textFit < 2) painter.setClipRect(o.rect, Qt::IntersectClip);   // spill and grow draw it all
         for (int column = 0; column < qMin(columns, qMax(1, doc->pageCount())); ++column) {
             painter.save();
             painter.translate(o.rect.topLeft() + QPointF(column * (width + gap), -FontSwap::verticalFix(o, metrics.effectiveSize).shift));
@@ -429,7 +429,7 @@ void TextLayout::paint(QPainter &painter, const SceneObject &o) {
     const qreal spare = qMax(0.0, o.rect.height() - metrics.renderedHeight);
     const qreal dy = o.verticalAlign == 1 ? spare / 2 : o.verticalAlign == 2 ? spare : 0;
     painter.save();
-    painter.setClipRect(o.rect, Qt::IntersectClip);
+    if (o.textFit < 2) painter.setClipRect(o.rect, Qt::IntersectClip);   // spill and grow draw it all
     painter.translate(o.rect.topLeft() + QPointF(0, dy - FontSwap::verticalFix(o, metrics.effectiveSize).shift));
     doc->documentLayout()->draw(&painter, context);
     painter.restore();
