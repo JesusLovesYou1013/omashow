@@ -950,16 +950,18 @@ bool Backend::renderFrame(qreal time, const QString &path, int width,bool includ
 // that mode is made tall enough for its text (downwards only, never smaller).
 // Part of the change that caused it: Undo takes both back together.
 void Backend::growSelectedTextBoxes() {
-  if (m_currentSlide < 0 || m_currentSlide >= m_document.slides.size() || m_selectedIds.isEmpty()) return;
-  const auto shown = Design::resolve(m_document, m_currentSlide);
-  for (const auto &id : std::as_const(m_selectedIds)) {
-    const auto *source = shown.find(id);
-    if (!source || source->type != ObjectType::Text || source->textFit != 3) continue;
-    const auto metrics = TextLayout::measure(*source);
-    if (!metrics.overflow || metrics.renderedHeight <= source->rect.height() + .5) continue;
-    if (auto *o = m_document.slides[m_currentSlide].find(id))
-      Arrange::setRect(*o, source->rect, QRectF(source->rect.topLeft(), QSizeF(source->rect.width(), std::ceil(metrics.renderedHeight + 1))));
-  }
+  // selectedIds(): a single selection lives in m_selectedId alone.
+  for (const auto &id : selectedIds()) growTextBox(m_currentSlide, id);
+}
+void Backend::growTextBox(int slide, const QString &id) {
+  if (slide < 0 || slide >= m_document.slides.size()) return;
+  const auto shown = Design::resolve(m_document, slide);
+  const auto *source = shown.find(id);
+  if (!source || source->type != ObjectType::Text || source->textFit != 3) return;
+  const auto metrics = TextLayout::measure(*source);
+  if (!metrics.overflow || metrics.renderedHeight <= source->rect.height() + .5) return;
+  if (auto *o = m_document.slides[slide].find(id))
+    Arrange::setRect(*o, source->rect, QRectF(source->rect.topLeft(), QSizeF(source->rect.width(), std::ceil(metrics.renderedHeight + 1))));
 }
 
 void Backend::touch() {

@@ -585,6 +585,33 @@ void Backend::fitSelectedTextBox() {
   m_history.commit(); touch();
 }
 
+void Backend::growEditedTextBox(const QString &slideId, const QString &id, qreal height) {
+  int index=-1;
+  for(int i=0;i<m_document.slides.size();++i) if(m_document.slides.at(i).id==slideId) index=i;
+  if(index<0) return;
+  const auto resolved=Design::resolve(m_document,index);
+  const auto *shown=resolved.find(id);
+  if(!shown || shown->type!=ObjectType::Text || shown->textFit!=3 || height<=shown->rect.height()+.5) return;
+  auto *object=m_document.slides[index].find(id); if(!object) return;
+  if(m_editGrowId!=id || m_editGrowSlide!=slideId) { m_editGrowSlide=slideId; m_editGrowId=id; m_editGrowRect=shown->rect; }
+  Arrange::setRect(*object,shown->rect,QRectF(shown->rect.topLeft(),QSizeF(shown->rect.width(),std::ceil(height+1))));
+  // Not an edit of its own: no undo step, no "unsaved" yet. Nothing else moves.
+  ++m_revision;
+  emit documentChanged();
+  emit selectionChanged();
+}
+// The typing is over: the box goes back to what it was, so the edit's undo
+// step starts from there; touch() then grows it to its text again.
+void Backend::endEditGrowth() {
+  if(m_editGrowId.isEmpty()) return;
+  for(int i=0;i<m_document.slides.size();++i) if(m_document.slides.at(i).id==m_editGrowSlide) {
+    const auto resolved=Design::resolve(m_document,i);
+    if(const auto *shown=resolved.find(m_editGrowId)) if(auto *object=m_document.slides[i].find(m_editGrowId))
+      Arrange::setRect(*object,shown->rect,m_editGrowRect);
+  }
+  m_editGrowSlide.clear(); m_editGrowId.clear();
+}
+
 void Backend::commitTextDocument(const QString &slideId,const QString &id,QQuickTextDocument *editor) {
   if (!editor || !editor->textDocument()) return;
   int index=-1;
@@ -592,6 +619,8 @@ void Backend::commitTextDocument(const QString &slideId,const QString &id,QQuick
   if(index<0) return;
   const auto *source=m_document.slides.at(index).find(id);
   if(!source || source->type!=ObjectType::Text) return;
+  const bool grew=!m_editGrowId.isEmpty();
+  endEditGrowth();
   const auto resolved=Design::resolve(m_document,index);
   const auto *authored=resolved.find(id); if(!authored) return;
   QStringList paragraphs;
@@ -608,6 +637,8 @@ void Backend::commitTextDocument(const QString &slideId,const QString &id,QQuick
       m_typingFormat.clear();
       emit typingFormatChanged();
     }
+    // Nothing was typed after all: the box is back at its size; say so.
+    if (grew) { ++m_revision; emit documentChanged(); emit selectionChanged(); }
     return;
   }
   // Where new letters landed, so a caret format can cover them.
@@ -630,6 +661,8 @@ void Backend::commitTextDocument(const QString &slideId,const QString &id,QQuick
   }
   m_typingFormat.clear();
   emit typingFormatChanged();
+  // The box that was typed in, whether or not it is still the selection.
+  growTextBox(index, id);
   m_history.commit(); touch();
 }
 

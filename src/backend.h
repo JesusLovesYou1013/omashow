@@ -4,6 +4,7 @@
 #include <QElapsedTimer>
 #include <QFileSystemWatcher>
 #include <QObject>
+#include <QRectF>
 #include <QSet>
 #include <QString>
 #include <QTimer>
@@ -441,6 +442,9 @@ public:
     Q_INVOKABLE void editSelectedTable();
     bool applyTable(const QString &slideId,const QString &objectId,const TableData &table,const QString &label,const DataSource *source=nullptr);
     Q_INVOKABLE void addText();
+    // "Grow box to fit" while typing: the box itself (not only its frame)
+    // takes the editor's height, so snapping and alignment see its real size.
+    Q_INVOKABLE void growEditedTextBox(const QString &slideId, const QString &id, qreal height);
     Q_INVOKABLE void addEquation();
     Q_INVOKABLE bool putTextOnShape();
     // What the deck is written in, what it has been taught, and whether it
@@ -890,6 +894,12 @@ private:
     void removeNextFont();
     void requestFontCheck(const QString &source);
     void growSelectedTextBoxes();
+    void growTextBox(int slide, const QString &id);
+    // The box being typed in, as it was before it started growing with the
+    // typing, so the edit and the growth are one Undo (TEXT-FIT-1).
+    QString m_editGrowSlide, m_editGrowId;
+    QRectF m_editGrowRect;
+    void endEditGrowth();
     QTimer m_exportTicker;
     int m_exportSerial = 0;
     void startNextExport();
