@@ -1152,7 +1152,7 @@ ApplicationWindow {
                                 enabled: tabFlick.overflows
                                 acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
                                 onWheel: (e) => tabFlick.contentX = Math.max(0, Math.min(tabFlick.contentWidth - tabFlick.width,
-                                                                                         tabFlick.contentX - 0.675 * (e.angleDelta.y !== 0 ? e.angleDelta.y : e.angleDelta.x)))   // 25% slower, then 10% more: 81 px a notch
+                                                                                         tabFlick.contentX - 0.675 * (e.angleDelta.y !== 0 ? e.angleDelta.y : e.angleDelta.x)))   // 81 px a notch: slower reads calmer
                             }
                             ScrollBar.horizontal: ScrollBar {
                                 objectName: "ribbonScrollBar"
