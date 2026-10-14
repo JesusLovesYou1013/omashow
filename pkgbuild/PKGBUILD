@@ -2,7 +2,7 @@
 
 pkgname=omashow
 pkgver=0.1.0
-pkgrel=3
+pkgrel=4
 pkgdesc='Keyboard-first presentation editor and presenter for Omarchy'
 arch=('x86_64' 'aarch64')
 url='https://github.com/28allday/omashow'
