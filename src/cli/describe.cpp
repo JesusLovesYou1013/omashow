@@ -315,7 +315,7 @@ QVariantMap Cli::vocabulary() {
                                QStringLiteral("circles"), QStringLiteral("squares"), QStringLiteral("lower-letters"),
                                QStringLiteral("upper-letters"), QStringLiteral("lower-roman"),
                                QStringLiteral("upper-roman")})},
-                     {QStringLiteral("textFit"), indexed({QStringLiteral("clip"), QStringLiteral("shrink"), QStringLiteral("spill"), QStringLiteral("grow")})},
+                     {QStringLiteral("textFit"), indexed({QStringLiteral("clip"), QStringLiteral("shrink"), QStringLiteral("spill"), QStringLiteral("dynamic")})},
                      {QStringLiteral("direction"), indexed({QStringLiteral("auto"), QStringLiteral("left-to-right"),
                                                             QStringLiteral("right-to-left")})},
                      {QStringLiteral("imageMode"), indexed({QStringLiteral("fit"), QStringLiteral("fill"),
