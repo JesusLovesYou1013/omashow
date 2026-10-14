@@ -304,10 +304,9 @@ RowLayout {
                             FieldRow {
                                 required property string modelData
                                 label: modelData.charAt(0).toUpperCase() + modelData.slice(1)
-                                Rectangle { implicitWidth: Theme.hControl; implicitHeight: Theme.hControl; radius: Theme.rControl
-                                            color: root.info.colors[modelData] ?? Theme.controlBg; border.color: Theme.borderStrong; border.width: Theme.hairline }
-                                TextField { objectName: "themeColor_" + modelData; Layout.fillWidth: true; text: root.info.colors[modelData]; font.family: Theme.monoFamily
-                                            onEditingFinished: backend.setThemeToken(modelData, text, false) }
+                                ColorField { field.objectName: "themeColor_" + modelData; value: root.info.colors[modelData] ?? ""
+                                             accessibleName: qsTr("Theme colour %1").arg(modelData)
+                                             onPicked: v => backend.setThemeToken(modelData, v, false) }
                             }
                         }
                         Heading { text: qsTr("TEXT CONTRAST") }

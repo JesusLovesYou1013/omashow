@@ -279,22 +279,11 @@ Rectangle {
             FieldRow {
                 label: root.isText ? qsTr("Colour") : qsTr("Fill")
                 visible: !root.isImage && !root.isMedia
-                Rectangle {
-                    implicitWidth: Theme.hControl + Theme.s3
-                    implicitHeight: Theme.hControl
-                    radius: Theme.rControl
-                    color: root.swatch
-                    border.color: Theme.borderStrong
-                    border.width: Theme.hairline
-                }
-                TextField {
-                    Layout.fillWidth: true
-                    text: root.swatchText
-                    placeholderText: root.several ? qsTr("Mixed") : ""
-                    font.family: Theme.monoFamily
-                    Accessible.name: root.isText ? qsTr("Text colour") : qsTr("Fill colour")
-                    onEditingFinished:
-                        backend.setSelectedProperty(root.isText ? "textColor" : "fill", text)
+                ColorField {
+                    value: root.swatchText
+                    placeholder: root.several ? qsTr("Mixed") : ""
+                    accessibleName: root.isText ? qsTr("Text colour") : qsTr("Fill colour")
+                    onPicked: v => backend.setSelectedProperty(root.isText ? "textColor" : "fill", v)
                 }
             }
 
