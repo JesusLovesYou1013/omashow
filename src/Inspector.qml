@@ -167,13 +167,9 @@ Rectangle {
         }
         FieldRow {
             label: qsTr("Background")
-            Rectangle {
-                implicitWidth: Theme.hControl; implicitHeight: Theme.hControl; radius: Theme.rControl
-                color: backend.slideDesign.background || Theme.controlBg
-                border.color: Theme.borderStrong; border.width: Theme.hairline
-            }
-            TextField { Layout.fillWidth: true; text: backend.slideDesign.background ?? ""; font.family: Theme.monoFamily
-                        placeholderText: qsTr("Master"); onEditingFinished: backend.setSlideBackground(text) }
+            ColorField { value: backend.slideDesign.background ?? ""; placeholder: qsTr("Master")
+                         accessibleName: qsTr("Slide background colour")
+                         onPicked: v => backend.setSlideBackground(v) }
         }
         FieldRow {
             label: ""
