@@ -596,6 +596,7 @@ struct TextOut {
     int listStyle = 0, listStart = 1;
     int anchor = 0;           // 0 top, 1 middle, 2 bottom
     bool shrink = false;
+    bool grow = false;        // spAutoFit: the shape resizes to its text
     qreal fontScale = 1;
     // Text insets in EMU (lIns, tIns, rIns, bIns); the defaults are DrawingML's.
     qreal inset[4] = {91440, 45720, 91440, 45720};
@@ -630,6 +631,7 @@ TextOut convertText(const Node *txBody, const TextChain &chain, const TextContex
         else if (anchor == QLatin1String("ctr")) out.anchor = 1;
         else if (anchor == QLatin1String("b")) out.anchor = 2;
         readInsets(own, out.inset);
+        if (own->child(QStringLiteral("spAutoFit"))) out.grow = true;
         if (const Node *fit = own->child(QStringLiteral("normAutofit"))) {
             out.shrink = true;
             if (fit->has(QStringLiteral("fontScale")))
@@ -990,7 +992,8 @@ struct Reader {
         o.paragraphSpacing = text.para.spcBef > 0 ? text.para.spcBef * u.pt : 0;
         o.listStyle = text.listStyle;
         o.listStart = text.listStart;
-        o.textFit = text.shrink ? 1 : 0;
+        // No autofit in the file: PowerPoint draws the text past the box.
+        o.textFit = text.shrink ? 1 : text.grow ? 3 : 2;
         o.fillStyle = 5;
         o.strokeWidth = 0;
         o.fillToken.clear(); o.textColorToken.clear(); o.fontToken.clear();

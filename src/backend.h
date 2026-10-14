@@ -889,6 +889,7 @@ private:
     int m_fontRemoveTotal = 0;
     void removeNextFont();
     void requestFontCheck(const QString &source);
+    void growSelectedTextBoxes();
     QTimer m_exportTicker;
     int m_exportSerial = 0;
     void startNextExport();

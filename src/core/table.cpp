@@ -284,6 +284,7 @@ SceneObject Table::textObject(const SceneObject &o, int row, int column) {
   text.type = ObjectType::Text;
   text.rotation = 0;
   text.text = cell.text;
+  text.textFit = 0;   // a cell cuts off unless its own style says shrink (TEXT-FIT-1)
   if (row < t.headerRows || column < t.headerColumns) {
     text.fill = t.headerFill;
     text.textColor = contrast(text.fill);

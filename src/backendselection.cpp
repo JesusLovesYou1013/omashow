@@ -579,7 +579,7 @@ void Backend::fitSelectedTextBox() {
     const auto height=qMax(8.0,TextLayout::measure(copy).naturalHeight+1);
     if (auto *o=m_document.slides[m_currentSlide].find(id)) {
       Arrange::setRect(*o,source->rect,QRectF(source->rect.topLeft(),QSizeF(source->rect.width(),height)));
-      o->textFit=0; Design::markOverride(*o,"textFit");
+      o->textFit=3; Design::markOverride(*o,"textFit");
     }
   }
   m_history.commit(); touch();

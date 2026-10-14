@@ -180,7 +180,7 @@ bool Design::setProperty(SceneObject &o, const QString &key, const QVariant &v, 
     else if (key == "textIndent") o.textIndent = constrainForEditing ? qBound(0.0,n,1000.0) : qMax(0.0,n);
     else if (key == "listStyle") o.listStyle = qBound(0,v.toInt(),8);
     else if (key == "listStart") o.listStart = qBound(1,v.toInt(),9999);
-    else if (key == "textFit") o.textFit = qBound(0,v.toInt(),1);
+    else if (key == "textFit") o.textFit = qBound(0,v.toInt(),3);
     else if (key == "textKind") o.textKind = qBound(0,v.toInt(),2);
     else if (key == "language") { if(v.toString().size()>32) return false; o.language = v.toString(); }
     else if (key == "tabStop") o.tabStop = qBound(0.0,n,4000.0);
