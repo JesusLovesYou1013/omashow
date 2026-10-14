@@ -53,6 +53,45 @@ void Backend::setFontAutoDownload(bool on) {
     settings.sync();
     emit fontAutoDownloadChanged();
 }
+bool Backend::fontCheckOnOpen() const {
+    QSettings settings(fontSettingsPath(), QSettings::IniFormat);
+    return settings.value("fontCheckOnOpen", true).toBool();
+}
+void Backend::setFontCheckOnOpen(bool on) {
+    if (on == fontCheckOnOpen()) return;
+    QSettings settings(fontSettingsPath(), QSettings::IniFormat);
+    settings.setValue("fontCheckOnOpen", on);
+    settings.sync();
+    emit fontAutoDownloadChanged();
+}
+
+// FONT-SETTINGS-1: what OmaShow itself downloaded (a listed family, complete).
+QVariantList Backend::downloadedFonts() const {
+    QVariantList rows;
+    const QDir root(FontSandbox::dir());
+    for (const auto &folder : root.entryList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name | QDir::IgnoreCase)) {
+        const QString family = FontDownloader::familyForFolder(folder);
+        if (family.isEmpty() || !FontDownloader::complete(family)) continue;
+        rows.append(QVariantMap{{QStringLiteral("family"), family}, {QStringLiteral("bytes"), double(FontDownloader::bytesFor({family}))}});
+    }
+    return rows;
+}
+int Backend::deleteDownloadedFonts() {
+    setExtraFontsPack(false);   // or it would want them straight back
+    if (m_fontDownloader) m_fontDownloader->cancel();
+    int gone = 0;
+    const QDir root(FontSandbox::dir());
+    for (const auto &folder : root.entryList(QDir::Dirs | QDir::NoDotAndDotDot))
+        if (!FontDownloader::familyForFolder(folder).isEmpty() && QDir(root.filePath(folder)).removeRecursively()) ++gone;
+    m_packRowsBuilt = false;
+    m_packStatus.clear();
+    emit fontDownloadChanged();
+    // Fonts already loaded stay usable until OmaShow is closed.
+    setStatus(gone ? tr("Deleted %n downloaded font(s); open presentations keep them until OmaShow is restarted", "", gone)
+                   : tr("No downloaded fonts to delete"));
+    return gone;
+}
+
 bool Backend::openFontSandbox() {
     const auto dir = FontSandbox::dir();
     // Made only when asked for.

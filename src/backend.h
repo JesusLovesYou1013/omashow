@@ -143,6 +143,8 @@ class Backend : public QObject {
     Q_PROPERTY(double fontDownloadDone READ fontDownloadDone NOTIFY fontDownloadChanged)
     Q_PROPERTY(double fontDownloadTotal READ fontDownloadTotal NOTIFY fontDownloadChanged)
     Q_PROPERTY(bool fontAutoDownload READ fontAutoDownload WRITE setFontAutoDownload NOTIFY fontAutoDownloadChanged)
+    // FONT-SETTINGS-1: off = decks open on fallback fonts, no popup, nothing fetched.
+    Q_PROPERTY(bool fontCheckOnOpen READ fontCheckOnOpen WRITE setFontCheckOnOpen NOTIFY fontAutoDownloadChanged)
     Q_PROPERTY(QVariantMap slideTransition READ slideTransition NOTIFY selectionChanged)
     Q_PROPERTY(QVariantList exportQueue READ exportQueue NOTIFY exportQueueChanged)
     Q_PROPERTY(bool encoderAvailable READ encoderAvailable CONSTANT)
@@ -204,6 +206,14 @@ public:
     Q_INVOKABLE bool fontCheckHidden(const QString &source) const;
     Q_INVOKABLE void setFontCheckHidden(const QString &source, bool hidden);
     Q_INVOKABLE bool openFontSandbox();
+    bool fontCheckOnOpen() const;
+    void setFontCheckOnOpen(bool on);
+    // The free fonts OmaShow has downloaded into its own folder: {family, bytes}.
+    Q_INVOKABLE QVariantList downloadedFonts() const;
+    // Removes them (only folders of families OmaShow downloads; anything put
+    // there by hand stays). Stops downloads and turns the Extra fonts pack
+    // off. Returns how many families went.
+    Q_INVOKABLE int deleteDownloadedFonts();
     // The upright weights (100-900) the typeface really has, ascending. A name
     // that is not installed answers for the face it falls back to. Cached per
     // family, so the inspector asks once per family change.
