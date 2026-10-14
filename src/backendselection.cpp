@@ -1,3 +1,4 @@
+#include <QSet>
 #include "backend.h"
 #include "core/textruns.h"
 #include "core/punctuation.h"
@@ -77,6 +78,23 @@ QVariantMap Backend::selection() const {
     values["type"] = "group";
     if (primary->type == ObjectType::Text) values["fill"] = primary->textColor.name(QColor::HexArgb);
     values["placeholderId"] = "";
+    // MULTI-1: several objects. Settings that differ between them are listed
+    // as "mixed" (the Inspector shows those fields blank); changing one sets
+    // it on all. When every one is a text box the Text tab serves them all.
+    bool allText = true;
+    QSet<QString> mixed;
+    const auto mine = Design::properties(*primary);
+    for (const auto &id : ids) {
+      const auto *o = slide.find(id);
+      if (!o) continue;
+      if (o->type != ObjectType::Text) allText = false;
+      if (o == primary) continue;
+      const auto theirs = Design::properties(*o);
+      for (auto it = mine.cbegin(); it != mine.cend(); ++it)
+        if (theirs.value(it.key()) != it.value()) mixed.insert(it.key());
+    }
+    values["textGroup"] = allText;
+    values["mixed"] = QStringList(mixed.cbegin(), mixed.cend());
   }
   const auto units = Arrange::units(slide, ids, m_groupScope);
   values["groupId"] =
