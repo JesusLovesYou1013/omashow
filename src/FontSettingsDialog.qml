@@ -6,7 +6,9 @@ import Omashow 1.0
 // FONT-SETTINGS-1 (Daniel): everything about the free fonts behind one button
 // on the Design tab, so the ribbon carries one entry instead of several:
 // whether decks are checked on opening, the Extra fonts pack, what has been
-// downloaded, and deleting it.
+// downloaded. The Extra fonts pack is one checkbox and nothing else: ticking
+// it asks, then downloads with progress; unticking asks, then removes what
+// was downloaded with progress. No second button for either.
 Sheet {
     id: root
     objectName: "fontSettingsDialog"
@@ -22,14 +24,14 @@ Sheet {
 
     property var rows: []
     property bool listed: false
-    property bool confirming: false
     readonly property real megabytes: rows.reduce((n, r) => n + (r.bytes || 0), 0) / 1048576
 
-    function show() { rows = backend.downloadedFonts(); listed = false; confirming = false; open() }
+    function show() { rows = backend.downloadedFonts(); listed = false; open() }
     Connections {
         target: backend
         enabled: root.visible
         function onPackFinished() { root.rows = backend.downloadedFonts() }
+        function onFontRemoveFinished() { root.rows = backend.downloadedFonts() }
     }
 
     ColumnLayout {
@@ -57,15 +59,22 @@ Sheet {
             }
             CheckBox {
                 objectName: "fontSettingsPack"
-                enabled: backend.fontCheckOnOpen
+                enabled: backend.fontCheckOnOpen && !backend.fontRemoveRunning
                 text: qsTr("Extra fonts pack")
                 checked: backend.extraFontsPack
-                onToggled: { backend.extraFontsPack = checked; if (checked) { root.close(); root.packRequested() } }
+                // The tick follows the setting; a click only asks. Yes to the
+                // download turns it on, yes to the removal turns it off.
+                onClicked: {
+                    const want = checked
+                    checked = Qt.binding(() => backend.extraFontsPack)
+                    if (want) { root.close(); root.packRequested() } else removeSheet.open()
+                }
             }
             Label {
                 Layout.leftMargin: Theme.s5; Layout.fillWidth: true; wrapMode: Text.Wrap
                 color: Theme.textSecondary; font.pixelSize: Theme.fsBase - 1
-                text: qsTr("Free look-alikes for every Office font, so nothing has to be fetched when a presentation opens.")
+                text: backend.packStatus !== "" ? backend.packStatus
+                      : qsTr("Free look-alikes for every Office font, so nothing has to be fetched when a presentation opens.")
             }
         }
 
@@ -103,29 +112,46 @@ Sheet {
                 MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: backend.openFontSandbox() }
             }
             Item { Layout.fillWidth: true }
-            // Deleting asks once more, in the same place.
-            Button {
-                objectName: "fontSettingsDelete"
-                enabled: root.rows.length > 0
-                text: root.confirming ? qsTr("Yes, delete %n font(s)", "", root.rows.length) : qsTr("Delete downloaded fonts…")
-                onClicked: {
-                    if (!root.confirming) { root.confirming = true; return }
-                    backend.deleteDownloadedFonts(); root.confirming = false; root.rows = backend.downloadedFonts()
-                }
-            }
-            Button {
-                objectName: "fontSettingsDownload"
-                visible: !root.confirming
-                text: backend.packRunning ? qsTr("Show download…") : qsTr("Download all fonts…")
-                onClicked: { root.close(); root.packRequested() }
-            }
-            Button {
-                objectName: "fontSettingsKeep"
-                visible: root.confirming
-                text: qsTr("Keep them")
-                onClicked: root.confirming = false
-            }
             Button { objectName: "fontSettingsClose"; text: qsTr("Close"); highlighted: true; onClicked: root.close() }
+        }
+    }
+
+    // Unticking the pack: asked first, then removed with progress.
+    Sheet {
+        id: removeSheet
+        objectName: "fontRemoveDialog"
+        parent: Overlay.overlay; anchors.centerIn: parent
+        width: Math.min(parent.width - Theme.s5 * 2, 440)
+        modal: true
+        closePolicy: backend.fontRemoveRunning ? Popup.NoAutoClose : Popup.CloseOnEscape
+        title: qsTr("Remove the Extra fonts pack?")
+        background: Rectangle { color: Theme.panelBg; border.color: Theme.border; radius: Theme.rControl }
+        Overlay.modal: Rectangle { color: Theme.withAlpha(Theme.showBg, .65) }
+        Connections {
+            target: backend
+            enabled: removeSheet.visible
+            function onFontRemoveFinished() { removeSheet.close() }
+        }
+        ColumnLayout {
+            width: parent.width; spacing: Theme.s3
+            Label {
+                Layout.fillWidth: true; wrapMode: Text.Wrap
+                text: backend.fontRemoveRunning
+                      ? qsTr("Removing fonts… %1 of %2").arg(backend.fontRemoveDone).arg(backend.fontRemoveTotal)
+                      : qsTr("This deletes the %n free font(s) OmaShow has downloaded", "", root.rows.length) + qsTr(" (%1 MB). Presentations will use fallback fonts, or ask to download again.").arg(root.megabytes.toFixed(0))
+            }
+            ProgressBar {
+                Layout.fillWidth: true
+                // Its room is always kept, so the buttons do not move.
+                opacity: backend.fontRemoveRunning ? 1 : 0
+                from: 0; to: Math.max(1, backend.fontRemoveTotal); value: backend.fontRemoveDone
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Item { Layout.fillWidth: true }
+                Button { objectName: "fontRemoveKeep"; text: qsTr("Keep them"); enabled: !backend.fontRemoveRunning; onClicked: removeSheet.close() }
+                Button { objectName: "fontRemoveYes"; text: qsTr("Remove"); highlighted: true; enabled: !backend.fontRemoveRunning; onClicked: backend.removeDownloadedFonts() }
+            }
         }
     }
 }

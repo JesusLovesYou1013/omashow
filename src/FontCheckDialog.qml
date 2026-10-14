@@ -76,6 +76,8 @@ Sheet {
     }
     function download() {
         phase = "progress"
+        // Saying yes to the pack is what turns it on (FONT-SETTINGS-1).
+        if (mode === "pack") backend.extraFontsPack = true
         const ok = mode === "pack" ? backend.downloadPack() : backend.downloadFonts(todo.map(r => r.family))
         if (!ok) { phase = "result"; failed = ({}); offline = false }
     }
