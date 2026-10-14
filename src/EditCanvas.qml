@@ -465,9 +465,7 @@ Item {
         x: root.docX(backend.selection.x ?? 0)
         y: root.docY(backend.selection.y ?? 0)
         width: (backend.selection.w ?? 0) * root.s
-        // "Grow box to fit" (TEXT-FIT-1): the frame follows the typing; the
-        // box itself takes the height when the edit is committed.
-        height: Math.max(backend.selection.h ?? 0, backend.selection.textFit === 3 ? textEditor.contentHeight : 0) * root.s
+        height: (backend.selection.h ?? 0) * root.s
         z: 10
 
         Rectangle {
@@ -482,7 +480,7 @@ Item {
             id: textEditor
             objectName: "inlineTextEditor"
             width: backend.selection.w ?? 0
-            height: Math.max(backend.selection.h ?? 0, backend.selection.textFit === 3 ? contentHeight : 0)
+            height: backend.selection.h ?? 0
             scale: root.s
             transformOrigin: Item.TopLeft
             // Drawn at the size it will really be, so what you type is what the
@@ -515,7 +513,7 @@ Item {
             }
             onSelectionEndChanged: backend.setTextSelection(selectionStart, selectionEnd)
             onLengthChanged: root.typingFormatLen = length
-            // "Grow box to fit": the box itself grows with the typing.
+            // "Dynamic size": the box itself follows the typing, taller or shorter.
             onContentHeightChanged: if (root.editingText && backend.selection.textFit === 3) backend.growEditedTextBox(root.textSlideId, root.textObjectId, contentHeight)
             Connections {
                 target: backend
