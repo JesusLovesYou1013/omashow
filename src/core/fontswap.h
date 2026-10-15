@@ -5,7 +5,7 @@
 // A deck made in PowerPoint names Windows and Office fonts (Calibri, Aptos,
 // Cambria…) that a Linux computer does not have. On import each one that is
 // not installed is swapped for its measured free match: the table in
-// :/fonts/office-font-map.json (from the office-font-map data, CC BY 4.0)
+// :/fonts/office-font-map.json (office-font-map, CC BY-SA 4.0)
 // lists for every Office family up to three free families, metric-compatible
 // ones first, with the size, width and line factors measured against the
 // Office font. The first installed option is used. When it is not

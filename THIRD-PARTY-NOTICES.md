@@ -45,11 +45,12 @@ of a font chosen for a deck is that font's own.
 ## Office font map
 
 `src/fonts/office/office-font-map.json` (compiled in as `:/fonts/office-font-map.json`)
-is derived from **office-font-map** by JesusLovesYou1013, licensed under the
-Creative Commons Attribution 4.0 International licence (CC BY 4.0,
-https://creativecommons.org/licenses/by/4.0/). It was reduced to the best free
-matches per Office font with their measured size, width and line factors.
-It contains no fonts.
+is **office-font-map** by JesusLovesYou1013
+(https://github.com/JesusLovesYou1013/office-font-map), licensed under the
+Creative Commons Attribution-ShareAlike 4.0 International licence (CC BY-SA 4.0,
+https://creativecommons.org/licenses/by-sa/4.0/), which is compatible with
+OmaShow's GPL 3. It lists the best free matches per Office font with their
+measured size, width and line factors. It contains no fonts.
 
 ## Free fonts downloaded on request
 
