@@ -503,7 +503,6 @@ QVariantList Backend::fontWeights(const QString &family) const {
   return result;
 }
 
-// OMASHOW-PERSONAL: font picker weights (PR #11 follow-up; replaces #10 menu)
 QVariantList Backend::fontPickerEntries() const {
   if (!m_fontPickerEntries.isEmpty()) return m_fontPickerEntries;
   // One canonical English name per weight step (Regular/Bold stay on the

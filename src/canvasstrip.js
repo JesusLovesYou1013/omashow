@@ -1,4 +1,3 @@
-// OMASHOW-PERSONAL: continuous canvas (upstream #14 deferred)
 .pragma library
 
 // The edit canvas as one continuous strip of slides, like a PDF viewer, with

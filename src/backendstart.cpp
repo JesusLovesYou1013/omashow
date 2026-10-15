@@ -15,7 +15,6 @@ QString startSettingsPath() {
 
 // The slide size last chosen on the start page, so the next launch offers it again. A file someone
 // edited by hand can hold anything, so every value is brought back into range here.
-// OMASHOW-PERSONAL: start-slide-size (remember start page size + templates)
 QVariantMap Backend::startState() const {
     QSettings settings(startSettingsPath(), QSettings::IniFormat);
     return {{"slideSize", qBound(0, settings.value("slideSize", 0).toInt(), 4)},
