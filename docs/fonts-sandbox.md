@@ -14,9 +14,9 @@ Microsoft's fonts. Extra alternatives live in a folder only OmaShow reads:
 * At startup OmaShow hands every `.ttf/.otf/.ttc/.otc` under it (any depth;
   one subfolder per family is suggested: `Carlito/Carlito-Regular.ttf`) to
   `QFontDatabase::addApplicationFont` - visible to the OmaShow process only.
-* OmaShow never creates it except when you press **Open fonts folder**.
-  OmaShow's user-mode font install (`OMASHOW_FONT_INSTALL=user`) writes here.
-* "Check again" in the font-check popup reloads it without restarting.
+* OmaShow creates it only when it downloads a font or when you click **Fonts
+  folder** in the font-check popup. Downloaded families go in one subfolder
+  each, with their licence file, and are loaded at once (no restart).
 
 ## Sharing with other office apps (opt-in, per app - not configured)
 
@@ -44,6 +44,5 @@ without touching system fonts. Recommended per app, e.g. for app `foo`:
 3. Qt apps could instead read `$OMASHOW_FONTS_DIR` themselves, as OmaShow does.
 
 Apps not launched this way are unaffected. Removing the conf file or wrapper
-undoes it. Open question: which apps (LibreOffice Impress, OnlyOffice…);
-LibreOffice also honours its own per-user `fonts` dir in its profile, which
-could be a symlink to this folder instead.
+undoes it. LibreOffice also honours its own per-user `fonts` dir in its
+profile, which could be a symlink to this folder instead.
