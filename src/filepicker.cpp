@@ -91,6 +91,10 @@ void PortalFileChooser::openFile(const QString &title, const QString &filterName
     request(QStringLiteral("OpenFile"), title, options);
 }
 
+void PortalFileChooser::openFolder(const QString &title) {
+    request(QStringLiteral("OpenFile"), title, {{QStringLiteral("directory"), true}});
+}
+
 void PortalFileChooser::saveFile(const QString &title, const QString &suggestedName,
                                  const QString &filterName, const QStringList &patterns) {
     QVariantMap options;

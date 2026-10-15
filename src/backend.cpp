@@ -22,6 +22,8 @@
 #include <QFileInfo>
 
 #include <QDir>
+#include <QHash>
+#include <utility>
 #include <QClipboard>
 #include <QGuiApplication>
 #include <QFileInfo>
@@ -105,6 +107,9 @@ Backend::Backend(QObject *parent)
             case Pending::InstallTemplate:
               installTemplate(url);
               break;
+            case Pending::RecoverDecks:
+              recoverInto(path);
+              break;
             case Pending::None:
               openAsync(url);
               break;
@@ -113,11 +118,14 @@ Backend::Backend(QObject *parent)
   connect(m_chooser, &PortalFileChooser::canceled, this,
           [this] {
             const bool saving = m_pending == Pending::SaveDeck;
+            const bool recovering = m_pending == Pending::RecoverDecks;
             m_pending = Pending::None;
             if (saving) emit saveCanceled();
+            if (recovering) { m_recoverJournals.clear(); emit recoveryCanceled(); }
           });
   connect(m_chooser, &PortalFileChooser::failed, this,
           [this](const QString &message) {
+            if (m_pending == Pending::RecoverDecks) { m_pending = Pending::None; m_recoverJournals.clear(); emit recoveryCanceled(); }
             setStatus(message);
             emit failed(message);
           });
@@ -274,10 +282,55 @@ void Backend::discardRecovery(const QString &journalPath) {
   Recovery::forget(journalPath);
 }
 
-bool Backend::recoverInNewWindow(const QString &journalPath) {
-  const auto program = QCoreApplication::applicationFilePath();
-  if (program.isEmpty() || !QFileInfo(journalPath).isFile()) return false;
-  return QProcess::startDetached(program, {QStringLiteral("--recover"), journalPath});
+void Backend::recoverToFolder(const QStringList &journalPaths) {
+  if (journalPaths.isEmpty()) return;
+  m_recoverJournals = journalPaths;
+  m_pending = Pending::RecoverDecks;
+  m_chooser->openFolder(journalPaths.size() == 1 ? tr("Choose where to save the recovered deck")
+                                                 : tr("Choose where to save the %1 recovered decks").arg(journalPaths.size()));
+}
+
+// Each journal becomes a deck of its own in the folder: named after the file
+// it came from ("Talk (recovered)"), else its first words, else "Recovered";
+// never over an existing file. Only a deck that was written has its journal
+// removed; one that failed stays in the list to try again.
+void Backend::recoverInto(const QString &folder) {
+  const QStringList journals = std::exchange(m_recoverJournals, {});
+  QHash<QString, QString> originals;
+  for (const Recovery::Journal &journal : Recovery::orphans()) originals.insert(journal.journalPath, journal.originalPath);
+  QStringList handled, failures;
+  QString lastSaved;
+  for (const QString &journalPath : journals) {
+    const Bundle::ReadResult read = Bundle::load(journalPath);
+    if (!read.ok) { failures << read.error; continue; }
+    const QString original = originals.value(journalPath);
+    QString name;
+    if (!original.isEmpty()) name = tr("%1 (recovered)").arg(QFileInfo(original).completeBaseName());
+    else if (!read.document.slides.isEmpty())
+      for (const auto &o : read.document.slides.first().objects)
+        if (o.type == ObjectType::Text && !o.text.trimmed().isEmpty()) { name = o.text.simplified().left(40).trimmed(); break; }
+    name.remove(QRegularExpression(QStringLiteral(R"([/\\:*?"<>|])")));
+    if (name.isEmpty()) name = tr("Recovered");
+    QString path = QDir(folder).filePath(name + QStringLiteral(".omashow"));
+    for (int n = 2; QFileInfo::exists(path); ++n)
+      path = QDir(folder).filePath(QStringLiteral("%1 %2.omashow").arg(name).arg(n));
+    QString error;
+    if (!Bundle::save(read.document, path, &error)) { failures << QStringLiteral("%1: %2").arg(QFileInfo(path).fileName(), error); continue; }
+    Recovery::forget(journalPath);
+    rememberRecent(path);
+    handled << journalPath;
+    lastSaved = path;
+  }
+  if (!failures.isEmpty()) {
+    const QString message = tr("Could not save some recovered work: %1").arg(failures.join(QStringLiteral("; ")));
+    setStatus(message);
+    emit failed(message);
+  } else if (handled.size() == 1) {
+    setStatus(tr("Recovered deck saved as %1").arg(lastSaved));
+  } else {
+    setStatus(tr("%1 recovered decks saved in %2").arg(handled.size()).arg(folder));
+  }
+  emit recoveryFinished(handled);
 }
 
 QString Backend::displayNameFor(const QUrl &url) {
