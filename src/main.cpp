@@ -3,7 +3,9 @@
 #include "core/fonts.h"
 #include "core/fontsandbox.h"
 #include <QElapsedTimer>
+// TEST-ONLY BEGIN: offscreen --ui-shot steps; history/tools/make-upstream.py leaves this out
 #include <QFontInfo>
+// TEST-ONLY END
 
 #include <QGuiApplication>
 #include <QFont>
@@ -33,13 +35,15 @@
 #include <QQmlEngine>
 #include <QTextStream>
 #include <QDir>
-#include <QJsonDocument>
 #include <QFile>
-#include <QEventLoop>
-#include <QQuickWindow>
+// TEST-ONLY BEGIN: offscreen --ui-shot steps; history/tools/make-upstream.py leaves this out
+#include <QJsonDocument>
 #include <QQuickItem>
 #include <QWheelEvent>
 #include <functional>
+// TEST-ONLY END
+#include <QEventLoop>
+#include <QQuickWindow>
 #include <QSGRendererInterface>
 #include <QSurfaceFormat>
 #include <QTimer>
@@ -121,6 +125,7 @@ int captureInterface(QQmlApplicationEngine &engine, Backend &backend, Presenter 
         save(window, QStringLiteral("start"));
         backend.createDeck(0, 1920, 1080, 0);
     }
+    // TEST-ONLY BEGIN: offscreen --ui-shot steps; history/tools/make-upstream.py leaves this out
     // FONT-CHECK-1/2 (OMASHOW_UI_SHOT_FONTCHECK=1|hide|download): the font
     // check shown on opening a deck, photographed. hide: tick "Don't show
     // again" and close. download: press Download, photograph the progress and
@@ -314,6 +319,7 @@ int captureInterface(QQmlApplicationEngine &engine, Backend &backend, Presenter 
         }
         return 0;
     }
+    // TEST-ONLY END
     const struct { int workspace; const char *name; } views[] = {
         {0, "edit"}, {1, "design"}, {2, "animate"}, {3, "review"}, {4, "present"}, {6, "sorter"}};
     for (const auto &view : views) {
@@ -334,6 +340,7 @@ int captureInterface(QQmlApplicationEngine &engine, Backend &backend, Presenter 
         save(window, QStringLiteral("edit-selected"));
         backend.setProperty("currentSlide", 0);
     }
+    // TEST-ONLY BEGIN: offscreen --ui-shot steps; history/tools/make-upstream.py leaves this out
     // The continuous canvas: mouse-wheel notches down until the next slide
     // snaps in (the frame before is mid-scroll), then back up to the first.
     // Visual children, not QObject children: views inside layouts are found here.
@@ -544,6 +551,7 @@ int captureInterface(QQmlApplicationEngine &engine, Backend &backend, Presenter 
         }
         backend.select(QString());
     }
+    // TEST-ONLY END
     // The presenter console, rehearsing so no display has to exist.
     presenter.start(false, true);
     // Let the first slide's builds finish, so the console shows a settled slide.
@@ -648,7 +656,6 @@ int main(int argc, char *argv[]) {
                                  QStringLiteral("n"), QStringLiteral("0"));
     parser.addOption(atOption);
     parser.addOption(fpsOption);
-    // OMASHOW-PERSONAL: ui-shot harness (private; never for upstream)
     QCommandLineOption uiShotOption(QStringLiteral("ui-shot"),
                                     QStringLiteral("Photograph each workspace to <dir> and exit."),
                                     QStringLiteral("dir"));
@@ -748,7 +755,6 @@ int main(int argc, char *argv[]) {
         scaleFont(theme.textScale());
     });
 
-    // OMASHOW-PERSONAL: theme transparency-only
     // While the frame is drawn see-through, the compositor must not fade the whole window on top of it
     // (the slides would fade too). OmaSkins keeps its fade off any app that leaves this marker, named
     // after the process, in the runtime directory. No OmaSkins transparency → opaque frame, so we
@@ -798,6 +804,7 @@ int main(int argc, char *argv[]) {
             QObject::connect(&backend, &Backend::opened, &app, [&] { backend.setTime(parser.value(atOption).toDouble()); }, Qt::SingleShotConnection);
         if (parser.isSet(showOption))
             QObject::connect(&backend, &Backend::opened, &app, [&] { QMetaObject::invokeMethod(&presenter, [&] { presenter.start(false, false); }, Qt::QueuedConnection); }, Qt::SingleShotConnection);
+        // TEST-ONLY BEGIN: offscreen --ui-shot steps; history/tools/make-upstream.py leaves this out
         if (parser.isSet(uiShotOption)) {
             // FONT-CHECK-3 test: what the deck looks like the moment it is first displayed.
             QObject::connect(&backend, &Backend::opened, &app, [&] {
@@ -805,6 +812,7 @@ int main(int argc, char *argv[]) {
                                   << "revision" << backend.revision() << "show running" << presenter.property("running").toBool();
             }, Qt::SingleShotConnection);
         }
+        // TEST-ONLY END
         if (parser.isSet(uiShotOption)) backend.open(QUrl::fromLocalFile(positional.first()));
         else backend.openAsync(QUrl::fromLocalFile(positional.first()));
     } else if (parser.isSet(atOption)) backend.setTime(parser.value(atOption).toDouble());

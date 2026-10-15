@@ -53,7 +53,6 @@ QtObject {
     readonly property color accentText:
         (0.2126 * accent.r + 0.7152 * accent.g + 0.0722 * accent.b) > 0.55 ? "#04121A" : "#F2F7FF"
 
-    // OMASHOW-PERSONAL: theme transparency-only (frame opacity from OmaSkins; not upstream)
     // ── The editing window's frame ──────────────────────────────────────────
     // The palette above is fixed. What a desktop transparency setting may change is how SOLID the main
     // editing window's frame is drawn (OmarchyTheme.frameOpacity; 1 unless such a setting lowers it).
@@ -190,7 +189,6 @@ QtObject {
     readonly property int wNavigatorMin: 180
     readonly property int wInspector: 320
     readonly property int wInspectorMin: 300
-    // OMASHOW-PERSONAL: fixed sidebar option (upstream #15 deferred)
     // The right sidebar's standard width: what it opens at unless it was locked at another.
     readonly property int wInspectorFixed: 380
     readonly property int szHandle: 10

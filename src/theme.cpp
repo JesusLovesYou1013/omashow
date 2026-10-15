@@ -111,7 +111,6 @@ OmarchyTheme::OmarchyTheme(QObject *parent) : QObject(parent) {
     reloadFrameOpacity();
 }
 
-// OMASHOW-PERSONAL: theme transparency-only
 // OmaShow's only OmaSkins input is this transparency step. Other files under omaskins/
 // (qt-palette, rotation, etc.) are ignored. Format: "<focused> <unfocused> [ignored…]",
 // e.g. "0.75 0.68 blur" — only the two opacities are used; blur/noblur and any further

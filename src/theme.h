@@ -26,7 +26,7 @@ class OmarchyTheme : public QObject {
     Q_PROPERTY(bool accentFollowed READ accentFollowed NOTIFY colorsChanged)
     Q_PROPERTY(QString accentForeground READ accentForeground NOTIFY colorsChanged)
     Q_PROPERTY(QString selection READ selection NOTIFY colorsChanged)
-    // OMASHOW-PERSONAL: theme transparency-only — OmaSkins input is opacity alone (not palette/fonts).
+    // OmaSkins input is opacity alone (not palette/fonts).
     // How solid the editing window's frame (bars, panels, the surround of the slide) is drawn, for the
     // focused and the unfocused window: 1 = solid, the default. OmaSkins' transparency file can lower
     // it, and only the frame follows: slides and thumbnails stay solid, as they must for judging the

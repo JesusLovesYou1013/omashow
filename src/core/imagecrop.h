@@ -2,7 +2,6 @@
 #include "core/scene.h"
 class QPainterPath;
 namespace ImageCrop {
-// OMASHOW-PERSONAL: crop cut-area look (upstream #12 deferred)
 // While cropping, the part the crop cuts off stays visible around the frame,
 // 40% darker and 30% less saturated, so it reads as "outside". At 80% of the
 // picture's own opacity, so what lies behind it shows through a little.

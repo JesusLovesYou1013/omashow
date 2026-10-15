@@ -3,7 +3,6 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import Omashow 1.0
 import "canvasstrip.js" as Strip
-// OMASHOW-PERSONAL: continuous canvas (upstream #14 deferred)
 import "canvascursor.js" as Cursors
 
 // The Edit canvas: the slide, plus selection. The slide itself is painted by

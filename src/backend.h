@@ -386,7 +386,6 @@ public:
     Q_INVOKABLE bool moveCustomShowSlide(const QString &id, int from, int to);
     Q_INVOKABLE bool resizeDeck(qreal width, qreal height, bool scaleContent = true);
     Q_INVOKABLE QRectF selectionVisualBounds() const;
-    // OMASHOW-PERSONAL: continuous canvas (upstream #14 deferred)
     // How far a slide's visible objects reach above and below the slide, in
     // slide units: {top: <= 0, bottom: >= slide height}. The edit canvas keeps
     // that whole stretch clear of the neighbouring slides.

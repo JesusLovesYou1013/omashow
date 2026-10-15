@@ -3,7 +3,6 @@
 #include <QPainterPath>
 #include <QTransform>
 #include <cmath>
-// OMASHOW-PERSONAL: crop cut-area look (upstream #12 deferred)
 namespace {
 QTransform rotation(const SceneObject &o) {
   QTransform t;

@@ -7,7 +7,7 @@ ApplicationWindow {
     id: win
     width: 1440
     height: 900
-    minimumWidth: 800   // OMASHOW-PERSONAL: ribbon-only prototype — tiles to ~820 px
+    minimumWidth: 800
     minimumHeight: 560
     visible: true
     // The title carries state: a dirty marker, the deck's name, and where you
@@ -157,7 +157,6 @@ ApplicationWindow {
     readonly property bool dialogOpen: Sheets.count > 0
     font.family: Theme.fontFamily
     font.pixelSize: Theme.fsControl
-    // OMASHOW-PERSONAL: frame transparency / theme transparency-only
     color: Theme.frameWindow
     // Focused or not decides which of the two frame levels applies (see Theme.frameAlpha).
     onActiveChanged: Theme.frameActive = active
@@ -181,8 +180,7 @@ ApplicationWindow {
     // The right sidebar holds the controls a slide is made with, so every launch starts with it
     // showing, however the last one ended. It can still be put away for the session.
     property bool inspectorCollapsed: false
-    // OMASHOW-PERSONAL: fixed sidebar option (upstream #15 deferred) — when true,
-    // the right panel stays at the width it had when it was locked; the chevron
+    // When true, the right panel stays at the width it had when it was locked; the chevron
     // (feat/sidebar-collapse) still puts it away, but a drag does not change the width.
     property bool inspectorFixed: (backend.panelState.inspectorFixed ?? "false") === "true"
     // Saved when a drag ends, not on every move: each save rewrites the panel
@@ -254,7 +252,6 @@ ApplicationWindow {
         Layout.rightMargin: Theme.s1
         color: Theme.border
     }
-    // OMASHOW-PERSONAL: ribbon-only prototype (UI-RIBBON-003)
     // ONE command table. The ribbon's second row, the File and ? menus, the title-line
     // cluster and Ctrl+K are all built from it, so each command has one label, one
     // enabled rule and one handler. Where the menu bar and the toolbar both had a
@@ -759,8 +756,8 @@ ApplicationWindow {
     SlideSizeDialog { id: slideSizeDialog }
     LayoutApplyDialog { id: layoutApplyDialog }
     // Every command the menus offer, by name and by the words people use for it.
-    // OMASHOW-PERSONAL: ribbon-only prototype (UI-RIBBON-003) — Ctrl+K lists the
-    // ribbon's own table (same labels, rules and handlers), built as it opens.
+    // Ctrl+K lists the ribbon's own table (same labels, rules and handlers),
+    // built as it opens.
     CommandPalette {
         id: commandPalette
         onAboutToShow: commands = win.paletteCommands()
@@ -951,9 +948,8 @@ ApplicationWindow {
         visible: !win.presenting && !backend.startVisible
 
         // ── Title line: name · File · tabs · the always-visible cluster ─────
-        // OMASHOW-PERSONAL: ribbon-only prototype (UI-RIBBON-003). The menu bar and
-        // the toolbar are one ribbon: this line plus row 2 below, at the height the
-        // two had, so the canvas never moves.
+        // The menu bar and the toolbar are one ribbon: this line plus row 2
+        // below, at the height the two had, so the canvas never moves.
         Rectangle {
             Layout.fillWidth: true
             implicitHeight: Theme.hTitleBar

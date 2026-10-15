@@ -13,7 +13,6 @@ Item {
     property Item panel
     property bool fromLeft: true
     property bool collapsed: false
-    // OMASHOW-PERSONAL: sidebar collapse chevron (related #15; drag kept)
     // One-click hide/show (OS-008 arrow), kept alongside drag-to-resize.
     property bool showToggle: true
     signal resizeStarted()
