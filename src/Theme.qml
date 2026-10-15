@@ -156,6 +156,8 @@ QtObject {
     readonly property int fsStartHeading: 22
     readonly property int hTemplateCard: 224
     readonly property int wTemplatePreview: 640
+    readonly property int wStartContentMin: 620 // start page left side: narrower than this, it scrolls sideways
+    readonly property int wStartCard: 260       // start page theme and template cards: one size, however wide the page
     readonly property int fsBase: 12
     readonly property int fsLabel: 12
     readonly property int fsControl: 13

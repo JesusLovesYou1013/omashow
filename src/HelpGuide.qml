@@ -44,7 +44,7 @@ Sheet {
           reach: qsTr("Shown when no deck is open · File ▸ Start centre… · Ctrl+Shift+N"),
           points: [qsTr("Pick a theme, a slide size and a first slide, then Create presentation."),
                    qsTr("Templates: search, filter by shape, Install… your own, or Use this template."),
-                   qsTr("Recent presentations: open, Pin, Reveal in the file manager or Remove."),
+                   qsTr("Recent presentations: click a name to open it; Pin, Open folder or Remove."),
                    qsTr("Open deck… opens a .omashow, PowerPoint (.pptx) or Keynote (.key) file.")] },
         { key: "slides", icon: "list", name: qsTr("Slide list"),
           summary: qsTr("Every slide down the left, in order."),

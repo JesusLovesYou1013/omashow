@@ -17,6 +17,16 @@ Rectangle {
     signal openRequested()
     signal recentRequested(string path)
     signal templateRequested(string id)
+    // START-PANE-1: the Recent presentations pane is dragged wider or narrower
+    // at its divider, or put away with the arrow, as the editor's sidebars
+    // are; both are kept for next time. The cards on the left keep their size
+    // and move into more or fewer columns instead.
+    readonly property real recentMin: 220
+    property real recentWidth: Number(backend.panelState.startRecentWidth ?? Theme.wInspector)
+    property bool recentCollapsed: (backend.panelState.startRecentCollapsed ?? "false") === "true"
+    property real recentDragStart: 0
+    function clampRecent(w) { return Math.max(recentMin, Math.min(w, root.width * .5)) }
+    onRecentCollapsedChanged: backend.setPanelState("startRecentCollapsed", recentCollapsed)
     property string chosenTemplate: ""
     readonly property var chosen: backend.templates.find(row => row.id === chosenTemplate) ?? ({})
     // Search matches the name, where it came from and the typefaces it asks for.
@@ -49,19 +59,23 @@ Rectangle {
         RowLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            spacing: Theme.s5
+            spacing: Theme.s2
             ScrollView {
                 id: templateScroll
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                contentWidth: availableWidth
+                // Never narrower than its widest row: a narrow page scrolls
+                // sideways (scroll bar at the bottom) rather than cutting it off.
+                // A fixed floor (the template search row's width): measuring the rows
+                // themselves would make their width depend on itself.
+                contentWidth: Math.max(availableWidth, Theme.wStartContentMin)
                 clip: true
                 ColumnLayout {
-                    width: templateScroll.availableWidth
+                    width: templateScroll.contentWidth
                     spacing: Theme.s4
                     Label { text: qsTr("Make room for your next idea."); font.pixelSize: Theme.fsStartHeading; font.weight: Theme.wHeading }
                     Label { text: qsTr("Choose a theme. Your colours, fonts and layouts stay editable."); color: Theme.textSecondary; wrapMode: Text.Wrap; Layout.fillWidth: true }
-                    RowLayout {
+                    Flow {
                         Layout.fillWidth: true
                         spacing: Theme.s3
                         Repeater {
@@ -71,9 +85,8 @@ Rectangle {
                                 required property int index
                                 required property string modelData
                                 objectName: "startTheme" + index
-                                Layout.fillWidth: true
-                                Layout.preferredWidth: 1
-                                implicitHeight: Theme.hTemplateCard
+                                width: Theme.wStartCard
+                                height: Theme.hTemplateCard
                                 checkable: true
                                 checked: root.themeIndex === index
                                 onClicked: root.themeIndex = index
@@ -169,11 +182,9 @@ Rectangle {
                         visible: root.shownTemplates.length === 0
                         text: qsTr("Nothing matches that. Install a deck as a template, or keep the one you are working on from File ▸ Keep as template.")
                     }
-                    GridLayout {
+                    Flow {
                         Layout.fillWidth: true
-                        columns: Math.max(2, Math.floor(templateScroll.availableWidth / 260))
-                        columnSpacing: Theme.s3
-                        rowSpacing: Theme.s3
+                        spacing: Theme.s3
                         Repeater {
                             model: root.shownTemplates
                             Rectangle {
@@ -181,8 +192,8 @@ Rectangle {
                                 required property var modelData
                                 required property int index
                                 objectName: "template" + index
-                                Layout.fillWidth: true
-                                implicitHeight: templateBody.implicitHeight + Theme.s3 * 2
+                                width: Theme.wStartCard
+                                height: templateBody.implicitHeight + Theme.s3 * 2
                                 radius: Theme.rCard
                                 color: chosen ? Theme.frameCardRaised : Theme.frameCard
                                 border.width: chosen ? Theme.selectionRing : Theme.hairline
@@ -267,9 +278,24 @@ Rectangle {
                     }
                 }
             }
-            Rectangle { Layout.fillHeight: true; implicitWidth: Theme.hairline; color: Theme.border }
+            PanelGrip {
+                objectName: "recentGrip"
+                fromLeft: false
+                collapsed: root.recentCollapsed
+                showTip: qsTr("Show recent presentations")
+                hideTip: qsTr("Hide recent presentations")
+                toggleName: "recentToggleButton"
+                // The divider line, under the grip's own highlight.
+                Rectangle { anchors.horizontalCenter: parent.horizontalCenter; width: Theme.hairline; height: parent.height; color: Theme.border; z: -1 }
+                onResizeStarted: { root.recentCollapsed = false; root.recentDragStart = recentPane.width }
+                onResizedBy: total => root.recentWidth = Math.round(root.clampRecent(root.recentDragStart + total))
+                onResizeFinished: backend.setPanelState("startRecentWidth", Math.round(root.recentWidth))
+                onToggled: root.recentCollapsed = !root.recentCollapsed
+            }
             ColumnLayout {
-                Layout.preferredWidth: Math.min(Theme.wInspector, root.width * .28)
+                id: recentPane
+                visible: !root.recentCollapsed
+                Layout.preferredWidth: root.clampRecent(root.recentWidth)
                 Layout.fillHeight: true
                 spacing: Theme.s3
                 Label { text: qsTr("Recent presentations"); font.pixelSize: Theme.fsTitle; font.weight: Theme.wHeading }
@@ -303,13 +329,25 @@ Rectangle {
                                 text: recent.modelData.name
                                 enabled: !recent.modelData.missing
                                 onClicked: root.recentRequested(recent.modelData.path)
-                                ToolTip.visible: hovered; ToolTip.text: recent.modelData.path
-                                contentItem: Label { text: parent.text; elide: Text.ElideMiddle; color: recent.modelData.missing ? Theme.textMuted : Theme.textPrimary; verticalAlignment: Text.AlignVCenter }
+                                // The name is how a deck is opened: bold, and the accent colour under the pointer.
+                                ToolTip.visible: hovered; ToolTip.text: qsTr("Open %1").arg(recent.modelData.path)
+                                HoverHandler { cursorShape: recent.modelData.missing ? Qt.ArrowCursor : Qt.PointingHandCursor }
+                                contentItem: Label {
+                                    // One line; the end gives way to "…" and comes back as the pane widens.
+                                    text: parent.text; elide: Text.ElideRight; maximumLineCount: 1; verticalAlignment: Text.AlignVCenter
+                                    font.weight: Theme.wHeading
+                                    color: recent.modelData.missing ? Theme.textMuted : parent.hovered ? Theme.accent : Theme.textPrimary
+                                }
                             }
                             Label { visible: recent.modelData.missing; text: qsTr("File missing"); color: Theme.warning }
                             RowLayout {
                                 Button { flat: true; text: recent.modelData.pinned ? qsTr("Unpin") : qsTr("Pin"); onClicked: backend.pinRecent(recent.modelData.path,!recent.modelData.pinned) }
-                                Button { flat: true; text: qsTr("Reveal"); onClicked: backend.revealRecent(recent.modelData.path) }
+                                Button {
+                                    flat: true; text: qsTr("Open folder")
+                                    ToolTip.visible: hovered; ToolTip.delay: Theme.tooltipDelay
+                                    ToolTip.text: qsTr("Show the folder this deck is in")
+                                    onClicked: backend.revealRecent(recent.modelData.path)
+                                }
                                 Button { flat: true; text: qsTr("Remove"); onClicked: backend.removeRecent(recent.modelData.path) }
                             }
                         }
