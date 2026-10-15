@@ -326,11 +326,10 @@ public:
     Q_INVOKABLE QVariantList recoveryCandidates() const;
     Q_INVOKABLE void recoverFrom(const QString &journalPath);
     Q_INVOKABLE void discardRecovery(const QString &journalPath);
-    // RECOVER-1: one recovered deck in another window (Recover with several ticked).
-    Q_INVOKABLE bool recoverInNewWindow(const QString &journalPath);
-    // Set for a window started to recover one deck: it does not show the prompt.
-    Q_INVOKABLE bool recoveryPromptSuppressed() const { return m_recoveryPromptSuppressed; }
-    void setRecoveryPromptSuppressed(bool on) { m_recoveryPromptSuppressed = on; }
+    // RECOVER-2: the ticked decks saved into one folder the user picks, each
+    // as its own file; nothing is opened. Answers with recoveryFinished (the
+    // journals that were saved and so are gone) or recoveryCanceled.
+    Q_INVOKABLE void recoverToFolder(const QStringList &journalPaths);
 
     // --- export --------------------------------------------------------------
     Q_INVOKABLE void exportPdfDialog(bool pagePerBuildStage = false, bool includeSkipped = false);
@@ -701,6 +700,8 @@ signals:
     void templatesChanged();
     void saved();
     void saveCanceled();
+    void recoveryFinished(const QStringList &handled);
+    void recoveryCanceled();
     void playbackRateChanged();
     void fileUrlChanged();
     void fileStateChanged();
@@ -720,6 +721,7 @@ signals:
     void guidesChanged();
 
 private:
+    void recoverInto(const QString &folder);
     int m_clipboardVersion = 0;
     bool m_copyPending = false, m_pasteAfterCopy = false;
     struct ImageRequest {
@@ -786,7 +788,7 @@ private:
     // The portal answers `selected` for every dialog, so the intent behind the
     // one in flight has to be remembered — otherwise a save would open the file
     // it was about to write, or a PDF export would overwrite the deck.
-    enum class Pending { None, SaveDeck, ExportPdf, InsertImage, ReplaceImage, InsertMedia, ReplaceMedia, ImportDeck, ExportReview, ExportFile, InstallTemplate };
+    enum class Pending { None, SaveDeck, ExportPdf, InsertImage, ReplaceImage, InsertMedia, ReplaceMedia, ImportDeck, ExportReview, ExportFile, InstallTemplate, RecoverDecks };
     QString m_imageTargetId, m_imageSlideId;
     bool loadImage(const QUrl &url, bool replace, int index, const QString &target);
     Pending m_pending = Pending::None;
@@ -894,7 +896,7 @@ private:
     void gateOpen(Gate gate);
     void completeOpen(const Gate &gate);
     bool m_fontsPending = false;
-    bool m_recoveryPromptSuppressed = false;
+    QStringList m_recoverJournals;
     QStringList m_fontRemoveLeft;   // family folders still to delete
     int m_fontRemoveTotal = 0;
     void removeNextFont();

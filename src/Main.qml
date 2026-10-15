@@ -1622,6 +1622,8 @@ ApplicationWindow {
     // ticked at first). Recover or Discard acts on the ticked ones ("all" when
     // every one is ticked). Discarding asks once more. A handled deck's
     // journal is gone for good, so it never comes back; "Later" keeps them.
+    // RECOVER-2: Recover asks once for a folder and saves every ticked deck
+    // there as its own file; nothing is opened.
     Sheet {
         id: recoverySheet
         objectName: "recoveryDialog"
@@ -1632,6 +1634,7 @@ ApplicationWindow {
         property var candidates: []
         property var ticked: ({})          // journalPath -> true
         property bool confirmingDiscard: false
+        property bool picking: false        // the folder picker is open
         readonly property var chosen: candidates.filter(c => ticked[c.journalPath])
         readonly property bool all: chosen.length === candidates.length
 
@@ -1658,11 +1661,13 @@ ApplicationWindow {
             settle(paths)
         }
         function recoverChosen() {
-            const paths = chosen.map(c => c.journalPath)
-            // The first opens here; any others each in a window of their own.
-            for (let n = 1; n < paths.length; ++n) backend.recoverInNewWindow(paths[n])
-            if (paths.length > 0) backend.openAsync("file://" + paths[0], true)
-            settle(paths)
+            picking = true
+            backend.recoverToFolder(chosen.map(c => c.journalPath))
+        }
+        Connections {
+            target: backend
+            function onRecoveryFinished(handled) { recoverySheet.picking = false; recoverySheet.settle(handled) }
+            function onRecoveryCanceled() { recoverySheet.picking = false }
         }
 
         ColumnLayout {
@@ -1717,7 +1722,7 @@ ApplicationWindow {
             Label {
                 Layout.maximumWidth: 460
                 wrapMode: Text.Wrap
-                text: qsTr("Recovering opens a copy — nothing already saved is written over. Several open in a window each.")
+                text: qsTr("Recover saves the ticked work into a folder you choose, each as its own file. Nothing already saved is written over.")
                 color: Theme.textMuted
                 font.pixelSize: Theme.fsLabel
             }
@@ -1729,6 +1734,7 @@ ApplicationWindow {
                     objectName: "recoveryLater"
                     text: qsTr("Later")
                     visible: !recoverySheet.confirmingDiscard
+                    enabled: !recoverySheet.picking
                     ToolTip.visible: hovered; ToolTip.delay: Theme.tooltipDelay
                     ToolTip.text: qsTr("Keep them and ask again next time")
                     onClicked: recoverySheet.close()
@@ -1747,7 +1753,7 @@ ApplicationWindow {
                 }
                 Button {
                     objectName: "recoveryDiscard"
-                    enabled: recoverySheet.chosen.length > 0
+                    enabled: recoverySheet.chosen.length > 0 && !recoverySheet.picking
                     text: recoverySheet.confirmingDiscard
                           ? (recoverySheet.all ? qsTr("Yes, discard all") : qsTr("Yes, discard %1").arg(recoverySheet.chosen.length))
                           : (recoverySheet.all && recoverySheet.candidates.length > 1 ? qsTr("Discard all")
@@ -1758,7 +1764,7 @@ ApplicationWindow {
                     objectName: "recoveryRecover"
                     visible: !recoverySheet.confirmingDiscard
                     highlighted: true
-                    enabled: recoverySheet.chosen.length > 0
+                    enabled: recoverySheet.chosen.length > 0 && !recoverySheet.picking
                     text: recoverySheet.all && recoverySheet.candidates.length > 1 ? qsTr("Recover all")
                           : recoverySheet.candidates.length > 1 ? qsTr("Recover %1").arg(recoverySheet.chosen.length) : qsTr("Recover")
                     onClicked: recoverySheet.recoverChosen()
@@ -1781,7 +1787,7 @@ ApplicationWindow {
         Theme.frameActive = active
         win.sanePanels()
         presenter.attach(audienceWindow,consoleWindow,win)
-        const found = backend.recoveryPromptSuppressed() ? [] : backend.recoveryCandidates()
+        const found = backend.recoveryCandidates()
         if (found.length > 0) recoverySheet.show(found)
     }
 

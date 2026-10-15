@@ -19,6 +19,7 @@ public:
     // `patterns` are globs, e.g. {"*.md", "*.markdown"}; empty means any file.
     Q_INVOKABLE void openFile(const QString &title, const QString &filterName = QString(),
                               const QStringList &patterns = {});
+    Q_INVOKABLE void openFolder(const QString &title);
     Q_INVOKABLE void saveFile(const QString &title, const QString &suggestedName,
                               const QString &filterName = QString(),
                               const QStringList &patterns = {});
