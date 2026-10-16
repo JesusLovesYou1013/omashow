@@ -160,6 +160,12 @@ struct SceneObject {
     QString origFont;
     qreal origFontSize = 0, fontScale = 1;
     int origWeight = 0;
+    // A PowerPoint "shrink text on overflow" box keeps the size PowerPoint
+    // chose until it is changed, as PowerPoint does: this is the box as read
+    // (TextLayout::keptFitKey). While it still matches, the text is drawn at
+    // its own size, not shrunk again; any edit to the words, the box or the
+    // size ends that and shrinking goes on as usual. Empty: always shrink.
+    QString fitKept;
     QString fillToken, textColorToken, fontToken;
     // Stretches of this text that differ from the box, in authored order.
     QVector<TextRun> runs;
