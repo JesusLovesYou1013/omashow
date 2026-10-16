@@ -62,6 +62,7 @@ Rectangle {
             spacing: Theme.s2
             ScrollView {
                 id: templateScroll
+                objectName: "templateScroll"
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 // Never narrower than its widest row: a narrow page scrolls
@@ -70,6 +71,32 @@ Rectangle {
                 // themselves would make their width depend on itself.
                 contentWidth: Math.max(availableWidth, Theme.wStartContentMin)
                 clip: true
+                readonly property bool overflowsX: contentWidth > availableWidth + 1
+                // Shift + wheel goes sideways (a plain wheel stays up and down; a
+                // touchpad's sideways swipe already goes sideways).
+                WheelHandler {
+                    objectName: "startSidewaysWheel"
+                    enabled: templateScroll.overflowsX
+                    acceptedModifiers: Qt.ShiftModifier
+                    acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                    onWheel: (e) => {
+                        const flick = templateScroll.contentItem
+                        const d = e.angleDelta.y !== 0 ? e.angleDelta.y : e.angleDelta.x
+                        flick.contentX = Math.max(0, Math.min(templateScroll.contentWidth - templateScroll.availableWidth, flick.contentX - d))
+                    }
+                }
+                // The sideways bar shows while the pointer is over the page, so it
+                // can be seen and dragged, and hides when it leaves (as the ribbon's).
+                HoverHandler { id: templateHover }
+                ScrollBar.horizontal: ScrollBar {
+                    objectName: "startSidewaysBar"
+                    parent: templateScroll
+                    x: templateScroll.leftPadding
+                    y: templateScroll.height - height
+                    width: templateScroll.availableWidth
+                    policy: ScrollBar.AlwaysOn
+                    visible: templateScroll.overflowsX && (templateHover.hovered || pressed)
+                }
                 ColumnLayout {
                     width: templateScroll.contentWidth
                     spacing: Theme.s4
