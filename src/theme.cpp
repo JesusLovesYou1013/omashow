@@ -9,6 +9,8 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QGuiApplication>
+#include <QSettings>
+#include <QStandardPaths>
 #include <QStyleHints>
 #include <QTextStream>
 #include <QVariant>
@@ -211,6 +213,16 @@ bool OmarchyTheme::isDark(const QString &color, bool *known) {
     return 0.299 * parsed.redF() + 0.587 * parsed.greenF() + 0.114 * parsed.blueF() < 0.5;
 }
 
+// Whether OmaShow takes its colours from the Omarchy theme. Off: its own
+// palette (the blue accent), in the light or dark mode the desktop asks for.
+// A choice of Light / Dark / Follow the theme is planned; for now this is
+// the "followThemeColors" key in view.ini, off unless set.
+static bool followThemeColors() {
+    const QSettings settings(QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation) + QStringLiteral("/view.ini"),
+                             QSettings::IniFormat);
+    return settings.value(QStringLiteral("followThemeColors"), false).toBool();
+}
+
 void OmarchyTheme::reload() {
     watchTheme();
 
@@ -231,7 +243,7 @@ void OmarchyTheme::reload() {
     m_accent = kDefaultAccent;
     m_accentFollowed = false;
 
-    const QHash<QString, QString> colors = colorsFromFile(colorsPath());
+    const QHash<QString, QString> colors = followThemeColors() ? colorsFromFile(colorsPath()) : QHash<QString, QString>();
     const auto take = [&colors](const QString &key, QString &target) {
         const QString value = colors.value(key);
         if (value.isEmpty() || !QColor::fromString(value).isValid())
