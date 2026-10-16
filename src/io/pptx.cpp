@@ -332,12 +332,16 @@ QColor readColor(const Node *clr, const ColorContext &ctx) {
             color = QColor::fromHslF(h < 0 ? 0 : h, s, qBound(0.0f, l, 1.0f), a);
         } else if (mod.name == QLatin1String("alpha")) {
             color.setAlphaF(qBound(0.0, v, 1.0));
-        } else if (mod.name == QLatin1String("tint")) {
-            color = QColor::fromRgbF(qBound(0.0, 1 - (1 - color.redF()) * v, 1.0),
-                                     qBound(0.0, 1 - (1 - color.greenF()) * v, 1.0),
-                                     qBound(0.0, 1 - (1 - color.blueF()) * v, 1.0), color.alphaF());
-        } else if (mod.name == QLatin1String("shade")) {
-            color = QColor::fromRgbF(color.redF() * v, color.greenF() * v, color.blueF() * v, color.alphaF());
+        } else if (mod.name == QLatin1String("tint") || mod.name == QLatin1String("shade")) {
+            // PowerPoint tints towards white and shades towards black in linear
+            // light, not on the sRGB values (measured: a duotone of #0F0B5C
+            // with tint 60%, satMod 400%, lumMod 110% is (175,175,210) in
+            // PowerPoint; this gives (176,176,211), the sRGB way (68,60,233)).
+            const auto toLinear = [](qreal c) { return c <= 0.04045 ? c / 12.92 : std::pow((c + 0.055) / 1.055, 2.4); };
+            const auto toSrgb = [](qreal l) { l = qBound(0.0, l, 1.0); return l <= 0.0031308 ? 12.92 * l : 1.055 * std::pow(l, 1 / 2.4) - 0.055; };
+            const bool tint = mod.name == QLatin1String("tint");
+            const auto apply = [&](qreal c) { const qreal l = toLinear(c); return toSrgb(tint ? 1 - (1 - l) * v : l * v); };
+            color = QColor::fromRgbF(apply(color.redF()), apply(color.greenF()), apply(color.blueF()), color.alphaF());
         } else if (mod.name == QLatin1String("satMod") || mod.name == QLatin1String("satOff")) {
             float h, s, l, a;
             color.getHslF(&h, &s, &l, &a);
