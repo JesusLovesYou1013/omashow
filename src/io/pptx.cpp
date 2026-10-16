@@ -2494,7 +2494,16 @@ struct Reader {
         }
 
         // Theme colours and fonts for the deck's own palette.
-        const auto masterPaths = pkg.relatedAll(presentationPath, QStringLiteral("slideMaster"));
+        // In the order presentation.xml lists them (sldMasterIdLst): the first is
+        // the deck's own theme. The relationships alone come in no fixed order.
+        QStringList masterPaths;
+        if (const Node *list = presentation ? presentation->child(QStringLiteral("sldMasterIdLst")) : nullptr)
+            for (const auto &id : list->kids) {
+                const QString target = pkg.target(presentationPath, id.attr(QStringLiteral("r:id")));
+                if (!target.isEmpty() && !masterPaths.contains(target)) masterPaths.append(target);
+            }
+        for (const auto &m : pkg.relatedAll(presentationPath, QStringLiteral("slideMaster")))
+            if (!masterPaths.contains(m)) masterPaths.append(m);
         for (const auto &m : masterPaths) masterFor(m);
         if (!masters.empty()) {
             const auto firstPath = masterPaths.value(0, masters.begin()->first);
