@@ -123,6 +123,47 @@ int captureInterface(QQmlApplicationEngine &engine, Backend &backend, Presenter 
     };
     if (!haveDeck) {
         save(window, QStringLiteral("start"));
+        // TEST-ONLY BEGIN: offscreen --ui-shot steps; history/tools/make-upstream.py leaves this out
+        // A narrow start page: Shift + wheel moves it sideways, and the pointer
+        // over it shows the sideways bar (OMASHOW_UI_SHOT_START_SCROLL=1).
+        if (qEnvironmentVariableIsSet("OMASHOW_UI_SHOT_START_SCROLL")) {
+            const std::function<QQuickItem *(QQuickItem *, const QString &)> find =
+                [&](QQuickItem *item, const QString &name) -> QQuickItem * {
+                if (item->objectName() == name) return item;
+                for (QQuickItem *child : item->childItems())
+                    if (QQuickItem *found = find(child, name)) return found;
+                return nullptr;
+            };
+            QQuickItem *scroll = find(window->contentItem(), QStringLiteral("templateScroll"));
+            QQuickItem *bar = find(window->contentItem(), QStringLiteral("startSidewaysBar"));
+            QObject *flick = scroll ? scroll->property("contentItem").value<QObject *>() : nullptr;
+            qInfo().noquote() << "ui-shot start: overflows" << (scroll ? scroll->property("overflowsX").toBool() : false)
+                              << "contentX" << (flick ? flick->property("contentX").toDouble() : -1)
+                              << "bar visible" << (bar ? bar->isVisible() : false);
+            if (scroll && flick) {
+                const QPointF at = scroll->mapToScene(QPointF(scroll->width() / 2, scroll->height() / 2));
+                QMouseEvent move(QEvent::MouseMove, at, at, window->mapToGlobal(at), Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+                QCoreApplication::sendEvent(window, &move);
+                settle(200);
+                qInfo().noquote() << "ui-shot start: pointer over it, bar visible" << (bar ? bar->isVisible() : false);
+                for (int i = 0; i < 3; ++i) {
+                    QWheelEvent wheel(at, window->mapToGlobal(at), QPoint(), QPoint(0, -120), Qt::NoButton,
+                                      Qt::ShiftModifier, Qt::NoScrollPhase, false);
+                    QCoreApplication::sendEvent(window, &wheel);
+                    settle(60);
+                }
+                qInfo().noquote() << "ui-shot start: after Shift+wheel contentX" << flick->property("contentX").toDouble()
+                                  << "contentY" << flick->property("contentY").toDouble();
+                save(window, QStringLiteral("start-scrolled"));
+                QWheelEvent plain(at, window->mapToGlobal(at), QPoint(), QPoint(0, -120), Qt::NoButton,
+                                  Qt::NoModifier, Qt::NoScrollPhase, false);
+                QCoreApplication::sendEvent(window, &plain);
+                settle(200);
+                qInfo().noquote() << "ui-shot start: after plain wheel contentX" << flick->property("contentX").toDouble()
+                                  << "contentY" << flick->property("contentY").toDouble();
+            }
+        }
+        // TEST-ONLY END
         backend.createDeck(0, 1920, 1080, 0);
     }
     // TEST-ONLY BEGIN: offscreen --ui-shot steps; history/tools/make-upstream.py leaves this out
