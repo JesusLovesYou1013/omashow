@@ -24,6 +24,7 @@
 #include <QSaveFile>
 
 #include "io/zip.h"
+#include "io/deckfeatures.h"
 
 namespace {
 
@@ -375,6 +376,9 @@ QByteArray Bundle::toBytes(const Document &document, const QByteArray &recoveryM
     for (const auto &slide : document.slides) collect(slide.objects);
     for (auto it=assets.cbegin();it!=assets.cend();++it)
         entries.append({"assets/"+it.key(),it.value(),false});
+    // Only what OmaShow 0.2.0 reads stays in the JSON files; the rest goes to
+    // features.json, switched on by apps that know it (io/deckfeatures.h).
+    DeckFeatures::split(entries, document.unknownFeatures);
     return Zip::write(entries);
 }
 
@@ -390,10 +394,18 @@ Bundle::ReadResult Bundle::fromBytes(const QByteArray &raw) {
         result.error = QStringLiteral("The deck has no document.json.");
         return result;
     }
+    // The features this build knows (features.json) put back into the JSON
+    // files before they are read; the rest kept to be written back.
+    QByteArray unknownFeatures;
+    const auto merged = DeckFeatures::merge(reader, &unknownFeatures);
+    const auto jsonOf = [&reader, &merged](const QString &name) {
+        const auto it = merged.constFind(name);
+        return it != merged.cend() ? *it : reader.read(name);
+    };
 
     QJsonParseError parseError;
     const QJsonDocument manifestDocument =
-        QJsonDocument::fromJson(reader.read(QStringLiteral("document.json")), &parseError);
+        QJsonDocument::fromJson(jsonOf(QStringLiteral("document.json")), &parseError);
     if (parseError.error != QJsonParseError::NoError || !manifestDocument.isObject()) {
         result.error = QStringLiteral("The deck's manifest is damaged.");
         return result;
@@ -449,9 +461,9 @@ Bundle::ReadResult Bundle::fromBytes(const QByteArray &raw) {
         result.error=QStringLiteral("The deck has invalid dimensions."); return result;
     }
     if (version >= 2) {
-        auto readJson = [&reader](const QString &member, QJsonObject *out) {
+        auto readJson = [&jsonOf](const QString &member, QJsonObject *out) {
             QJsonParseError error;
-            const auto doc = QJsonDocument::fromJson(reader.read(member), &error);
+            const auto doc = QJsonDocument::fromJson(jsonOf(member), &error);
             if (error.error != QJsonParseError::NoError || !doc.isObject()) return false;
             *out = doc.object(); return true;
         };
@@ -532,7 +544,7 @@ Bundle::ReadResult Bundle::fromBytes(const QByteArray &raw) {
             return result;
         }
         bool ok = false;
-        const Slide slide = slideFromJson(reader.read(member), &ok);
+        const Slide slide = slideFromJson(jsonOf(member), &ok);
         if (!ok) {
             result.error = QStringLiteral("Slide %1 is damaged.").arg(id);
             return result;
@@ -591,7 +603,7 @@ Bundle::ReadResult Bundle::fromBytes(const QByteArray &raw) {
     // that is not there is a damaged deck, not something to drop quietly.
     if (version >= 13 && reader.contains("review.json")) {
         QJsonParseError error;
-        const auto parsed = QJsonDocument::fromJson(reader.read("review.json"), &error);
+        const auto parsed = QJsonDocument::fromJson(jsonOf("review.json"), &error);
         if (error.error != QJsonParseError::NoError || !parsed.isObject()) {
             result.error = QStringLiteral("The deck's review notes are damaged."); return result;
         }
@@ -678,7 +690,7 @@ Bundle::ReadResult Bundle::fromBytes(const QByteArray &raw) {
         return true;
     };
     if(reader.names().contains("styles.json")) {
-        QJsonParseError error; const auto json=QJsonDocument::fromJson(reader.read("styles.json"),&error);
+        QJsonParseError error; const auto json=QJsonDocument::fromJson(jsonOf("styles.json"),&error);
         if(error.error!=QJsonParseError::NoError) { result.error="Invalid object styles."; return result; }
         // Format 18 and earlier wrote a bare array of object styles; 19 keeps
         // object and text styles side by side.
@@ -726,6 +738,7 @@ Bundle::ReadResult Bundle::fromBytes(const QByteArray &raw) {
             mediaCues.insert(o->id);
         }
     }
+    document.unknownFeatures = unknownFeatures;
     result.document = document;
     result.ok = true;
     return result;

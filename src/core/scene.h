@@ -285,4 +285,9 @@ struct Document {
     // it, and how long that takes.
     int transition = 3;   // Presentation::Morph
     qreal transitionDuration = 0.9;
+
+    // Features a newer OmaShow wrote that this build doesn't know (from the
+    // deck's features.json, io/deckfeatures.h), kept to be written back as
+    // they were. A JSON array; empty when there are none.
+    QByteArray unknownFeatures;
 };

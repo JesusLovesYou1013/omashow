@@ -185,3 +185,5 @@ HEADERS += src/core/fonts.h
 SOURCES += src/core/fonts.cpp
 HEADERS += src/core/fontswap.h
 SOURCES += src/core/fontswap.cpp
+HEADERS += src/io/deckfeatures.h
+SOURCES += src/io/deckfeatures.cpp
