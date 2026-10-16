@@ -36,17 +36,23 @@
 namespace DeckFeatures {
 
 // Rewrites the JSON entries to the base deck and adds features.json when
-// anything was left out (plus `passthrough`: entries this build didn't know
-// when the deck was opened, a JSON array).
+// anything was left out (plus `passthrough`: what this build didn't know when
+// the deck was opened, as merge() gave it). Each feature is listed with a
+// readable name.
 void split(QVector<Zip::Entry> &entries, const QByteArray &passthrough);
 
 // The JSON files of an opened deck with the features this build knows put
 // back: name -> bytes, only for files that changed. `passthrough` receives the
-// entries this build didn't know (a JSON array, empty when none). A missing or
-// damaged features.json changes nothing: the base deck opens as it is.
+// entries this build didn't know, with their names ({"entries", "names"}; kept
+// in Document::unknownFeatures), empty when none. A missing or damaged
+// features.json changes nothing: the base deck opens as it is.
 QHash<QString, QByteArray> merge(const Zip::Reader &reader, QByteArray *passthrough);
 
 // The feature names this build switches on.
 QStringList known();
+
+// The readable names of the features a deck uses that this build doesn't
+// know (`passthrough` as merge() gave it), for telling the person.
+QStringList unknownNames(const QByteArray &passthrough);
 
 } // namespace DeckFeatures
