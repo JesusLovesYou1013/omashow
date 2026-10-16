@@ -636,6 +636,14 @@ struct Writer {
         if (!qFuzzyIsNull(o.letterSpacing)) x.attr("spc", qRound(o.letterSpacing * e / 12700.0 * 100));
         const QColor color = run && run->color.isValid() ? run->color : o.textColor;
         writeSolidFill(x, color, o.opacity);
+        // Glow around the letters (after the fill, before the typeface, as the schema orders them).
+        if (o.textGlowRadius > 0 && o.textGlowColor.alpha() > 0) {
+            x.start("a:effectLst");
+            x.start("a:glow").attr("rad", qRound(o.textGlowRadius * e));
+            writeColor(x, o.textGlowColor, o.opacity);
+            x.end();
+            x.end();
+        }
         x.start("a:latin").attr("typeface", family).end();
         if (!linkRel.isEmpty()) {
             x.start("a:hlinkClick").attr("r:id", linkRel);

@@ -7,8 +7,12 @@
 #include <QTextDocument>
 #include <QTextList>
 #include <QCache>
+#include <QMutex>
 #include "core/fontswap.h"
 #include <QCryptographicHash>
+#include <climits>
+#include <QtMath>
+#include <QImage>
 #include "core/textruns.h"
 #include "render/mathlayout.h"
 #include "core/shape.h"
@@ -139,7 +143,7 @@ MathLayout::Rendered equation(const SceneObject &o, qreal size) {
     return MathLayout::build(o.text, fontFor(o, size), size, o.textAlign);
 }
 bool legacy(const SceneObject &o) {
-    return !maths(o) && !onPath(o) && o.origFont.isEmpty() && o.runs.isEmpty() && o.textAlign == 0 && o.verticalAlign == 1 && o.lineHeight == 100 &&
+    return !maths(o) && !onPath(o) && o.origFont.isEmpty() && o.textGlowRadius <= 0 && o.runs.isEmpty() && o.textAlign == 0 && o.verticalAlign == 1 && o.lineHeight == 100 &&
            o.paragraphSpacing == 0 && o.textIndent == 0 && o.listStyle == 0 && o.textFit == 0 &&
            o.tabStop == 0 && o.columns <= 1 && o.direction == 0;
 }
@@ -369,6 +373,101 @@ TextLayout::Metrics TextLayout::measure(const SceneObject &o) {
                                    dimensions.width() > o.rect.width() + .5);
     return m;
 }
+namespace {
+// Blurs a premultiplied image in place: three box blurs, close to a Gaussian
+// of this standard deviation (pixels).
+void blur(QImage &image, qreal sigma) {
+    if (sigma < 0.5) return;
+    const int w = image.width(), h = image.height();
+    const int box = qMax(1, int(std::sqrt(12.0 * sigma * sigma / 3 + 1)) | 1);   // odd
+    const int half = box / 2;
+    QVector<int> acc(4);
+    QVector<QRgb> line(qMax(w, h));
+    for (int pass = 0; pass < 3; ++pass) {
+        for (int y = 0; y < h; ++y) {   // across
+            auto *row = reinterpret_cast<QRgb *>(image.scanLine(y));
+            std::copy(row, row + w, line.begin());
+            int a = 0, r = 0, g = 0, b = 0;
+            for (int x = -half; x <= half; ++x) { const QRgb p = line[qBound(0, x, w - 1)]; a += qAlpha(p); r += qRed(p); g += qGreen(p); b += qBlue(p); }
+            for (int x = 0; x < w; ++x) {
+                row[x] = qRgba(r / box, g / box, b / box, a / box);
+                const QRgb out = line[qBound(0, x - half, w - 1)], in = line[qBound(0, x + half + 1, w - 1)];
+                a += qAlpha(in) - qAlpha(out); r += qRed(in) - qRed(out); g += qGreen(in) - qGreen(out); b += qBlue(in) - qBlue(out);
+            }
+        }
+        for (int x = 0; x < w; ++x) {   // down
+            for (int y = 0; y < h; ++y) line[y] = reinterpret_cast<const QRgb *>(image.constScanLine(y))[x];
+            int a = 0, r = 0, g = 0, b = 0;
+            for (int y = -half; y <= half; ++y) { const QRgb p = line[qBound(0, y, h - 1)]; a += qAlpha(p); r += qRed(p); g += qGreen(p); b += qBlue(p); }
+            for (int y = 0; y < h; ++y) {
+                reinterpret_cast<QRgb *>(image.scanLine(y))[x] = qRgba(r / box, g / box, b / box, a / box);
+                const QRgb out = line[qBound(0, y - half, h - 1)], in = line[qBound(0, y + half + 1, h - 1)];
+                a += qAlpha(in) - qAlpha(out); r += qRed(in) - qRed(out); g += qGreen(in) - qGreen(out); b += qBlue(in) - qBlue(out);
+            }
+        }
+    }
+}
+
+// The glow behind a box's words (PowerPoint's text glow): the letters in the
+// glow colour, spread and blurred out to the radius. Made at the size it is
+// drawn and kept, so a slide that doesn't change isn't blurred again.
+void paintGlow(QPainter &painter, const SceneObject &o, QTextDocument &doc,
+               const QAbstractTextDocumentLayout::PaintContext &context, const QPointF &origin, const QSizeF &area) {
+    // Shared by every thread that draws slides (screen, thumbnails, export).
+    static QMutex lock;
+    static QCache<QString, QImage> cache(48 * 1024 * 1024);   // bytes
+    const QTransform &t = painter.worldTransform();
+    qreal scale = std::sqrt(t.m11() * t.m11() + t.m12() * t.m12());
+    const qreal margin = o.textGlowRadius * 1.5;
+    QSizeF full(area.width() + 2 * margin, area.height() + 2 * margin);
+    // Never larger than the screen needs, never a huge picture for a huge zoom.
+    scale = qBound(0.05, scale, 4096.0 / qMax(1.0, qMax(full.width(), full.height())));
+    const QSize px(qMax(1, qCeil(full.width() * scale)), qMax(1, qCeil(full.height() * scale)));
+    const QString key = QStringLiteral("%1|%2|%3|%4|%5|%6|%7").arg(QString::number(quintptr(&doc)), QString::number(qHash(o.text)),
+        QString::number(px.width()), QString::number(px.height()), QString::number(o.textGlowRadius), o.textGlowColor.name(QColor::HexArgb),
+        QString::number(area.width()) + QLatin1Char('x') + QString::number(area.height()));
+    QImage glow;
+    {
+        QMutexLocker locked(&lock);
+        if (const QImage *kept = cache.object(key)) glow = *kept;   // shared, not copied
+    }
+    if (glow.isNull()) {
+        QImage image(px, QImage::Format_ARGB32_Premultiplied);
+        image.fill(Qt::transparent);
+        QPainter p(&image);
+        p.setRenderHint(QPainter::Antialiasing);
+        p.scale(scale, scale);
+        p.translate(margin, margin);
+        doc.documentLayout()->draw(&p, context);
+        p.resetTransform();
+        p.setCompositionMode(QPainter::CompositionMode_SourceIn);
+        QColor solid = o.textGlowColor;
+        solid.setAlpha(255);
+        p.fillRect(image.rect(), solid);
+        p.end();
+        // PowerPoint's glow reaches out to its radius and stays strong near
+        // the letters: a blur of a third of the radius, then doubled.
+        blur(image, o.textGlowRadius * scale / 3);
+        for (int y = 0; y < image.height(); ++y) {
+            auto *row = reinterpret_cast<QRgb *>(image.scanLine(y));
+            for (int x = 0; x < image.width(); ++x) {
+                const int a = qAlpha(row[x]);
+                if (!a) continue;
+                const int na = qMin(255, a * 2);
+                row[x] = qRgba(qMin(255, qRed(row[x]) * na / a), qMin(255, qGreen(row[x]) * na / a), qMin(255, qBlue(row[x]) * na / a), na);
+            }
+        }
+        glow = image;
+        QMutexLocker locked(&lock);
+        cache.insert(key, new QImage(image), int(qMin<qint64>(INT_MAX, qint64(image.sizeInBytes()))));
+    }
+    painter.save();
+    painter.setOpacity(painter.opacity() * o.textGlowColor.alphaF());
+    painter.drawImage(QRectF(origin - QPointF(margin, margin), full), glow);
+    painter.restore();
+}
+} // namespace
+
 void TextLayout::paint(QPainter &painter, const SceneObject &o) {
     if (onPath(o)) {
         const auto metrics = measure(o);
@@ -443,9 +542,13 @@ void TextLayout::paint(QPainter &painter, const SceneObject &o) {
     }
     const qreal spare = qMax(0.0, o.rect.height() - metrics.renderedHeight);
     const qreal dy = o.verticalAlign == 1 ? spare / 2 : o.verticalAlign == 2 ? spare : 0;
+    const QPointF origin = o.rect.topLeft() + QPointF(0, dy - FontSwap::verticalFix(o, metrics.effectiveSize).shift);
+    // The glow first, under the words and not cut off at the box.
+    if (o.textGlowRadius > 0 && o.textGlowColor.alpha() > 0)
+        paintGlow(painter, o, *doc, context, origin, QSizeF(o.rect.width(), qMax(metrics.renderedHeight, o.rect.height())));
     painter.save();
     if (o.textFit < 2 && !fitIsKept(o)) painter.setClipRect(o.rect, Qt::IntersectClip);   // spill and grow draw it all
-    painter.translate(o.rect.topLeft() + QPointF(0, dy - FontSwap::verticalFix(o, metrics.effectiveSize).shift));
+    painter.translate(origin);
     doc->documentLayout()->draw(&painter, context);
     painter.restore();
 }

@@ -485,6 +485,9 @@ struct RunLook {
     bool caps = false;
     qreal spc = 0;         // hundredths of a point
     QString lang, link;
+    // Text glow (effectLst/glow): radius in EMU, -1 unknown, 0 none.
+    qreal glowRad = -1;
+    QColor glowColor;
 };
 
 // Bold on top of any face is bold; otherwise a weight-named family's weight.
@@ -557,6 +560,14 @@ void applyRPr(RunLook &run, const Node *rPr, const TextContext &ctx) {
     if (const Node *fill = rPr->child(QStringLiteral("solidFill"))) {
         const auto c = colorIn(fill, *ctx.color);
         if (c.isValid()) run.color = c;
+    }
+    // An effect list replaces the inherited one: no glow in it is no glow.
+    if (const Node *effects = rPr->child(QStringLiteral("effectLst"))) {
+        run.glowRad = 0;
+        if (const Node *glow = effects->child(QStringLiteral("glow"))) {
+            const auto c = colorIn(glow, *ctx.color);
+            if (c.isValid()) { run.glowRad = glow->attr(QStringLiteral("rad")).toDouble(); run.glowColor = c; }
+        }
     }
     if (const Node *latin = rPr->child(QStringLiteral("latin"))) {
         const auto face = mapFont(latin->attr(QStringLiteral("typeface")), ctx.color->theme);
@@ -1006,6 +1017,10 @@ struct Reader {
         o.fontFamily = !b.family.isEmpty() ? b.family : !fallback.family.isEmpty() ? fallback.family : QStringLiteral("Inter");
         o.uppercase = b.caps;
         o.letterSpacing = b.spc / 100.0 * u.pt;
+        if (b.glowRad > 0 && b.glowColor.isValid()) {
+            o.textGlowRadius = b.glowRad / 12700.0 * u.pt;   // EMU → points → slide units
+            o.textGlowColor = b.glowColor;
+        }
         if (!b.lang.isEmpty()) { o.language = b.lang; o.language.replace(QLatin1Char('-'), QLatin1Char('_')); }
         o.textAlign = text.para.algn < 0 ? 0 : text.para.algn;
         o.verticalAlign = text.anchor;
