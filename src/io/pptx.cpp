@@ -16,6 +16,11 @@
 #include "render/textlayout.h"
 
 #include <QFontDatabase>
+#include <algorithm>
+#include <cmath>
+#include <QImage>
+#include <QPainter>
+#include <QBuffer>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -249,6 +254,10 @@ struct Theme {
     QString name;
     QHash<QString, QColor> colors;   // dk1, lt1, dk2, lt2, accent1…6, hlink, folHlink
     QString major, minor;            // latin typefaces
+    // Its background styles (bgFillStyleLst: a bgRef idx 1001 is the first),
+    // and its part, for the pictures they name.
+    QString path;
+    const Node *backgroundStyles = nullptr;
 };
 
 QColor plainColor(const Node *clr) {
@@ -274,6 +283,8 @@ Theme readTheme(const Package &pkg, const QString &path) {
     const Node *root = pkg.part(path);
     if (!root) return theme;
     theme.name = root->attr(QStringLiteral("name"));
+    theme.path = path;
+    theme.backgroundStyles = root->path({"themeElements", "fmtScheme", "bgFillStyleLst"});
     if (const Node *scheme = root->path({"themeElements", "clrScheme"})) {
         for (const auto &entry : scheme->kids) {
             for (const auto &clr : entry.kids) {
@@ -327,6 +338,11 @@ QColor readColor(const Node *clr, const ColorContext &ctx) {
                                      qBound(0.0, 1 - (1 - color.blueF()) * v, 1.0), color.alphaF());
         } else if (mod.name == QLatin1String("shade")) {
             color = QColor::fromRgbF(color.redF() * v, color.greenF() * v, color.blueF() * v, color.alphaF());
+        } else if (mod.name == QLatin1String("satMod") || mod.name == QLatin1String("satOff")) {
+            float h, s, l, a;
+            color.getHslF(&h, &s, &l, &a);
+            s = mod.name == QLatin1String("satMod") ? s * float(v) : s + float(v);
+            color = QColor::fromHslF(h < 0 ? 0 : h, qBound(0.0f, s, 1.0f), l, a);
         }
     }
     return color;
@@ -1169,7 +1185,7 @@ struct Reader {
     // ---- pictures and films
 
     bool decodePicture(SceneObject &o, const QString &mediaPath, int slideNumber) {
-        const auto bytes = pkg.bytes(mediaPath);
+        const auto bytes = generated.contains(mediaPath) ? generated.value(mediaPath) : pkg.bytes(mediaPath);
         const auto suffix = QFileInfo(mediaPath).suffix().toLower();
         if (bytes.isEmpty()) {
             warnings.add(QStringLiteral("A picture's file was missing from the deck"), slideNumber);
@@ -1722,9 +1738,123 @@ struct Reader {
         }
         if (const Node *ref = bg->child(QStringLiteral("bgRef"))) {
             const auto c = colorIn(ref, color);
+            // A theme background style: its picture or gradient becomes a
+            // picture, drawn in this background's colour.
+            const QString made = themeBackground(ref, color, c);
+            if (!made.isEmpty() && picturePath) { *picturePath = made; return QColor(); }
             if (c.isValid()) return c;
         }
         return QColor();
+    }
+
+    // Pictures made while reading (theme backgrounds), by the path they are
+    // known under; decodePicture takes them like any part.
+    mutable QHash<QString, QByteArray> generated;
+
+    // bgRef idx 1001… is the theme's background style 1…; "phClr" in it is
+    // the bgRef's own colour. A solid style is a colour (empty here); a
+    // picture style is the picture with its colour effects (duotone,
+    // greyscale, transparency) applied; a gradient style is drawn. Made once
+    // per theme, style and colour.
+    QString themeBackground(const Node *ref, const ColorContext &color, const QColor &phColor) const {
+        const Theme *theme = color.theme;
+        const int idx = ref->attr(QStringLiteral("idx")).toInt();
+        if (!theme || !theme->backgroundStyles || idx < 1001) return {};
+        QVector<const Node *> styles;
+        for (const auto &k : theme->backgroundStyles->kids) styles.append(&k);
+        if (idx - 1001 >= styles.size()) return {};
+        const Node *style = styles.at(idx - 1001);
+        if (style->name != QLatin1String("blipFill") && style->name != QLatin1String("gradFill")) return {};
+        const bool photo = style->name == QLatin1String("blipFill");
+        const QString key = QStringLiteral("generated/theme-background-%1-%2-%3.%4")
+                                .arg(QString::number(qHash(theme->path)), QString::number(idx), phColor.name(QColor::HexArgb).mid(1),
+                                     photo ? QStringLiteral("jpg") : QStringLiteral("png"));
+        if (generated.contains(key)) return key;
+        ColorContext ph = color;
+        ph.phColor = phColor;
+        const QSize size(qRound(doc.size.width()), qRound(doc.size.height()));
+        QImage out;
+        if (style->name == QLatin1String("blipFill")) {
+            const Node *blip = style->child(QStringLiteral("blip"));
+            const QString rid = blip ? blip->attr(QStringLiteral("r:embed")) : QString();
+            const QByteArray bytes = rid.isEmpty() ? QByteArray() : pkg.bytes(pkg.target(theme->path, rid));
+            QImage picture = QImage::fromData(bytes);
+            if (picture.isNull()) return {};
+            picture = picture.convertToFormat(QImage::Format_ARGB32);
+            for (const auto &effect : blip->kids) {
+                if (effect.name == QLatin1String("duotone")) {
+                    // Each pixel's brightness picks between the two colours.
+                    QVector<QColor> two;
+                    for (const auto &c : effect.kids) { const auto col = readColor(&c, ph); if (col.isValid()) two.append(col); }
+                    if (two.size() != 2) continue;
+                    for (int y = 0; y < picture.height(); ++y) {
+                        auto *line = reinterpret_cast<QRgb *>(picture.scanLine(y));
+                        for (int x = 0; x < picture.width(); ++x) {
+                            const QRgb p = line[x];
+                            const qreal t = (0.299 * qRed(p) + 0.587 * qGreen(p) + 0.114 * qBlue(p)) / 255.0;
+                            line[x] = qRgba(qRound(two[0].red() + (two[1].red() - two[0].red()) * t),
+                                            qRound(two[0].green() + (two[1].green() - two[0].green()) * t),
+                                            qRound(two[0].blue() + (two[1].blue() - two[0].blue()) * t), qAlpha(p));
+                        }
+                    }
+                } else if (effect.name == QLatin1String("grayscl")) {
+                    for (int y = 0; y < picture.height(); ++y) {
+                        auto *line = reinterpret_cast<QRgb *>(picture.scanLine(y));
+                        for (int x = 0; x < picture.width(); ++x) { const int g = qGray(line[x]); line[x] = qRgba(g, g, g, qAlpha(line[x])); }
+                    }
+                } else if (effect.name == QLatin1String("alphaModFix")) {
+                    const qreal amt = effect.attr(QStringLiteral("amt"), QStringLiteral("100000")).toDouble() / 100000.0;
+                    for (int y = 0; y < picture.height(); ++y) {
+                        auto *line = reinterpret_cast<QRgb *>(picture.scanLine(y));
+                        for (int x = 0; x < picture.width(); ++x) line[x] = qRgba(qRed(line[x]), qGreen(line[x]), qBlue(line[x]), qRound(qAlpha(line[x]) * amt));
+                    }
+                }
+            }
+            // Stretched to the slide (the only mode theme backgrounds use in practice).
+            out = picture.scaled(size, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+            // Under the picture: the background colour, for any transparent part.
+            QImage base(size, QImage::Format_ARGB32);
+            base.fill(phColor.isValid() ? phColor : QColor(Qt::white));
+            QPainter painter(&base);
+            painter.drawImage(0, 0, out);
+            painter.end();
+            out = base;
+        } else {
+            QGradientStops stops;
+            if (const Node *list = style->child(QStringLiteral("gsLst")))
+                for (const auto &gs : list->kids) stops.append({gs.attr(QStringLiteral("pos")).toDouble() / 100000.0, colorIn(&gs, ph)});
+            if (stops.size() < 2) return {};
+            std::sort(stops.begin(), stops.end(), [](const auto &a, const auto &b) { return a.first < b.first; });
+            out = QImage(size, QImage::Format_ARGB32);
+            out.fill(Qt::transparent);
+            QPainter painter(&out);
+            if (const Node *path = style->child(QStringLiteral("path"))) {
+                // A circle or rectangle from its fillToRect centre outwards.
+                const Node *to = path->child(QStringLiteral("fillToRect"));
+                const qreal l = to ? to->attr(QStringLiteral("l")).toDouble() / 100000.0 : 0.5, t = to ? to->attr(QStringLiteral("t")).toDouble() / 100000.0 : 0.5;
+                const qreal r = to ? to->attr(QStringLiteral("r")).toDouble() / 100000.0 : 0.5, b = to ? to->attr(QStringLiteral("b")).toDouble() / 100000.0 : 0.5;
+                const QPointF centre(size.width() * (l + (1 - l - r) / 2), size.height() * (t + (1 - t - b) / 2));
+                QRadialGradient g(centre, std::hypot(size.width(), size.height()) / 2);
+                g.setStops(stops);
+                painter.fillRect(out.rect(), g);
+            } else {
+                const qreal angle = (style->child(QStringLiteral("lin")) ? style->child(QStringLiteral("lin"))->attr(QStringLiteral("ang")).toDouble() : 0) / 60000.0;
+                const qreal rad = qDegreesToRadians(angle);
+                const QPointF c(size.width() / 2.0, size.height() / 2.0);
+                const qreal half = (std::abs(std::cos(rad)) * size.width() + std::abs(std::sin(rad)) * size.height()) / 2;
+                QLinearGradient g(c - QPointF(std::cos(rad), std::sin(rad)) * half, c + QPointF(std::cos(rad), std::sin(rad)) * half);
+                g.setStops(stops);
+                painter.fillRect(out.rect(), g);
+            }
+            painter.end();
+        }
+        QByteArray png;
+        QBuffer buffer(&png);
+        buffer.open(QIODevice::WriteOnly);
+        // A photo stays a photo-sized file; a gradient keeps its smoothness.
+        out.save(&buffer, photo ? "JPG" : "PNG", photo ? 92 : -1);
+        generated.insert(key, png);
+        return key;
     }
 
     // ---- masters and layouts
