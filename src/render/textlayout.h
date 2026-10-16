@@ -8,5 +8,8 @@ struct Metrics {
 };
 QString editorHtml(const SceneObject &object);
 Metrics measure(const SceneObject &object);
+// What a kept shrink-to-fit box (SceneObject::fitKept) is checked against: its
+// words, its box and its size before any font swap factor.
+QString keptFitKey(const SceneObject &object);
 void paint(QPainter &painter, const SceneObject &object);
 } // namespace TextLayout

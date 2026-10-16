@@ -13,6 +13,7 @@
 #include "core/table.h"
 #include "core/textruns.h"
 #include "io/zip.h"
+#include "render/textlayout.h"
 
 #include <QFontDatabase>
 #include <QDir>
@@ -994,6 +995,9 @@ struct Reader {
         o.listStart = text.listStart;
         // No autofit in the file: PowerPoint draws the text past the box.
         o.textFit = text.shrink ? 1 : text.grow ? 3 : 2;
+        // PowerPoint's own shrink is kept until the box is changed (fingerprinted
+        // once the deck is read: SceneObject::fitKept).
+        if (text.shrink) o.fitKept = QStringLiteral("*");
         o.fillStyle = 5;
         o.strokeWidth = 0;
         o.fillToken.clear(); o.textColorToken.clear(); o.fontToken.clear();
@@ -2438,6 +2442,12 @@ Result read(const QByteArray &raw) {
     QString error;
     if (!reader.run(&error)) { result.error = error; return result; }
     result.document = reader.doc;
+    const auto keep = [](QVector<SceneObject> &objects) {
+        for (auto &o : objects) if (o.fitKept == QLatin1String("*")) o.fitKept = TextLayout::keptFitKey(o);
+    };
+    for (auto &slide : result.document.slides) keep(slide.objects);
+    for (auto &master : result.document.masters) keep(master.objects);
+    for (auto &layout : result.document.layouts) keep(layout.placeholders);
     result.warnings = reader.warnings.lines();
     result.ok = true;
     return result;

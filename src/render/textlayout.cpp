@@ -8,6 +8,7 @@
 #include <QTextList>
 #include <QCache>
 #include "core/fontswap.h"
+#include <QCryptographicHash>
 #include "core/textruns.h"
 #include "render/mathlayout.h"
 #include "core/shape.h"
@@ -318,6 +319,19 @@ QSizeF contentSize(const SceneObject &o, qreal size) {
     return layout(o, size)->documentLayout()->documentSize();
 }
 } // namespace
+QString TextLayout::keptFitKey(const SceneObject &o) {
+    QByteArray key = o.text.toUtf8();
+    key += '|' + QByteArray::number(qRound(o.rect.width())) + 'x' + QByteArray::number(qRound(o.rect.height()));
+    key += '|' + QByteArray::number(qRound(o.fontSize / (o.fontScale > 0 ? o.fontScale : 1) * 10));
+    for (const auto &run : o.runs)
+        key += '|' + QByteArray::number(qRound(run.fontSize / (run.fontScale > 0 ? run.fontScale : 1) * 10));
+    return QString::fromLatin1(QCryptographicHash::hash(key, QCryptographicHash::Sha1).toHex().left(16));
+}
+
+static bool fitIsKept(const SceneObject &o) {
+    return o.textFit == 1 && !o.fitKept.isEmpty() && o.fitKept == TextLayout::keptFitKey(o);
+}
+
 TextLayout::Metrics TextLayout::measure(const SceneObject &o) {
     Metrics m;
     if (o.type != ObjectType::Text)
@@ -333,7 +347,7 @@ TextLayout::Metrics TextLayout::measure(const SceneObject &o) {
         return room.height() - FontSwap::verticalFix(o, size).shift <= o.rect.height() &&
                (!maths(o) || room.width() <= o.rect.width());
     };
-    if (o.textFit == 1 && !fits(o.fontSize)) {
+    if (o.textFit == 1 && !fitIsKept(o) && !fits(o.fontSize)) {
         int lo = 4, hi = qMax(4, int(o.fontSize));
         while (lo < hi) {
             int mid = (lo + hi + 1) / 2;
@@ -350,8 +364,9 @@ TextLayout::Metrics TextLayout::measure(const SceneObject &o) {
     // FontSwap::verticalFix) ends that much higher too.
     if (const auto fix = FontSwap::verticalFix(o, m.effectiveSize); fix.shift != 0)
         m.renderedHeight = qMax<qreal>(0, m.renderedHeight - fix.shift);
-    m.overflow = m.renderedHeight > o.rect.height() + .5 ||
-                 dimensions.width() > o.rect.width() + .5;
+    // A kept PowerPoint size is PowerPoint's own fit: not a warning.
+    m.overflow = !fitIsKept(o) && (m.renderedHeight > o.rect.height() + .5 ||
+                                   dimensions.width() > o.rect.width() + .5);
     return m;
 }
 void TextLayout::paint(QPainter &painter, const SceneObject &o) {
@@ -390,7 +405,7 @@ void TextLayout::paint(QPainter &painter, const SceneObject &o) {
         const qreal room = qMax(0.0, o.rect.width() - rendered.size.width());
         const qreal dx = o.textAlign == 1 ? room / 2 : o.textAlign == 2 ? room : 0;
         painter.save();
-        if (o.textFit < 2) painter.setClipRect(o.rect, Qt::IntersectClip);   // spill and grow draw it all
+        if (o.textFit < 2 && !fitIsKept(o)) painter.setClipRect(o.rect, Qt::IntersectClip);   // spill and grow draw it all
         MathLayout::paint(painter, rendered, o.rect.topLeft() + QPointF(dx, dy),
                           fontFor(o, metrics.effectiveSize), o.textColor);
         painter.restore();
@@ -414,7 +429,7 @@ void TextLayout::paint(QPainter &painter, const SceneObject &o) {
         const qreal gap = columnGap(o, metrics.effectiveSize);
         const qreal height = qMax(1.0, o.rect.height());
         painter.save();
-        if (o.textFit < 2) painter.setClipRect(o.rect, Qt::IntersectClip);   // spill and grow draw it all
+        if (o.textFit < 2 && !fitIsKept(o)) painter.setClipRect(o.rect, Qt::IntersectClip);   // spill and grow draw it all
         for (int column = 0; column < qMin(columns, qMax(1, doc->pageCount())); ++column) {
             painter.save();
             painter.translate(o.rect.topLeft() + QPointF(column * (width + gap), -FontSwap::verticalFix(o, metrics.effectiveSize).shift));
@@ -429,7 +444,7 @@ void TextLayout::paint(QPainter &painter, const SceneObject &o) {
     const qreal spare = qMax(0.0, o.rect.height() - metrics.renderedHeight);
     const qreal dy = o.verticalAlign == 1 ? spare / 2 : o.verticalAlign == 2 ? spare : 0;
     painter.save();
-    if (o.textFit < 2) painter.setClipRect(o.rect, Qt::IntersectClip);   // spill and grow draw it all
+    if (o.textFit < 2 && !fitIsKept(o)) painter.setClipRect(o.rect, Qt::IntersectClip);   // spill and grow draw it all
     painter.translate(o.rect.topLeft() + QPointF(0, dy - FontSwap::verticalFix(o, metrics.effectiveSize).shift));
     doc->documentLayout()->draw(&painter, context);
     painter.restore();
