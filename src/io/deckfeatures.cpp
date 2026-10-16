@@ -87,6 +87,23 @@ const QString kTiming = QStringLiteral("animation.timing");
 const QString kPptxAnimation = QStringLiteral("pptx.animation");
 const QString kPptxInteractive = QStringLiteral("pptx.interactive");
 
+// What each feature is called, written into every features.json so an app that
+// doesn't know a feature can still name it (e.g. to say what a deck uses that
+// it can't show). A feature from a newer build keeps the name it came with.
+QString readableName(const QString &feature) {
+    static const QHash<QString, QString> names{
+        {kStrike, QStringLiteral("Strikethrough")},
+        {kFitModes, QStringLiteral("Text fit: dynamic size, spill over and cut off")},
+        {kFontSwap, QStringLiteral("Office fonts drawn with free look-alikes (named again when saved as PowerPoint)")},
+        {kEffects, QStringLiteral("Newer animation effects (Appear, Fly, Float, Zoom, Wipe, Grow, Shrink and more)")},
+        {kTiming, QStringLiteral("Detailed animation timing (smooth start and end, repeat, rewind, motion paths, by paragraph)")},
+        {kPptxAnimation, QStringLiteral("PowerPoint animation details kept for saving back to PowerPoint")},
+        {kPptxInteractive, QStringLiteral("PowerPoint click-triggered animations kept for saving back to PowerPoint")}};
+    if (names.contains(feature)) return names.value(feature);
+    if (feature.startsWith(QLatin1String("key:"))) return QStringLiteral("The setting \"%1\"").arg(feature.section(QLatin1Char('.'), -1));
+    return feature;
+}
+
 QString featureFor(const QString &part, const QString &key) {
     static const Keys swap{"origFont", "origFontSize", "fontScale", "origWeight", "fontOrigins", "fontFallbacks"};
     static const Keys timing{"accel", "decel", "repeat", "autoReverse", "rewind", "motionPath", "rangeFrom",
@@ -364,6 +381,18 @@ bool knows(const QString &feature) {
 
 } // namespace
 
+QStringList DeckFeatures::unknownNames(const QByteArray &passthrough) {
+    const auto kept = QJsonDocument::fromJson(passthrough).object();
+    QStringList out;
+    for (const auto &e : kept.value("entries").toArray()) {
+        const QString feature = e.toObject().value("feature").toString();
+        const QString name = kept.value("names").toObject().value(feature).toString();
+        const QString shown = name.isEmpty() ? readableName(feature) : name;
+        if (!out.contains(shown)) out.append(shown);
+    }
+    return out;
+}
+
 QStringList DeckFeatures::known() {
     return {kStrike, kFitModes, kFontSwap, kEffects, kTiming, kPptxAnimation, kPptxInteractive};
 }
@@ -382,11 +411,18 @@ void DeckFeatures::split(QVector<Zip::Entry> &entries, const QByteArray &passthr
                                                                                                : QJsonDocument::Indented);
         for (const auto &e : std::as_const(split.entries)) all.append(e);
     }
-    // Kept from opening: what this build didn't know, as it was.
-    const auto kept = QJsonDocument::fromJson(passthrough);
-    if (kept.isArray()) for (const auto &e : kept.array()) all.append(e);
+    // Kept from opening: what this build didn't know, as it was, with its names.
+    const auto kept = QJsonDocument::fromJson(passthrough).object();
+    for (const auto &e : kept.value("entries").toArray()) all.append(e);
     if (all.isEmpty()) return;
+    QJsonObject names;
+    for (const auto &e : std::as_const(all)) {
+        const QString feature = e.toObject().value("feature").toString();
+        const QString given = kept.value("names").toObject().value(feature).toString();
+        names.insert(feature, knows(feature) || given.isEmpty() ? readableName(feature) : given);
+    }
     const QJsonObject file{{"format", kFormat},
+                           {"names", names},
                            {"about", "Features this deck uses that OmaShow 0.1.0 doesn't read. Each entry says which "
                                      "feature, which file and element it belongs to, the exact values, and a "
                                      "fingerprint of that element as written; an app applies the ones it knows."},
@@ -417,7 +453,15 @@ QHash<QString, QByteArray> DeckFeatures::merge(const Zip::Reader &reader, QByteA
         if (!knows(feature)) { unknown.append(e); continue; }
         byFile[file].append(e);
     }
-    if (passthrough && !unknown.isEmpty()) *passthrough = QJsonDocument(unknown).toJson(QJsonDocument::Compact);
+    if (passthrough && !unknown.isEmpty()) {
+        QJsonObject names;
+        for (const auto &e : std::as_const(unknown)) {
+            const QString feature = e.toObject().value("feature").toString();
+            const QString name = root.value("names").toObject().value(feature).toString();
+            if (!name.isEmpty()) names.insert(feature, name.left(200));
+        }
+        *passthrough = QJsonDocument(QJsonObject{{"entries", unknown}, {"names", names}}).toJson(QJsonDocument::Compact);
+    }
 
     for (auto it = byFile.cbegin(); it != byFile.cend(); ++it) {
         const auto parsed = QJsonDocument::fromJson(reader.read(it.key()));
