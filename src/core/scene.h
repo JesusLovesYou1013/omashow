@@ -166,6 +166,11 @@ struct SceneObject {
     // its own size, not shrunk again; any edit to the words, the box or the
     // size ends that and shrinking goes on as usual. Empty: always shrink.
     QString fitKept;
+    // A soft glow around the letters (PowerPoint's text glow): how far it
+    // reaches, in slide units, and its colour with its own transparency.
+    // 0: none. Drawn behind the text and not cut off at the box.
+    qreal textGlowRadius = 0;
+    QColor textGlowColor = QColor(255, 255, 255, 191);
     QString fillToken, textColorToken, fontToken;
     // Stretches of this text that differ from the box, in authored order.
     QVector<TextRun> runs;
