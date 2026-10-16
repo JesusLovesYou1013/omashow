@@ -502,6 +502,7 @@ Rectangle {
             FieldRow {
                 label: qsTr("Font")
                 ComboBox {
+                    id: fontBox
                     objectName: "textFont"
                     Layout.fillWidth: true
                     editable: true
@@ -509,7 +510,18 @@ Rectangle {
                     // (not Regular / Bold — those are the plain name and the B toggle).
                     model: backend.fontPickerEntries()
                     textRole: "label"
+                    // An editable box shows its selected row, not displayText: select
+                    // the row of the font the text really uses. With no such row (or
+                    // several boxes in different fonts) it shows that name itself
+                    // rather than the first row of the list.
+                    currentIndex: find(root.fontPickerLabel, Qt.MatchFixedString)
                     displayText: root.fontPickerLabel
+                    Binding {
+                        target: fontBox; property: "editText"
+                        value: root.fontPickerLabel
+                        when: fontBox.currentIndex < 0 && !fontBox.activeFocus
+                        restoreMode: Binding.RestoreNone
+                    }
                     onActivated: (index) => {
                         const entry = model[index]
                         if (entry) backend.setSelectedFontFace(entry.family, entry.weight)
