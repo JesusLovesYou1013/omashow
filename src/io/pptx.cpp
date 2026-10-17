@@ -503,6 +503,7 @@ struct ParaLook {
     int startAt = 1;
     qreal lnSpc = 0;       // percent
     qreal spcBef = -1;     // points
+    qreal defTabSz = -1;   // EMU between default tab stops; -1 not set
     int lvl = 0;
 };
 
@@ -611,6 +612,7 @@ void applyPPr(ParaLook &para, RunLook &run, const Node *pPr, const TextContext &
     else if (algn == QLatin1String("just") || algn == QLatin1String("dist")) para.algn = 3;
     if (const Node *ln = pPr->path({"lnSpc", "spcPct"})) para.lnSpc = ln->attr(QStringLiteral("val")).toDouble() / 1000.0;
     if (const Node *bef = pPr->path({"spcBef", "spcPts"})) para.spcBef = bef->attr(QStringLiteral("val")).toDouble() / 100.0;
+    if (pPr->has(QStringLiteral("defTabSz"))) para.defTabSz = pPr->attr(QStringLiteral("defTabSz")).toDouble();
     if (pPr->child(QStringLiteral("buNone"))) para.bullet = 0;
     else if (pPr->child(QStringLiteral("buChar")) || pPr->child(QStringLiteral("buBlip"))) para.bullet = 1;
     else if (const Node *num = pPr->child(QStringLiteral("buAutoNum"))) {
@@ -1049,6 +1051,9 @@ struct Reader {
         o.verticalAlign = text.anchor;
         o.lineHeight = text.para.lnSpc > 0 ? text.para.lnSpc : 100;
         o.paragraphSpacing = text.para.spcBef > 0 ? text.para.spcBef * u.pt : 0;
+        // Tabs step to PowerPoint's default stops (1 inch unless the deck
+        // says otherwise), not our own default of four times the text size.
+        if (o.text.contains(QLatin1Char('\t'))) o.tabStop = (text.para.defTabSz > 0 ? text.para.defTabSz : 914400) * u.k;
         o.listStyle = text.listStyle;
         o.listStart = text.listStart;
         // No autofit in the file: PowerPoint draws the text past the box.

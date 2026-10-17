@@ -705,6 +705,7 @@ struct Writer {
                 x.attr("marL", qint64(342900) * (level + 1)).attr("indent", -342900).attr("lvl", qMin(8, level));
             }
             x.attr("algn", o.textAlign == 1 ? "ctr" : o.textAlign == 2 ? "r" : o.textAlign == 3 ? "just" : "l");
+            if (o.tabStop > 0) x.attr("defTabSz", qRound64(o.tabStop * e));
             if (!qFuzzyCompare(o.lineHeight, 100.0) && o.lineHeight > 0) { x.start("a:lnSpc"); x.start("a:spcPct").attr("val", qRound(o.lineHeight * 1000)).end(); x.end(); }
             if (o.paragraphSpacing > 0) { x.start("a:spcBef"); x.start("a:spcPts").attr("val", qRound(o.paragraphSpacing * e / 12700.0 * 100)).end(); x.end(); }
             switch (o.listStyle) {
