@@ -225,7 +225,7 @@ void Backend::pasteSpecial(int mode) {
         const QSize pixels(qBound(1, qRound(bounds.width()), 8192),
                            qBound(1, qRound(bounds.height()), 8192));
         const auto image = SceneRenderer::render(shifted, bounds.size(), pixels,
-                                                 QColor(Qt::transparent));
+                                                 QColor(Qt::transparent), fragment.size.height());
         SceneObject picture;
         QString error;
         if (!ImageAsset::fromImage(picture, image, &error)) { emit failed(error); return; }

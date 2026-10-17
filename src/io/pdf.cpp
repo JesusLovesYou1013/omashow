@@ -47,7 +47,7 @@ void paintSlide(QPainter &painter, const Document &document, const Slide &slide,
     painter.translate(target.topLeft());
     painter.scale(scale, scale);
     painter.setClipRect(QRectF(QPointF(), document.size));
-    SceneRenderer::paint(painter, objects);
+    SceneRenderer::paint(painter, objects, document.size.height());
     painter.restore();
 }
 
