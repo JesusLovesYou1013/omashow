@@ -374,57 +374,72 @@ TextLayout::Metrics TextLayout::measure(const SceneObject &o) {
     return m;
 }
 namespace {
-// Blurs a premultiplied image in place: three box blurs, close to a Gaussian
-// of this standard deviation (pixels).
-void blur(QImage &image, qreal sigma) {
-    if (sigma < 0.5) return;
-    const int w = image.width(), h = image.height();
-    const int box = qMax(1, int(std::sqrt(12.0 * sigma * sigma / 3 + 1)) | 1);   // odd
-    const int half = box / 2;
-    QVector<int> acc(4);
-    QVector<QRgb> line(qMax(w, h));
-    for (int pass = 0; pass < 3; ++pass) {
-        for (int y = 0; y < h; ++y) {   // across
-            auto *row = reinterpret_cast<QRgb *>(image.scanLine(y));
-            std::copy(row, row + w, line.begin());
-            int a = 0, r = 0, g = 0, b = 0;
-            for (int x = -half; x <= half; ++x) { const QRgb p = line[qBound(0, x, w - 1)]; a += qAlpha(p); r += qRed(p); g += qGreen(p); b += qBlue(p); }
-            for (int x = 0; x < w; ++x) {
-                row[x] = qRgba(r / box, g / box, b / box, a / box);
-                const QRgb out = line[qBound(0, x - half, w - 1)], in = line[qBound(0, x + half + 1, w - 1)];
-                a += qAlpha(in) - qAlpha(out); r += qRed(in) - qRed(out); g += qGreen(in) - qGreen(out); b += qBlue(in) - qBlue(out);
-            }
+// Distance from every pixel to the nearest one with a mark, in pixels (exact
+// Euclidean, Felzenszwalb & Huttenlocher's two passes).
+QVector<float> distanceTo(const QVector<bool> &marked, int w, int h) {
+    const float far = 1e20f;
+    QVector<float> d(w * h);
+    for (int i = 0; i < w * h; ++i) d[i] = marked[i] ? 0 : far;
+    const int n = qMax(w, h);
+    QVector<float> f(n), out(n), z(n + 1);
+    QVector<int> v(n);
+    auto pass = [&](int count) {   // squared distance along one line, f → out
+        int k = 0;
+        v[0] = 0; z[0] = -far; z[1] = far;
+        for (int q = 1; q < count; ++q) {
+            auto meet = [&](int r) { return ((f[q] + q * q) - (f[r] + r * r)) / (2.0f * (q - r)); };
+            float s = meet(v[k]);
+            while (s <= z[k]) s = meet(v[--k]);   // z[0] is below every meeting point
+            ++k; v[k] = q; z[k] = s; z[k + 1] = far;
         }
-        for (int x = 0; x < w; ++x) {   // down
-            for (int y = 0; y < h; ++y) line[y] = reinterpret_cast<const QRgb *>(image.constScanLine(y))[x];
-            int a = 0, r = 0, g = 0, b = 0;
-            for (int y = -half; y <= half; ++y) { const QRgb p = line[qBound(0, y, h - 1)]; a += qAlpha(p); r += qRed(p); g += qGreen(p); b += qBlue(p); }
-            for (int y = 0; y < h; ++y) {
-                reinterpret_cast<QRgb *>(image.scanLine(y))[x] = qRgba(r / box, g / box, b / box, a / box);
-                const QRgb out = line[qBound(0, y - half, h - 1)], in = line[qBound(0, y + half + 1, h - 1)];
-                a += qAlpha(in) - qAlpha(out); r += qRed(in) - qRed(out); g += qGreen(in) - qGreen(out); b += qBlue(in) - qBlue(out);
-            }
+        k = 0;
+        for (int q = 0; q < count; ++q) {
+            while (z[k + 1] < q) ++k;
+            out[q] = (q - v[k]) * (q - v[k]) + f[v[k]];
         }
+    };
+    for (int x = 0; x < w; ++x) {
+        for (int y = 0; y < h; ++y) f[y] = d[y * w + x];
+        pass(h);
+        for (int y = 0; y < h; ++y) d[y * w + x] = out[y];
     }
+    for (int y = 0; y < h; ++y) {
+        std::copy(d.cbegin() + y * w, d.cbegin() + (y + 1) * w, f.begin());
+        pass(w);
+        for (int x = 0; x < w; ++x) d[y * w + x] = std::sqrt(out[x]);
+    }
+    return d;
 }
 
-// The glow behind a box's words (PowerPoint's text glow): the letters in the
-// glow colour, spread and blurred out to the radius. Made at the size it is
+// The glow behind a box's words (PowerPoint's text glow): a band of the glow
+// colour around the letters' outline, fading out.
+//
+// How far it reaches is PowerPoint's own rule, measured from its exports of a
+// test deck of text sizes 12-96 pt against glow sizes 5-50 pt
+// (history/tools/glow): the band holds full strength, is at half strength
+// `reach` points out from the outline and fades over a third of that, where
+//     reach = 0.0433 x glow^0.857 x text size^0.653   (all in points)
+// so the same glow is tighter around small words than around big ones. Its
+// strength is exactly the colour's own transparency. Made at the size it is
 // drawn and kept, so a slide that doesn't change isn't blurred again.
 void paintGlow(QPainter &painter, const SceneObject &o, QTextDocument &doc,
-               const QAbstractTextDocumentLayout::PaintContext &context, const QPointF &origin, const QSizeF &area) {
+               const QAbstractTextDocumentLayout::PaintContext &context, const QPointF &origin, const QSizeF &area,
+               qreal fontSize, qreal slideHeight) {
     // Shared by every thread that draws slides (screen, thumbnails, export).
     static QMutex lock;
     static QCache<QString, QImage> cache(48 * 1024 * 1024);   // bytes
     const QTransform &t = painter.worldTransform();
     qreal scale = std::sqrt(t.m11() * t.m11() + t.m12() * t.m12());
-    const qreal margin = o.textGlowRadius * 1.5;
+    const qreal point = qMax<qreal>(1e-3, slideHeight) / 540;   // slide units per point
+    const qreal reach = point * 0.0433 * std::pow(o.textGlowRadius / point, 0.857) * std::pow(qMax<qreal>(1, fontSize) / point, 0.653);
+    const qreal soft = reach * 0.343;
+    const qreal margin = reach + 4 * soft;   // the fade is gone well before this
     QSizeF full(area.width() + 2 * margin, area.height() + 2 * margin);
     // Never larger than the screen needs, never a huge picture for a huge zoom.
     scale = qBound(0.05, scale, 4096.0 / qMax(1.0, qMax(full.width(), full.height())));
     const QSize px(qMax(1, qCeil(full.width() * scale)), qMax(1, qCeil(full.height() * scale)));
     const QString key = QStringLiteral("%1|%2|%3|%4|%5|%6|%7").arg(QString::number(quintptr(&doc)), QString::number(qHash(o.text)),
-        QString::number(px.width()), QString::number(px.height()), QString::number(o.textGlowRadius), o.textGlowColor.name(QColor::HexArgb),
+        QString::number(px.width()), QString::number(px.height()), QString::number(reach), o.textGlowColor.name(QColor::HexArgb),
         QString::number(area.width()) + QLatin1Char('x') + QString::number(area.height()));
     QImage glow;
     {
@@ -439,36 +454,35 @@ void paintGlow(QPainter &painter, const SceneObject &o, QTextDocument &doc,
         p.scale(scale, scale);
         p.translate(margin, margin);
         doc.documentLayout()->draw(&p, context);
-        p.resetTransform();
-        p.setCompositionMode(QPainter::CompositionMode_SourceIn);
-        QColor solid = o.textGlowColor;
-        solid.setAlpha(255);
-        p.fillRect(image.rect(), solid);
         p.end();
-        // PowerPoint's glow reaches out to its radius and stays strong near
-        // the letters: a blur of a third of the radius, then doubled.
-        blur(image, o.textGlowRadius * scale / 3);
-        for (int y = 0; y < image.height(); ++y) {
+        const int w = image.width(), h = image.height();
+        QVector<bool> inside(w * h);
+        for (int y = 0; y < h; ++y) {
+            const auto *row = reinterpret_cast<const QRgb *>(image.constScanLine(y));
+            for (int x = 0; x < w; ++x) inside[y * w + x] = qAlpha(row[x]) >= 128;
+        }
+        const QVector<float> d = distanceTo(inside, w, h);
+        const qreal at = reach * scale, fade = qMax<qreal>(0.5, soft * scale);
+        const qreal strength = o.textGlowColor.alphaF();
+        const QColor c = o.textGlowColor;
+        for (int y = 0; y < h; ++y) {
             auto *row = reinterpret_cast<QRgb *>(image.scanLine(y));
-            for (int x = 0; x < image.width(); ++x) {
-                const int a = qAlpha(row[x]);
-                if (!a) continue;
-                const int na = qMin(255, a * 2);
-                row[x] = qRgba(qMin(255, qRed(row[x]) * na / a), qMin(255, qGreen(row[x]) * na / a), qMin(255, qBlue(row[x]) * na / a), na);
+            for (int x = 0; x < w; ++x) {
+                // Half strength at `reach` from the outline, a smooth edge either side.
+                const qreal a = strength * 0.5 * std::erfc((d[y * w + x] - at) / (fade * M_SQRT2));
+                const int na = qRound(qBound<qreal>(0, a, 1) * 255);
+                row[x] = qRgba(c.red() * na / 255, c.green() * na / 255, c.blue() * na / 255, na);
             }
         }
         glow = image;
         QMutexLocker locked(&lock);
         cache.insert(key, new QImage(image), int(qMin<qint64>(INT_MAX, qint64(image.sizeInBytes()))));
     }
-    painter.save();
-    painter.setOpacity(painter.opacity() * o.textGlowColor.alphaF());
     painter.drawImage(QRectF(origin - QPointF(margin, margin), full), glow);
-    painter.restore();
 }
 } // namespace
 
-void TextLayout::paint(QPainter &painter, const SceneObject &o) {
+void TextLayout::paint(QPainter &painter, const SceneObject &o, qreal slideHeight) {
     if (onPath(o)) {
         const auto metrics = measure(o);
         const auto laid = alongPath(o, metrics.effectiveSize);
@@ -545,7 +559,8 @@ void TextLayout::paint(QPainter &painter, const SceneObject &o) {
     const QPointF origin = o.rect.topLeft() + QPointF(0, dy - FontSwap::verticalFix(o, metrics.effectiveSize).shift);
     // The glow first, under the words and not cut off at the box.
     if (o.textGlowRadius > 0 && o.textGlowColor.alpha() > 0)
-        paintGlow(painter, o, *doc, context, origin, QSizeF(o.rect.width(), qMax(metrics.renderedHeight, o.rect.height())));
+        paintGlow(painter, o, *doc, context, origin, QSizeF(o.rect.width(), qMax(metrics.renderedHeight, o.rect.height())),
+                  metrics.effectiveSize, slideHeight);
     painter.save();
     if (o.textFit < 2 && !fitIsKept(o)) painter.setClipRect(o.rect, Qt::IntersectClip);   // spill and grow draw it all
     painter.translate(origin);

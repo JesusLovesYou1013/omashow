@@ -13,7 +13,7 @@
 
 namespace {
 
-void paintObject(QPainter &painter, const SceneObject &object) {
+void paintObject(QPainter &painter, const SceneObject &object, qreal slideHeight) {
     if (object.hidden || object.opacity <= 0.0)
         return;
 
@@ -49,7 +49,7 @@ void paintObject(QPainter &painter, const SceneObject &object) {
     }
     case ObjectType::Image: ImageAsset::paint(painter,object); break;
     case ObjectType::Text: {
-        TextLayout::paint(painter,object);
+        TextLayout::paint(painter, object, slideHeight);
         break;
     }
     }
@@ -59,13 +59,13 @@ void paintObject(QPainter &painter, const SceneObject &object) {
 
 } // namespace
 
-void SceneRenderer::paint(QPainter &painter, const QVector<SceneObject> &states) {
+void SceneRenderer::paint(QPainter &painter, const QVector<SceneObject> &states, qreal slideHeight) {
     for (const SceneObject &state : states)
-        paintObject(painter, state);
+        paintObject(painter, state, slideHeight);
 }
 
 QImage SceneRenderer::render(const QVector<SceneObject> &states, const QSizeF &documentSize,
-                             const QSize &pixelSize, const QColor &background) {
+                             const QSize &pixelSize, const QColor &background, qreal slideHeight) {
     // A deck's shape decides the pixel size; never let one ask for more
     // memory than a 16K picture. Callers treat a null image as a failure.
     if (pixelSize.isEmpty() || qint64(pixelSize.width()) * pixelSize.height() > kMaxPixels)
@@ -83,7 +83,7 @@ QImage SceneRenderer::render(const QVector<SceneObject> &states, const QSizeF &d
                       pixelSize.height() / documentSize.height());
     }
 
-    paint(painter, states);
+    paint(painter, states, slideHeight > 0 ? slideHeight : documentSize.height());
     painter.end();
     return image;
 }
