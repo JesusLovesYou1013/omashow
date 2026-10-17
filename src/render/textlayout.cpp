@@ -7,6 +7,7 @@
 #include <QTextDocument>
 #include <QTextList>
 #include <QCache>
+#include <QSet>
 #include <QMutex>
 #include "core/fontswap.h"
 #include <QCryptographicHash>
@@ -158,6 +159,28 @@ qreal columnWidth(const SceneObject &o, qreal size) {
     const qreal gaps = columnGap(o, size) * (columns - 1);
     return qMax(1.0, (o.rect.width() - gaps) / columns);
 }
+// Room past the box's right edge for the last letter's ink: PowerPoint fills a
+// line by the letters' advance widths, but Qt also counts a swash that hangs
+// past the last advance (script fonts), and breaks lines PowerPoint keeps
+// whole. Lines are laid out that much wider and drawn shifted back by the
+// alignment's share of it, so nothing moves. Not for justified text, which
+// would stretch into it, or columns.
+qreal overhang(const SceneObject &o, qreal size) {
+    if (o.textAlign == 3 || o.columns > 1) return 0;
+    // The furthest any of this text's own letters hangs past its advance (a
+    // font's overall figure is often some rare mark hanging a whole em).
+    const QFontMetricsF metrics(fontFor(o, size));
+    qreal most = 0;
+    QSet<QChar> seen;
+    for (const QChar c : o.text)
+        if (!c.isSpace() && !seen.contains(c)) { seen.insert(c); most = qMax(most, -metrics.rightBearing(c)); }
+    return most;
+}
+qreal overhangShift(const SceneObject &o, qreal size) {
+    const qreal extra = overhang(o, size);
+    return o.textAlign == 1 ? -extra / 2 : o.textAlign == 2 ? -extra : 0;
+}
+
 std::shared_ptr<QTextDocument> layout(const SceneObject &o, qreal size) {
     // QTextDocument belongs to its creating thread. Cache per thread, with a
     // memory budget, and exclude position/opacity so animation reuses layout.
@@ -178,7 +201,7 @@ std::shared_ptr<QTextDocument> layout(const SceneObject &o, qreal size) {
     doc->setDocumentMargin(0);
     doc->setDefaultFont(fontFor(o, size));
     doc->setIndentWidth(size * 1.2);
-    doc->setTextWidth(columnWidth(o, size));
+    doc->setTextWidth(columnWidth(o, size) + overhang(o, size));
     QTextOption option;
     option.setWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
     // Tabs line up on a stop rather than nesting, unless the box is a list,
@@ -320,7 +343,8 @@ QSizeF contentSize(const SceneObject &o, qreal size) {
                           o.uppercase ? o.text.toUpper() : o.text)
             .size();
     }
-    return layout(o, size)->documentLayout()->documentSize();
+    const QSizeF laid = layout(o, size)->documentLayout()->documentSize();
+    return QSizeF(qMax<qreal>(0, laid.width() - overhang(o, size)), laid.height());
 }
 } // namespace
 QString TextLayout::keptFitKey(const SceneObject &o) {
@@ -621,12 +645,12 @@ void TextLayout::paint(QPainter &painter, const SceneObject &o, qreal slideHeigh
     }
     const qreal spare = qMax(0.0, o.rect.height() - metrics.renderedHeight);
     const qreal dy = o.verticalAlign == 1 ? spare / 2 : o.verticalAlign == 2 ? spare : 0;
-    const QPointF origin = o.rect.topLeft() + QPointF(0, dy - FontSwap::verticalFix(o, metrics.effectiveSize).shift);
+    const QPointF origin = o.rect.topLeft() + QPointF(overhangShift(o, metrics.effectiveSize), dy - FontSwap::verticalFix(o, metrics.effectiveSize).shift);
     // Shadow and glow first, under the words and not cut off at the box.
     if ((o.textGlowRadius > 0 && o.textGlowColor.alpha() > 0) || (o.shadowEnabled && o.shadowColor.alpha() > 0))
         // PowerPoint sizes its effects by its own text size: before a swapped
         // Office font's size factor (FontSwap), which only matches the look.
-        paintEffects(painter, o, *doc, context, origin, QSizeF(o.rect.width(), qMax(metrics.renderedHeight, o.rect.height())),
+        paintEffects(painter, o, *doc, context, origin, QSizeF(o.rect.width() + overhang(o, metrics.effectiveSize), qMax(metrics.renderedHeight, o.rect.height())),
                      !o.origFont.isEmpty() && o.fontScale > 0 ? metrics.effectiveSize / o.fontScale : metrics.effectiveSize, slideHeight);
     painter.save();
     if (o.textFit < 2 && !fitIsKept(o)) painter.setClipRect(o.rect, Qt::IntersectClip);   // spill and grow draw it all
