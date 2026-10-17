@@ -636,12 +636,23 @@ struct Writer {
         if (!qFuzzyIsNull(o.letterSpacing)) x.attr("spc", qRound(o.letterSpacing * e / 12700.0 * 100));
         const QColor color = run && run->color.isValid() ? run->color : o.textColor;
         writeSolidFill(x, color, o.opacity);
-        // Glow around the letters (after the fill, before the typeface, as the schema orders them).
-        if (o.textGlowRadius > 0 && o.textGlowColor.alpha() > 0) {
+        // Glow and shadow around the letters (after the fill, before the
+        // typeface; glow before outer shadow, as the schema orders them).
+        const bool glows = o.textGlowRadius > 0 && o.textGlowColor.alpha() > 0;
+        if (glows || o.shadowEnabled) {
             x.start("a:effectLst");
-            x.start("a:glow").attr("rad", qRound(o.textGlowRadius * e));
-            writeColor(x, o.textGlowColor, o.opacity);
-            x.end();
+            if (glows) {
+                x.start("a:glow").attr("rad", qRound(o.textGlowRadius * e));
+                writeColor(x, o.textGlowColor, o.opacity);
+                x.end();
+            }
+            if (o.shadowEnabled) {
+                x.start("a:outerShdw").attr("blurRad", qRound64(o.shadowBlur * e)).attr("dist", qRound64(std::hypot(o.shadowX, o.shadowY) * e))
+                    .attr("dir", qRound64(std::fmod(qRadiansToDegrees(std::atan2(o.shadowY, o.shadowX)) + 360.0, 360.0) * 60000))
+                    .attr("algn", "tl").attr("rotWithShape", "0");
+                writeColor(x, o.shadowColor, o.opacity);
+                x.end();
+            }
             x.end();
         }
         x.start("a:latin").attr("typeface", family).end();

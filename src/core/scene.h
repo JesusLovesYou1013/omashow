@@ -95,6 +95,10 @@ struct SceneObject {
     bool shadowEnabled = false;
     QColor shadowColor = QColor(0,0,0,100);
     qreal shadowX = 8, shadowY = 8;
+    // How soft the shadow's edge is (PowerPoint's blur), in slide units; 0 a
+    // hard edge. On text the shadow follows PowerPoint's own sizing (see
+    // TextLayout's paintEffects).
+    qreal shadowBlur = 0;
 
     // Embedded raster data is implicitly shared between snapshots and duplicates.
     std::shared_ptr<const SceneObject> imageOriginal;
