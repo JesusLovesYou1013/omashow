@@ -488,6 +488,10 @@ struct RunLook {
     // Text glow (effectLst/glow): radius in EMU, -1 unknown, 0 none.
     qreal glowRad = -1;
     QColor glowColor;
+    // Outer shadow (effectLst/outerShdw): -1 unknown, 0 none, 1 one; EMU and degrees.
+    int shadow = -1;
+    QColor shadowColor;
+    qreal shadowDist = 0, shadowDir = 0, shadowBlur = 0;
 };
 
 // Bold on top of any face is bold; otherwise a weight-named family's weight.
@@ -561,12 +565,23 @@ void applyRPr(RunLook &run, const Node *rPr, const TextContext &ctx) {
         const auto c = colorIn(fill, *ctx.color);
         if (c.isValid()) run.color = c;
     }
-    // An effect list replaces the inherited one: no glow in it is no glow.
+    // An effect list replaces the inherited one: no glow or shadow in it is none.
     if (const Node *effects = rPr->child(QStringLiteral("effectLst"))) {
         run.glowRad = 0;
         if (const Node *glow = effects->child(QStringLiteral("glow"))) {
             const auto c = colorIn(glow, *ctx.color);
             if (c.isValid()) { run.glowRad = glow->attr(QStringLiteral("rad")).toDouble(); run.glowColor = c; }
+        }
+        run.shadow = 0;
+        if (const Node *shadow = effects->child(QStringLiteral("outerShdw"))) {
+            const auto c = colorIn(shadow, *ctx.color);
+            if (c.isValid()) {
+                run.shadow = 1;
+                run.shadowColor = c;
+                run.shadowDist = shadow->attr(QStringLiteral("dist"), QStringLiteral("0")).toDouble();
+                run.shadowDir = shadow->attr(QStringLiteral("dir"), QStringLiteral("0")).toDouble() / 60000.0;
+                run.shadowBlur = shadow->attr(QStringLiteral("blurRad"), QStringLiteral("0")).toDouble();
+            }
         }
     }
     if (const Node *latin = rPr->child(QStringLiteral("latin"))) {
@@ -1020,6 +1035,14 @@ struct Reader {
         if (b.glowRad > 0 && b.glowColor.isValid()) {
             o.textGlowRadius = b.glowRad / 12700.0 * u.pt;   // EMU → points → slide units
             o.textGlowColor = b.glowColor;
+        }
+        if (b.shadow > 0) {
+            o.shadowEnabled = true;
+            o.shadowColor = b.shadowColor;
+            const qreal d = b.shadowDist * u.k;   // EMU → slide units, as set (drawn by PowerPoint's sizing)
+            o.shadowX = d * qCos(qDegreesToRadians(b.shadowDir));
+            o.shadowY = d * qSin(qDegreesToRadians(b.shadowDir));
+            o.shadowBlur = b.shadowBlur * u.k;
         }
         if (!b.lang.isEmpty()) { o.language = b.lang; o.language.replace(QLatin1Char('-'), QLatin1Char('_')); }
         o.textAlign = text.para.algn < 0 ? 0 : text.para.algn;

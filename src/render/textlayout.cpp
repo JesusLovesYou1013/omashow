@@ -143,7 +143,7 @@ MathLayout::Rendered equation(const SceneObject &o, qreal size) {
     return MathLayout::build(o.text, fontFor(o, size), size, o.textAlign);
 }
 bool legacy(const SceneObject &o) {
-    return !maths(o) && !onPath(o) && o.origFont.isEmpty() && o.textGlowRadius <= 0 && o.runs.isEmpty() && o.textAlign == 0 && o.verticalAlign == 1 && o.lineHeight == 100 &&
+    return !maths(o) && !onPath(o) && o.origFont.isEmpty() && o.textGlowRadius <= 0 && !o.shadowEnabled && o.runs.isEmpty() && o.textAlign == 0 && o.verticalAlign == 1 && o.lineHeight == 100 &&
            o.paragraphSpacing == 0 && o.textIndent == 0 && o.listStyle == 0 && o.textFit == 0 &&
            o.tabStop == 0 && o.columns <= 1 && o.direction == 0;
 }
@@ -411,42 +411,79 @@ QVector<float> distanceTo(const QVector<bool> &marked, int w, int h) {
     return d;
 }
 
-// The glow behind a box's words (PowerPoint's text glow): a band of the glow
-// colour around the letters' outline, fading out.
+// Blurs a plane of strengths in place: a Gaussian of this standard
+// deviation (pixels), one direction then the other.
+void gaussian(QVector<float> &plane, int w, int h, qreal sigma) {
+    if (sigma < 0.3) return;
+    const int r = qCeil(sigma * 3);
+    QVector<float> k(2 * r + 1);
+    float sum = 0;
+    for (int i = -r; i <= r; ++i) sum += (k[i + r] = float(std::exp(-i * i / (2 * sigma * sigma))));
+    for (auto &v : k) v /= sum;
+    QVector<float> line(qMax(w, h));
+    auto pass = [&](int count, int stride, float *start) {
+        for (int i = 0; i < count; ++i) line[i] = start[i * stride];
+        for (int i = 0; i < count; ++i) {
+            float v = 0;
+            for (int j = qMax(-r, -i); j <= qMin(r, count - 1 - i); ++j) v += line[i + j] * k[j + r];
+            start[i * stride] = v;
+        }
+    };
+    for (int y = 0; y < h; ++y) pass(w, 1, plane.data() + y * w);
+    for (int x = 0; x < w; ++x) pass(h, w, plane.data() + x);
+}
+
+// What a box's words cast behind them: PowerPoint's text glow and outer
+// shadow, made at the size they are drawn and kept, so a slide that doesn't
+// change isn't worked out again.
 //
-// How far it reaches is PowerPoint's own rule, measured from its exports of a
-// test deck of text sizes 12-96 pt against glow sizes 5-50 pt
-// (history/tools/glow): the band holds full strength, is at half strength
-// `reach` points out from the outline and fades over a third of that, where
-//     reach = 0.0433 x glow^0.857 x text size^0.653   (all in points)
-// so the same glow is tighter around small words than around big ones. Its
-// strength is exactly the colour's own transparency. Made at the size it is
-// drawn and kept, so a slide that doesn't change isn't blurred again.
-void paintGlow(QPainter &painter, const SceneObject &o, QTextDocument &doc,
-               const QAbstractTextDocumentLayout::PaintContext &context, const QPointF &origin, const QSizeF &area,
-               qreal fontSize, qreal slideHeight) {
+// Both follow PowerPoint's own rules, measured from its exports of test decks
+// of text sizes 12-96 pt (history/tools/glow); PowerPoint shrinks its text
+// effects on smaller words, so each depends on the text size as well as on its
+// setting (all in points):
+//   glow    a band of the glow colour around the letters' outline, at full
+//           strength near them, half strength `reach` out, fading over a
+//           third of that:       reach = 0.0433 x glow^0.857 x size^0.653
+//   shadow  cast by the letters AND their glow (a glowing word's shadow is
+//           the whole glowing shape), moved   0.0561 x distance^0.929 x size^0.717
+//           in its direction and blurred by   0.0133 x blur^1.082 x size^0.709
+//           (a Gaussian's standard deviation).
+// Each is exactly as strong as its colour's own transparency.
+void paintEffects(QPainter &painter, const SceneObject &o, QTextDocument &doc,
+                  const QAbstractTextDocumentLayout::PaintContext &context, const QPointF &origin, const QSizeF &area,
+                  qreal fontSize, qreal slideHeight) {
     // Shared by every thread that draws slides (screen, thumbnails, export).
     static QMutex lock;
     static QCache<QString, QImage> cache(48 * 1024 * 1024);   // bytes
     const QTransform &t = painter.worldTransform();
     qreal scale = std::sqrt(t.m11() * t.m11() + t.m12() * t.m12());
     const qreal point = qMax<qreal>(1e-3, slideHeight) / 540;   // slide units per point
-    const qreal reach = point * 0.0433 * std::pow(o.textGlowRadius / point, 0.857) * std::pow(qMax<qreal>(1, fontSize) / point, 0.653);
+    const qreal size = qMax<qreal>(1, fontSize) / point;          // the text size, in points
+    const bool glows = o.textGlowRadius > 0 && o.textGlowColor.alpha() > 0;
+    const bool shadows = o.shadowEnabled && o.shadowColor.alpha() > 0;
+    const qreal reach = glows ? point * 0.0433 * std::pow(o.textGlowRadius / point, 0.857) * std::pow(size, 0.653) : 0;
     const qreal soft = reach * 0.343;
-    const qreal margin = reach + 4 * soft;   // the fade is gone well before this
+    const qreal set = std::hypot(o.shadowX, o.shadowY);
+    const qreal moved = shadows && set > 0 ? point * 0.0561 * std::pow(set / point, 0.929) * std::pow(size, 0.717) : 0;
+    const QPointF offset = set > 0 ? QPointF(o.shadowX, o.shadowY) * (moved / set) : QPointF();
+    const qreal sigma = shadows && o.shadowBlur > 0 ? point * 0.0133 * std::pow(o.shadowBlur / point, 1.082) * std::pow(size, 0.709) : 0;
+    const qreal glowEdge = glows ? reach + 4 * soft : 0;
+    const qreal margin = glowEdge + (shadows ? moved + 3 * sigma : 0) + 1;
     QSizeF full(area.width() + 2 * margin, area.height() + 2 * margin);
     // Never larger than the screen needs, never a huge picture for a huge zoom.
     scale = qBound(0.05, scale, 4096.0 / qMax(1.0, qMax(full.width(), full.height())));
     const QSize px(qMax(1, qCeil(full.width() * scale)), qMax(1, qCeil(full.height() * scale)));
-    const QString key = QStringLiteral("%1|%2|%3|%4|%5|%6|%7").arg(QString::number(quintptr(&doc)), QString::number(qHash(o.text)),
-        QString::number(px.width()), QString::number(px.height()), QString::number(reach), o.textGlowColor.name(QColor::HexArgb),
-        QString::number(area.width()) + QLatin1Char('x') + QString::number(area.height()));
-    QImage glow;
+    const QString key = QStringList{QString::number(quintptr(&doc)), QString::number(qHash(o.text)),
+        QString::number(px.width()), QString::number(px.height()), QString::number(area.width()), QString::number(area.height()),
+        QString::number(glows ? reach : 0), o.textGlowColor.name(QColor::HexArgb),
+        QString::number(shadows), o.shadowColor.name(QColor::HexArgb), QString::number(offset.x()), QString::number(offset.y()),
+        QString::number(sigma)}.join(QLatin1Char('|'));
+    QImage effects;
     {
         QMutexLocker locked(&lock);
-        if (const QImage *kept = cache.object(key)) glow = *kept;   // shared, not copied
+        if (const QImage *kept = cache.object(key)) effects = *kept;   // shared, not copied
     }
-    if (glow.isNull()) {
+    if (effects.isNull()) {
         QImage image(px, QImage::Format_ARGB32_Premultiplied);
         image.fill(Qt::transparent);
         QPainter p(&image);
@@ -456,29 +493,57 @@ void paintGlow(QPainter &painter, const SceneObject &o, QTextDocument &doc,
         doc.documentLayout()->draw(&p, context);
         p.end();
         const int w = image.width(), h = image.height();
-        QVector<bool> inside(w * h);
+        QVector<float> letters(w * h), glow(w * h, 0.f);
         for (int y = 0; y < h; ++y) {
             const auto *row = reinterpret_cast<const QRgb *>(image.constScanLine(y));
-            for (int x = 0; x < w; ++x) inside[y * w + x] = qAlpha(row[x]) >= 128;
+            for (int x = 0; x < w; ++x) letters[y * w + x] = qAlpha(row[x]) / 255.f;
         }
-        const QVector<float> d = distanceTo(inside, w, h);
-        const qreal at = reach * scale, fade = qMax<qreal>(0.5, soft * scale);
-        const qreal strength = o.textGlowColor.alphaF();
-        const QColor c = o.textGlowColor;
+        if (glows) {
+            QVector<bool> inside(w * h);
+            for (int i = 0; i < w * h; ++i) inside[i] = letters[i] >= 0.5f;
+            const QVector<float> d = distanceTo(inside, w, h);
+            const qreal at = reach * scale, fade = qMax<qreal>(0.5, soft * scale), strength = o.textGlowColor.alphaF();
+            // Half strength at `reach` from the outline, a smooth edge either side.
+            for (int i = 0; i < w * h; ++i) glow[i] = float(strength * 0.5 * std::erfc((d[i] - at) / (fade * M_SQRT2)));
+        }
+        QVector<float> shadow;
+        if (shadows) {
+            // The glowing word's own shape, moved (in whole and part pixels) and blurred.
+            const qreal dx = offset.x() * scale, dy = offset.y() * scale;
+            const int ix = qFloor(dx), iy = qFloor(dy);
+            const float fx = float(dx - ix), fy = float(dy - iy);
+            auto cast = [&](int x, int y) -> float {
+                if (x < 0 || y < 0 || x >= w || y >= h) return 0;
+                const float a = letters[y * w + x], g = glow[y * w + x];
+                return a + g * (1 - a);
+            };
+            shadow.resize(w * h);
+            for (int y = 0; y < h; ++y)
+                for (int x = 0; x < w; ++x) {
+                    const int sx = x - ix, sy = y - iy;
+                    shadow[y * w + x] = (1 - fy) * ((1 - fx) * cast(sx, sy) + fx * cast(sx - 1, sy))
+                                      + fy * ((1 - fx) * cast(sx, sy - 1) + fx * cast(sx - 1, sy - 1));
+                }
+            gaussian(shadow, w, h, sigma * scale);
+            const float strength = float(o.shadowColor.alphaF());
+            for (auto &v : shadow) v *= strength;
+        }
+        const QColor g = o.textGlowColor, c = o.shadowColor;
         for (int y = 0; y < h; ++y) {
             auto *row = reinterpret_cast<QRgb *>(image.scanLine(y));
             for (int x = 0; x < w; ++x) {
-                // Half strength at `reach` from the outline, a smooth edge either side.
-                const qreal a = strength * 0.5 * std::erfc((d[y * w + x] - at) / (fade * M_SQRT2));
-                const int na = qRound(qBound<qreal>(0, a, 1) * 255);
-                row[x] = qRgba(c.red() * na / 255, c.green() * na / 255, c.blue() * na / 255, na);
+                // The glow over the shadow (the words go over both, after).
+                const float ga = qBound(0.f, glow[y * w + x], 1.f), sa = shadows ? qBound(0.f, shadow[y * w + x], 1.f) * (1 - ga) : 0.f;
+                const float a = ga + sa;
+                row[x] = qRgba(qRound(g.red() * ga + c.red() * sa), qRound(g.green() * ga + c.green() * sa),
+                               qRound(g.blue() * ga + c.blue() * sa), qRound(a * 255));
             }
         }
-        glow = image;
+        effects = image;
         QMutexLocker locked(&lock);
         cache.insert(key, new QImage(image), int(qMin<qint64>(INT_MAX, qint64(image.sizeInBytes()))));
     }
-    painter.drawImage(QRectF(origin - QPointF(margin, margin), full), glow);
+    painter.drawImage(QRectF(origin - QPointF(margin, margin), full), effects);
 }
 } // namespace
 
@@ -557,10 +622,12 @@ void TextLayout::paint(QPainter &painter, const SceneObject &o, qreal slideHeigh
     const qreal spare = qMax(0.0, o.rect.height() - metrics.renderedHeight);
     const qreal dy = o.verticalAlign == 1 ? spare / 2 : o.verticalAlign == 2 ? spare : 0;
     const QPointF origin = o.rect.topLeft() + QPointF(0, dy - FontSwap::verticalFix(o, metrics.effectiveSize).shift);
-    // The glow first, under the words and not cut off at the box.
-    if (o.textGlowRadius > 0 && o.textGlowColor.alpha() > 0)
-        paintGlow(painter, o, *doc, context, origin, QSizeF(o.rect.width(), qMax(metrics.renderedHeight, o.rect.height())),
-                  metrics.effectiveSize, slideHeight);
+    // Shadow and glow first, under the words and not cut off at the box.
+    if ((o.textGlowRadius > 0 && o.textGlowColor.alpha() > 0) || (o.shadowEnabled && o.shadowColor.alpha() > 0))
+        // PowerPoint sizes its effects by its own text size: before a swapped
+        // Office font's size factor (FontSwap), which only matches the look.
+        paintEffects(painter, o, *doc, context, origin, QSizeF(o.rect.width(), qMax(metrics.renderedHeight, o.rect.height())),
+                     !o.origFont.isEmpty() && o.fontScale > 0 ? metrics.effectiveSize / o.fontScale : metrics.effectiveSize, slideHeight);
     painter.save();
     if (o.textFit < 2 && !fitIsKept(o)) painter.setClipRect(o.rect, Qt::IntersectClip);   // spill and grow draw it all
     painter.translate(origin);

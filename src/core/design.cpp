@@ -46,7 +46,7 @@ QVariantMap Design::properties(const SceneObject &o) {
             {"shapeKind",o.shapeKind},{"pathData",o.pathData},{"pathWinding",o.pathWinding},{"fillStyle",o.fillStyle},{"fillSecondary",o.fillSecondary.name(QColor::HexArgb)},
             {"fillAngle",o.fillAngle},{"patternStyle",o.patternStyle},{"strokeColor",o.strokeColor.name(QColor::HexArgb)},
             {"strokeWidth",o.strokeWidth},{"strokeStyle",o.strokeStyle},{"strokeJoin",o.strokeJoin},{"strokeCap",o.strokeCap},
-            {"shadowEnabled",o.shadowEnabled},{"shadowColor",o.shadowColor.name(QColor::HexArgb)},{"shadowX",o.shadowX},{"shadowY",o.shadowY},
+            {"shadowEnabled",o.shadowEnabled},{"shadowColor",o.shadowColor.name(QColor::HexArgb)},{"shadowX",o.shadowX},{"shadowY",o.shadowY},{"shadowBlur",o.shadowBlur},
             {"imageOriginal",o.imageOriginal ? properties(*o.imageOriginal) : QVariantMap()}, {"imageFormat",o.imageFormat},{"imageId",o.imageId},{"imageMode",o.imageMode},{"imageMask",o.imageMask},{"imageFocalX",o.imageFocalX},{"imageFocalY",o.imageFocalY},
             {"imageBrightness",o.imageBrightness},{"imageContrast",o.imageContrast},{"imageSaturation",o.imageSaturation},{"imageTint",o.imageTint.name(QColor::HexArgb)},{"imageTintAmount",o.imageTintAmount},{"cropX",o.imageCrop.x()},{"cropY",o.imageCrop.y()},
             {"cropW",o.imageCrop.width()},{"cropH",o.imageCrop.height()},
@@ -67,7 +67,7 @@ QVariantMap Design::properties(const SceneObject &o) {
 }
 bool Design::setProperty(SceneObject &o, const QString &key, const QVariant &v, bool constrainForEditing) {
     const QStringList numeric = {"textKind","tabStop","columns","columnGap","direction","mediaBytes","mediaModified","mediaDuration","mediaTrimStart","mediaTrimEnd","mediaVolume","mediaLoops","x", "y", "w", "h", "rotation", "opacity", "cornerRadius",
-                                 "linkKind", "connectorStartX", "connectorStartY", "connectorEndX", "connectorEndY", "connectorFromSide", "connectorToSide", "connectorRoute", "shapeKind", "fillStyle", "fillAngle", "patternStyle", "strokeWidth", "strokeStyle", "strokeJoin", "strokeCap", "shadowX", "shadowY", "fontSize", "fontWeight", "origFontSize", "fontScale", "origWeight", "textGlowRadius", "letterSpacing", "textAlign", "verticalAlign", "lineHeight", "paragraphSpacing", "textIndent", "listStyle", "listStart", "textFit", "imageMask", "imageFocalX", "imageFocalY", "imageBrightness", "imageContrast", "imageSaturation", "imageTintAmount", "imageMode", "cropX", "cropY", "cropW", "cropH"};
+                                 "linkKind", "connectorStartX", "connectorStartY", "connectorEndX", "connectorEndY", "connectorFromSide", "connectorToSide", "connectorRoute", "shapeKind", "fillStyle", "fillAngle", "patternStyle", "strokeWidth", "strokeStyle", "strokeJoin", "strokeCap", "shadowX", "shadowY", "shadowBlur", "fontSize", "fontWeight", "origFontSize", "fontScale", "origWeight", "textGlowRadius", "letterSpacing", "textAlign", "verticalAlign", "lineHeight", "paragraphSpacing", "textIndent", "listStyle", "listStart", "textFit", "imageMask", "imageFocalX", "imageFocalY", "imageBrightness", "imageContrast", "imageSaturation", "imageTintAmount", "imageMode", "cropX", "cropY", "cropW", "cropH"};
     bool ok = false;
     const qreal n = v.toDouble(&ok);
     if (numeric.contains(key) && (!ok || !std::isfinite(n))) return false;
@@ -112,6 +112,7 @@ bool Design::setProperty(SceneObject &o, const QString &key, const QVariant &v, 
     else if (key == "shadowColor") o.shadowColor=QColor(v.toString());
     else if (key == "shadowX") o.shadowX=n;
     else if (key == "shadowY") o.shadowY=n;
+    else if (key == "shadowBlur") { if (n < 0 || n > 1000) return false; o.shadowBlur = n; }
     else if (key == "fontSize") o.fontSize = qMax(constrainForEditing ? 4.0 : 0.0, n);
     else if (key == "fontWeight") o.fontWeight = qBound(100, v.toInt(), 900);
     else if (key == "letterSpacing") o.letterSpacing = n;
