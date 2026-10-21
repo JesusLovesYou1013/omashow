@@ -33,9 +33,9 @@ const Format kFormats[] = {
     {"ppt", "PowerPoint 97–2003 presentation", false, false},
     {"pps", "PowerPoint 97–2003 show", false, false},
     {"pot", "PowerPoint 97–2003 template", false, false},
-    {"odp", "OpenDocument presentation (LibreOffice Impress)", false, false},
-    {"otp", "OpenDocument presentation template (LibreOffice Impress)", false, false},
-    {"fodp", "Flat OpenDocument presentation (LibreOffice Impress)", false, false},
+    {"odp", "OpenDocument presentation (LibreOffice Impress)", false, true},
+    {"otp", "OpenDocument presentation template (LibreOffice Impress)", false, true},
+    {"fodp", "Flat OpenDocument presentation (LibreOffice Impress)", false, true},
     {"dps", "WPS Presentation", false, false},
     {"dpt", "WPS Presentation template", false, false},
     {"prdx", "SoftMaker Presentations", false, false},
@@ -57,6 +57,7 @@ Kind kindOf(const QString &path) {
     if (suffix == QStringLiteral("omashow")) return Native;
     if (suffix == QStringLiteral("pptx")) return PowerPoint;
     if (suffix == QStringLiteral("key")) return Keynote;
+    if (suffix == QStringLiteral("odp") || suffix == QStringLiteral("otp") || suffix == QStringLiteral("fodp")) return OpenDocument;
     return Unknown;
 }
 
@@ -65,6 +66,7 @@ QString kindName(Kind kind) {
     case Native: return QStringLiteral("OmaShow");
     case PowerPoint: return QStringLiteral("PowerPoint");
     case Keynote: return QStringLiteral("Keynote");
+    case OpenDocument: return QStringLiteral("OpenDocument");
     case Unknown: break;
     }
     return QString();
@@ -73,7 +75,8 @@ QString kindName(Kind kind) {
 Result load(const QString &path) {
     Result result;
     result.kind = kindOf(path);
-    if (result.kind == Unknown) {
+    // OpenDocument is written, not yet read.
+    if (result.kind == Unknown || result.kind == OpenDocument) {
         const auto *format = formatOf(path);
         result.error = format ? QStringLiteral("%1 is a %2 file, which OmaShow can't open yet.")
                                     .arg(QFileInfo(path).fileName(), QString::fromUtf8(format->name))

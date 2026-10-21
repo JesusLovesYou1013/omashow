@@ -20,6 +20,7 @@
 #include "anim/presentation.h"
 #include "io/bundle.h"
 #include "io/interchange.h"
+#include "io/odpwriter.h"
 #include "io/pptxwriter.h"
 #include "io/pdf.h"
 #include "showguard.h"
@@ -752,8 +753,11 @@ int main(int argc, char *argv[]) {
         if (kind == Interchange::PowerPoint) {
             const auto written = PptxWriter::write(backend.document(), path);
             if (!written.ok) error = written.error;
+        } else if (kind == Interchange::OpenDocument) {
+            const auto written = OdpWriter::write(backend.document(), path);
+            if (!written.ok) error = written.error;
         } else if (const auto other = Interchange::unwritableFormat(path); !other.isEmpty()) {
-            error = QStringLiteral("OmaShow can't save %1 files; name a .omashow or .pptx file.").arg(other);
+            error = QStringLiteral("OmaShow can't save %1 files; name a .omashow, .pptx or .odp file.").arg(other);
         } else if (!Bundle::save(backend.document(), path, &error) && error.isEmpty()) {
             error = QStringLiteral("%1 could not be written.").arg(path);
         }

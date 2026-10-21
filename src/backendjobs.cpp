@@ -3,6 +3,7 @@
 #include "core/imageasset.h"
 #include "io/bundle.h"
 #include "io/pdf.h"
+#include "io/odpwriter.h"
 #include "io/pptxwriter.h"
 #include "io/recovery.h"
 #include <QFileInfo>
@@ -94,10 +95,10 @@ Document Backend::withMediaAllowed(Document document) const {
 
 void Backend::saveAsync(const QString &path) {
     if (!beginOperation(tr("Saving deck…"))) return;
-    // The name's suffix is the format: .pptx is written as PowerPoint, anything
-    // else as an OmaShow deck.
-    const bool powerPoint = Interchange::kindOf(path) == Interchange::PowerPoint;
-    const auto document = powerPoint ? withMediaAllowed(m_document) : m_document;
+    // The name's suffix is the format: .pptx is written as PowerPoint, .odp,
+    // .otp and .fodp as OpenDocument, anything else as an OmaShow deck.
+    const auto kind = Interchange::kindOf(path);
+    const auto document = kind == Interchange::Native || kind == Interchange::Unknown ? m_document : withMediaAllowed(m_document);
     const auto job = m_operationJob;
     const int generation = m_documentGeneration, revision = m_revision;
     auto *watcher = new QFutureWatcher<QString>(this);
@@ -124,12 +125,16 @@ void Backend::saveAsync(const QString &path) {
         setStatus(tr("Saved %1").arg(fileName()));
         emit saved();
     });
-    watcher->setFuture(QtConcurrent::run(Workers::io(), [document, path, job, powerPoint] {
+    watcher->setFuture(QtConcurrent::run(Workers::io(), [document, path, job, kind] {
         QString error;
         if (job->canceled) return error;
-        const QByteArray bytes = powerPoint ? PptxWriter::bytes(document, nullptr, job) : Bundle::toBytes(document);
+        const QByteArray bytes = kind == Interchange::PowerPoint ? PptxWriter::bytes(document, nullptr, job)
+                               : kind == Interchange::OpenDocument ? OdpWriter::bytes(document, OdpWriter::flavorOf(path), nullptr, job)
+                               : Bundle::toBytes(document);
         if (job->canceled) return error;
-        if (bytes.isEmpty()) return QStringLiteral("the deck could not be written as PowerPoint.");
+        if (bytes.isEmpty())
+            return kind == Interchange::OpenDocument ? QStringLiteral("the deck could not be written as OpenDocument.")
+                                                     : QStringLiteral("the deck could not be written as PowerPoint.");
         Workers::write(path, bytes, &error, job, true);
         return error;
     }));
