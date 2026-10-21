@@ -3,6 +3,7 @@
 #include "core/imageasset.h"
 #include "io/bundle.h"
 #include "io/pdf.h"
+#include "io/pptxwriter.h"
 #include "io/recovery.h"
 #include <QFileInfo>
 #include <QFutureWatcher>
@@ -82,9 +83,21 @@ void Backend::openAsync(const QUrl &url, bool recovery) {
     }));
 }
 
+// The media a deck's pictures and films may be read from, for a writer that
+// copies them in (PowerPoint, PDF).
+Document Backend::withMediaAllowed(Document document) const {
+    for (auto &slide : document.slides) for (auto &object : slide.objects)
+        if (object.type == ObjectType::Media)
+            object.mediaReadAllowed = m_mediaPermissions.value(object.mediaPath) == object.mediaId;
+    return document;
+}
+
 void Backend::saveAsync(const QString &path) {
     if (!beginOperation(tr("Saving deck…"))) return;
-    const auto document = m_document;
+    // The name's suffix is the format: .pptx is written as PowerPoint, anything
+    // else as an OmaShow deck.
+    const bool powerPoint = Interchange::kindOf(path) == Interchange::PowerPoint;
+    const auto document = powerPoint ? withMediaAllowed(m_document) : m_document;
     const auto job = m_operationJob;
     const int generation = m_documentGeneration, revision = m_revision;
     auto *watcher = new QFutureWatcher<QString>(this);
@@ -111,9 +124,13 @@ void Backend::saveAsync(const QString &path) {
         setStatus(tr("Saved %1").arg(fileName()));
         emit saved();
     });
-    watcher->setFuture(QtConcurrent::run(Workers::io(), [document, path, job] {
+    watcher->setFuture(QtConcurrent::run(Workers::io(), [document, path, job, powerPoint] {
         QString error;
-        if (!job->canceled) Workers::write(path, Bundle::toBytes(document), &error, job, true);
+        if (job->canceled) return error;
+        const QByteArray bytes = powerPoint ? PptxWriter::bytes(document, nullptr, job) : Bundle::toBytes(document);
+        if (job->canceled) return error;
+        if (bytes.isEmpty()) return QStringLiteral("the deck could not be written as PowerPoint.");
+        Workers::write(path, bytes, &error, job, true);
         return error;
     }));
 }

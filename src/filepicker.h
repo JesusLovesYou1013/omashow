@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QObject>
+#include <QPair>
 #include <QStringList>
 #include <QUrl>
 #include <QVariantMap>
@@ -23,6 +24,13 @@ public:
     Q_INVOKABLE void saveFile(const QString &title, const QString &suggestedName,
                               const QString &filterName = QString(),
                               const QStringList &patterns = {});
+    // Several formats to choose from: (name, patterns) each, `current` shown first.
+    void saveFile(const QString &title, const QString &suggestedName,
+                  const QList<QPair<QString, QStringList>> &filters, int current);
+
+    // The first pattern of the filter chosen in the last dialog ("*.pptx", "*"
+    // for All Files), or empty when the portal didn't say.
+    QString chosenPattern() const { return m_chosenPattern; }
 
 signals:
     void selected(const QUrl &url);
@@ -37,4 +45,5 @@ private:
     void clearPending();
 
     QString m_pendingPath;
+    QString m_chosenPattern;
 };

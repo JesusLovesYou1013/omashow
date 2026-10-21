@@ -20,6 +20,7 @@
 #include "anim/presentation.h"
 #include "io/bundle.h"
 #include "io/interchange.h"
+#include "io/pptxwriter.h"
 #include "io/pdf.h"
 #include "showguard.h"
 #include "presenter.h"
@@ -167,6 +168,24 @@ int captureInterface(QQmlApplicationEngine &engine, Backend &backend, Presenter 
         backend.createDeck(0, 1920, 1080, 0);
     }
     // TEST-ONLY BEGIN: offscreen --ui-shot steps; history/tools/make-upstream.py leaves this out
+    // SAVE-FORMAT-1 (OMASHOW_UI_SHOT_SAVE_AS=<n>): Save as… n times, each
+    // answered by a stand-in portal (history/tools/fakeportal.py) with the name
+    // to type; says what was written each time.
+    if (const int rounds = qEnvironmentVariableIntValue("OMASHOW_UI_SHOT_SAVE_AS")) {
+        for (int i = 0; i < rounds; ++i) {
+            QEventLoop wait;
+            QObject::connect(&backend, &Backend::saved, &wait, &QEventLoop::quit);
+            QObject::connect(&backend, &Backend::failed, &wait, &QEventLoop::quit);
+            QObject::connect(&backend, &Backend::saveCanceled, &wait, &QEventLoop::quit);
+            QTimer::singleShot(20000, &wait, &QEventLoop::quit);
+            backend.saveAsDialog();
+            wait.exec();
+            settle(200);
+            qInfo().noquote() << "ui-shot saveas:" << i << "file" << backend.property("fileUrl").toUrl().toLocalFile()
+                              << "| status" << backend.property("status").toString();
+        }
+        return 0;
+    }
     // FONT-CHECK-1/2 (OMASHOW_UI_SHOT_FONTCHECK=1|hide|download): the font
     // check shown on opening a deck, photographed. hide: tick "Don't show
     // again" and close. download: press Download, photograph the progress and
@@ -728,7 +747,17 @@ int main(int argc, char *argv[]) {
     if (parser.isSet(writeOption)) {
         const QString path = parser.value(writeOption);
         QString error;
-        if (!Bundle::save(backend.document(), path, &error)) {
+        // The name's suffix is the format, as in the save dialog.
+        const auto kind = Interchange::kindOf(path);
+        if (kind == Interchange::PowerPoint) {
+            const auto written = PptxWriter::write(backend.document(), path);
+            if (!written.ok) error = written.error;
+        } else if (const auto other = Interchange::unwritableFormat(path); !other.isEmpty()) {
+            error = QStringLiteral("OmaShow can't save %1 files; name a .omashow or .pptx file.").arg(other);
+        } else if (!Bundle::save(backend.document(), path, &error) && error.isEmpty()) {
+            error = QStringLiteral("%1 could not be written.").arg(path);
+        }
+        if (!error.isEmpty()) {
             qCritical().noquote() << error;
             return 1;
         }
