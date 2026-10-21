@@ -15,15 +15,15 @@
 
 namespace Interchange {
 
-enum Kind { Native, PowerPoint, Keynote, Unknown };
+enum Kind { Native, PowerPoint, Keynote, OpenDocument, Unknown };
 
 Kind kindOf(const QString &path);
 QString kindName(Kind kind);
 inline bool isForeign(Kind kind) { return kind == PowerPoint || kind == Keynote; }
 // The kinds a deck can be saved as: the name typed in the save dialog decides.
-inline bool canSave(Kind kind) { return kind == Native || kind == PowerPoint; }
+inline bool canSave(Kind kind) { return kind == Native || kind == PowerPoint || kind == OpenDocument; }
 // A presentation format known by its suffix that OmaShow can't write (.ppt,
-// .odp, .dps…): its readable name. Empty for a suffix that is no presentation
+// .dps…): its readable name. Empty for a suffix that is no presentation
 // format at all, which is then just part of the name.
 QString unwritableFormat(const QString &path);
 

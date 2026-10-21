@@ -38,6 +38,7 @@
 #include "io/interchange.h"
 #include "core/fonts.h"
 #include "io/pdf.h"
+#include "io/odpwriter.h"
 #include "io/pptxwriter.h"
 #include "io/recovery.h"
 #include "sliderows.h"
@@ -806,7 +807,7 @@ bool Backend::saveTo(const QString &path) {
   QString error;
   const auto kind = Interchange::kindOf(path);
   if (const auto other = Interchange::unwritableFormat(path); !other.isEmpty()) {
-    error = tr("OmaShow can't save %1 files (%2); save the deck as .omashow or .pptx instead.")
+    error = tr("OmaShow can't save %1 files (%2); save the deck as .omashow, .pptx or .odp instead.")
                 .arg(other, QFileInfo(path).fileName());
     setStatus(error);
     emit failed(error);
@@ -814,6 +815,9 @@ bool Backend::saveTo(const QString &path) {
   }
   if (kind == Interchange::PowerPoint) {
     const auto written = PptxWriter::write(withMediaAllowed(m_document), path);
+    if (!written.ok) error = written.error;
+  } else if (kind == Interchange::OpenDocument) {
+    const auto written = OdpWriter::write(withMediaAllowed(m_document), path);
     if (!written.ok) error = written.error;
   } else if (!Bundle::save(m_document, path, &error) && error.isEmpty()) {
     error = tr("%1 could not be written.").arg(QFileInfo(path).fileName());
