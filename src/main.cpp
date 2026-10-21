@@ -747,22 +747,10 @@ int main(int argc, char *argv[]) {
 
     if (parser.isSet(writeOption)) {
         const QString path = parser.value(writeOption);
-        QString error;
         // The name's suffix is the format, as in the save dialog.
-        const auto kind = Interchange::kindOf(path);
-        if (kind == Interchange::PowerPoint) {
-            const auto written = PptxWriter::write(backend.document(), path);
-            if (!written.ok) error = written.error;
-        } else if (kind == Interchange::OpenDocument) {
-            const auto written = OdpWriter::write(backend.document(), path);
-            if (!written.ok) error = written.error;
-        } else if (const auto other = Interchange::unwritableFormat(path); !other.isEmpty()) {
-            error = QStringLiteral("OmaShow can't save %1 files; name a .omashow, .pptx or .odp file.").arg(other);
-        } else if (!Bundle::save(backend.document(), path, &error) && error.isEmpty()) {
-            error = QStringLiteral("%1 could not be written.").arg(path);
-        }
-        if (!error.isEmpty()) {
-            qCritical().noquote() << error;
+        const auto written = Interchange::write(backend.document(), path);
+        if (!written.ok) {
+            qCritical().noquote() << written.error;
             return 1;
         }
         QTextStream(stdout) << path << Qt::endl;

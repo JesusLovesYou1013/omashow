@@ -392,6 +392,9 @@ struct Writer {
     Warnings warnings;
     QVector<Zip::Entry> entries;
     std::shared_ptr<Workers::Job> job;
+    // The main part's type: a show or a template is the same package as a
+    // .pptx under another name.
+    const char *mainType = "application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml";
 
     qreal e = 1;      // EMU per slide unit
     qint64 cx = 12192000, cy = 6858000;
@@ -2047,7 +2050,7 @@ struct Writer {
         x.end();
         if (!authors.isEmpty()) rels.add(relBase + QStringLiteral("commentAuthors"), QStringLiteral("commentAuthors.xml"));
         rels.add(relBase + QStringLiteral("theme"), QStringLiteral("theme/theme1.xml"));
-        part(QStringLiteral("ppt/presentation.xml"), x.finish(), "application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml");
+        part(QStringLiteral("ppt/presentation.xml"), x.finish(), mainType);
         part(relsPath(QStringLiteral("ppt/presentation.xml")), rels.bytes(), nullptr);
 
         Rels root;
@@ -2077,10 +2080,19 @@ static Document forPowerPoint(const Document &document) {
     return copy;
 }
 
-QByteArray bytes(const Document &original, QStringList *warnings, const std::shared_ptr<Workers::Job> &job) {
+static const char *mainTypeFor(const QString &path) {
+    const auto suffix = QFileInfo(path).suffix().toLower();
+    if (suffix == QLatin1String("ppsx")) return "application/vnd.openxmlformats-officedocument.presentationml.slideshow.main+xml";
+    if (suffix == QLatin1String("potx")) return "application/vnd.openxmlformats-officedocument.presentationml.template.main+xml";
+    return "application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml";
+}
+
+QByteArray bytes(const Document &original, QStringList *warnings, const std::shared_ptr<Workers::Job> &job,
+                 const QString &path) {
     const Document document = forPowerPoint(original);
     Writer writer(document);
     writer.job = job;
+    writer.mainType = mainTypeFor(path);
     const auto out = writer.run();
     if (warnings) *warnings = writer.warnings.lines();
     return out;
@@ -2092,6 +2104,7 @@ Report write(const Document &original, const QString &path, const std::shared_pt
     if (document.slides.isEmpty()) { report.error = QStringLiteral("The deck has no slides to write."); return report; }
     Writer writer(document);
     writer.job = job;
+    writer.mainType = mainTypeFor(path);
     const auto data = writer.run();
     const QStringList warnings = writer.warnings.lines();
     if (job && job->canceled) { report.error = QStringLiteral("Cancelled."); return report; }

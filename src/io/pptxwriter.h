@@ -26,8 +26,10 @@ struct Report {
     qint64 bytes = 0;
 };
 
+// `path` only names the kind: a .ppsx or .potx is written as that, anything
+// else as a .pptx.
 QByteArray bytes(const Document &document, QStringList *warnings = nullptr,
-                 const std::shared_ptr<Workers::Job> &job = {});
+                 const std::shared_ptr<Workers::Job> &job = {}, const QString &path = {});
 Report write(const Document &document, const QString &path,
              const std::shared_ptr<Workers::Job> &job = {});
 

@@ -10,8 +10,10 @@
 
 #include <QPair>
 #include <QStringList>
+#include <memory>
 
 #include "core/scene.h"
+#include "core/workers.h"
 
 namespace Interchange {
 
@@ -40,6 +42,22 @@ struct Result {
 // decks come back converted; `kind` says which reader answered.
 Result load(const QString &path);
 Result fromBytes(const QByteArray &raw, Kind kind);
+
+// The deck as the bytes of the format `path`'s suffix names (an OmaShow deck
+// for any name that is no other writable format). Empty when it could not be
+// written; `warnings` gets what was approximated or left out.
+QByteArray encode(const Document &document, const QString &path, QStringList *warnings = nullptr,
+                  const std::shared_ptr<Workers::Job> &job = {});
+
+struct Written {
+    bool ok = false;
+    QString error;
+    QStringList lines;   // what was approximated or left out
+};
+// encode() and the file written in one, replacing it only once complete;
+// `keepPrevious` keeps what was there as "<name>.bak", as saving does.
+Written write(const Document &document, const QString &path, const std::shared_ptr<Workers::Job> &job = {},
+              bool keepPrevious = false);
 
 // For file choosers: every pattern OmaShow can open, native first.
 QStringList openPatterns();
