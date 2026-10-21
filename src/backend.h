@@ -742,6 +742,9 @@ private:
     bool m_journalRunning = false, m_journalAgain = false;
     void cancelJournal();
     bool beginOperation(const QString &label);
+    void chooseSaveFile(const QString &suggested, const QString &why);
+    QString currentSaveSuffix() const;
+    Document withMediaAllowed(Document document) const;
     void endOperation();
     void acceptOpen(const Document &document, const QUrl &url);
     bool loadImageAsync(const QUrl &url, bool replace, int index, const QString &target);

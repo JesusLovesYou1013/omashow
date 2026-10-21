@@ -74,6 +74,16 @@ QVariant filtersFor(const QString &name, const QStringList &patterns) {
     return QVariant::fromValue(filters);
 }
 
+QVariant filtersFor(const QList<QPair<QString, QStringList>> &list) {
+    FileFilters filters;
+    for (const auto &[name, patterns] : list) {
+        FilterRules rules;
+        for (const QString &pattern : patterns) rules.append({0u, pattern});
+        filters.append({name, rules});
+    }
+    return QVariant::fromValue(filters);
+}
+
 QString handleToken() {
     return QStringLiteral("omashow_%1").arg(QRandomGenerator::global()->generate());
 }
@@ -105,6 +115,21 @@ void PortalFileChooser::saveFile(const QString &title, const QString &suggestedN
     request(QStringLiteral("SaveFile"), title, options);
 }
 
+void PortalFileChooser::saveFile(const QString &title, const QString &suggestedName,
+                                 const QList<QPair<QString, QStringList>> &filters, int current) {
+    QVariantMap options;
+    if (!suggestedName.isEmpty())
+        options.insert(QStringLiteral("current_name"), suggestedName);
+    if (!filters.isEmpty()) {
+        options.insert(QStringLiteral("filters"), filtersFor(filters));
+        const auto &shown = filters.value(qBound(0, current, int(filters.size()) - 1));
+        FilterRules rules;
+        for (const QString &pattern : shown.second) rules.append({0u, pattern});
+        options.insert(QStringLiteral("current_filter"), QVariant::fromValue(FileFilter{shown.first, rules}));
+    }
+    request(QStringLiteral("SaveFile"), title, options);
+}
+
 bool PortalFileChooser::request(const QString &method, const QString &title,
                                 QVariantMap options) {
     QDBusConnection bus = QDBusConnection::sessionBus();
@@ -114,6 +139,7 @@ bool PortalFileChooser::request(const QString &method, const QString &title,
     }
 
     clearPending();
+    m_chosenPattern.clear();
 
     const QString token = handleToken();
     options.insert(QStringLiteral("handle_token"), token);
@@ -164,6 +190,12 @@ void PortalFileChooser::handleResponse(uint response, const QVariantMap &results
     if (uris.isEmpty()) {
         emit canceled();
         return;
+    }
+
+    const QVariant filter = results.value(QStringLiteral("current_filter"));
+    if (filter.canConvert<QDBusArgument>()) {
+        const FileFilter chosen = qdbus_cast<FileFilter>(filter.value<QDBusArgument>());
+        if (!chosen.rules.isEmpty()) m_chosenPattern = chosen.rules.first().pattern;
     }
 
     emit selected(QUrl(uris.first()));

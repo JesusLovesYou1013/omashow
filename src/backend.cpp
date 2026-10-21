@@ -38,6 +38,7 @@
 #include "io/interchange.h"
 #include "core/fonts.h"
 #include "io/pdf.h"
+#include "io/pptxwriter.h"
 #include "io/recovery.h"
 #include "sliderows.h"
 #include "render/scenerenderer.h"
@@ -66,10 +67,26 @@ Backend::Backend(QObject *parent)
             };
 
             switch (pending) {
-            case Pending::SaveDeck:
-              ensureSuffix(QStringLiteral(".omashow"));
+            case Pending::SaveDeck: {
+              // An extension typed in the name decides the format. Without one,
+              // the dropdown does; with All Files, the format the deck is
+              // already in (.omashow for a deck never saved).
+              if (!Interchange::canSave(Interchange::kindOf(path)) && Interchange::unwritableFormat(path).isEmpty()) {
+                const QString pattern = m_chooser->chosenPattern();
+                path += pattern.startsWith(QLatin1String("*.")) ? pattern.mid(1) : '.' + currentSaveSuffix();
+              }
+              // A format OmaShow can't write yet is asked about again rather
+              // than quietly saved as something else.
+              const QString other = Interchange::unwritableFormat(path);
+              if (!other.isEmpty()) {
+                const QString why = tr("OmaShow can't save %1 files (.%2) yet.").arg(other, QFileInfo(path).suffix());
+                setStatus(why);
+                chooseSaveFile(QFileInfo(path).completeBaseName() + '.' + currentSaveSuffix(), why);
+                break;
+              }
               saveAsync(path);
               break;
+            }
             case Pending::ExportPdf:
               ensureSuffix(QStringLiteral(".pdf"));
               exportPdfAsync(path, m_pendingPdfStages, m_pendingPdfSkipped);
@@ -447,8 +464,8 @@ void Backend::completeOpen(const Gate &gate) {
   }
 }
 
-// A deck from another application arrives as a new, unsaved OmaShow deck:
-// nothing is ever written back to the file it came from.
+// A deck from another application arrives as a new, unsaved deck: it is
+// written back to the file it came from only when the person saves to it.
 void Backend::acceptImported(const Document &document, const QString &sourcePath, const QString &kind,
                              const QStringList &warnings) {
   acceptOpen(document, QUrl());
@@ -462,10 +479,10 @@ void Backend::acceptImported(const Document &document, const QString &sourcePath
   requestFontCheck(sourcePath);
   const auto name = QFileInfo(sourcePath).fileName();
   setStatus(warnings.isEmpty()
-                ? tr("Opened %1 from %2 — save it as an OmaShow deck").arg(name, kind)
+                ? tr("Opened %1 from %2").arg(name, kind)
                 : warnings.size() == 1
-                ? tr("Opened %1 from %2 with one thing to know — save it as an OmaShow deck").arg(name, kind)
-                : tr("Opened %1 from %2 with %3 things to know — save it as an OmaShow deck").arg(name, kind).arg(warnings.size()));
+                ? tr("Opened %1 from %2 with one thing to know").arg(name, kind)
+                : tr("Opened %1 from %2 with %3 things to know").arg(name, kind).arg(warnings.size()));
 }
 
 QVariantMap Backend::importReport() const {
@@ -762,25 +779,46 @@ void Backend::save() {
 }
 
 void Backend::saveAsDialog() {
+  chooseSaveFile(m_fileUrl.isLocalFile() ? fileName()
+                 : !m_importedFrom.isEmpty() ? Interchange::saveName(m_importedFrom)
+                 : QStringLiteral("Untitled.omashow"), QString());
+}
+
+// The format a deck is already in, for a name typed without one: its own
+// file's, or the file it was opened from, else OmaShow's.
+QString Backend::currentSaveSuffix() const {
+  for (const QString &path : {m_fileUrl.isLocalFile() ? m_fileUrl.toLocalFile() : QString(), m_importedFrom})
+    if (!path.isEmpty() && Interchange::canSave(Interchange::kindOf(path))) return QFileInfo(path).suffix().toLower();
+  return QStringLiteral("omashow");
+}
+
+// The save dialog; the format of the suggested name is the one selected.
+void Backend::chooseSaveFile(const QString &suggested, const QString &why) {
   m_pending = Pending::SaveDeck;
-  const QString suggested = m_fileUrl.isLocalFile() ? fileName()
-                            : !m_importedFrom.isEmpty() ? Interchange::suggestedName(m_importedFrom)
-                            : QStringLiteral("Untitled.omashow");
-  m_chooser->saveFile(tr("Save deck"), suggested, tr("OmaShow decks"),
-                      {QStringLiteral("*.omashow")});
+  const auto filters = Interchange::saveFilters();
+  const QString wanted = QStringLiteral("*.") + QFileInfo(suggested).suffix().toLower();
+  int shown = 0;
+  for (int i = 0; i < filters.size(); ++i) if (filters.at(i).second.contains(wanted)) shown = i;
+  m_chooser->saveFile(why.isEmpty() ? tr("Save deck") : why, suggested, filters, shown);
 }
 
 bool Backend::saveTo(const QString &path) {
   QString error;
-  // A .pptx or .key is never written to: a native deck goes under its own name.
-  if (Interchange::isForeign(Interchange::kindOf(path))) {
-    error = tr("%1 is a %2 file; save the deck as .omashow instead.")
-                .arg(QFileInfo(path).fileName(), Interchange::kindName(Interchange::kindOf(path)));
+  const auto kind = Interchange::kindOf(path);
+  if (const auto other = Interchange::unwritableFormat(path); !other.isEmpty()) {
+    error = tr("OmaShow can't save %1 files (%2); save the deck as .omashow or .pptx instead.")
+                .arg(other, QFileInfo(path).fileName());
     setStatus(error);
     emit failed(error);
     return false;
   }
-  if (!Bundle::save(m_document, path, &error)) {
+  if (kind == Interchange::PowerPoint) {
+    const auto written = PptxWriter::write(withMediaAllowed(m_document), path);
+    if (!written.ok) error = written.error;
+  } else if (!Bundle::save(m_document, path, &error) && error.isEmpty()) {
+    error = tr("%1 could not be written.").arg(QFileInfo(path).fileName());
+  }
+  if (!error.isEmpty()) {
     setStatus(tr("Could not save: %1").arg(error));
     emit failed(error);
     return false;
