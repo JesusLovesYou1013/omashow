@@ -6,10 +6,10 @@ description: >
   `export`, `review`, `ops`. Use when asked to build a deck, a slide show or a
   presentation on this machine, to change or check an existing `.omashow` file,
   or to turn one into a PDF, pictures, film, a package or a PowerPoint deck,
-  or to bring a PowerPoint (.pptx) or Keynote (.key) deck into OmaShow. Triggers: omashow,
+  or to bring a PowerPoint (.pptx), Keynote (.key) or LibreOffice (.odp) deck into OmaShow. Triggers: omashow,
   make me a deck, build a presentation, slide deck, .omashow, presentation to
   PDF, export slides, presenter notes, slide transitions, check my slides,
-  convert this pptx, open this keynote file.
+  convert this pptx, open this keynote file, open this odp.
   NOT for writing the app itself — that is an ordinary Qt project with its own
   notes beside the source.
 ---
@@ -22,7 +22,7 @@ reference; this is how to use it well.
 
 ```
 omashow new <file> [--theme 0-2] [--size 16:9|1920x1080] [--layout 0-2] [--slides N] [--force]
-omashow import <file.pptx|file.key> [--out <file.omashow>] [--force]
+omashow import <file.pptx|.key|.odp…> [--out <file.omashow>] [--force]
 omashow inspect <file> [--slide N] [--full]
 omashow apply <file> [ops.json|-] [--out <file>] [--dry-run] [--keep-going] [--force]
 omashow export <file> --kind pdf|images|video|package|print|pptx --out <path>
@@ -30,12 +30,12 @@ omashow review <file>
 omashow ops [--filter <text>]
 ```
 
-## A deck from PowerPoint or Keynote
+## A deck from PowerPoint, Keynote or LibreOffice
 
 `omashow import talk.pptx` writes `talk.omashow` beside it and answers with
 `warnings`: what could not be brought across, with slide numbers. Read them
-back to the person. `inspect`, `review` and `export` also take a `.pptx` or
-`.key` directly (the answer then carries `source`), but `apply` on one needs
+back to the person. `inspect`, `review` and `export` also take a `.pptx`,
+`.key` or `.odp` directly (the answer then carries `source`), but `apply` on one needs
 `--out`, because the foreign file is never written to. Work on the
 `.omashow` from then on. Check `statistics.missingFonts` in the answer: if the
 deck names typefaces this computer lacks, run `{"op":"missingFonts"}` for a

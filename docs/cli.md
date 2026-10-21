@@ -12,7 +12,7 @@ here, under the same name.
 
 ```
 omashow new <file> [--theme 0-2] [--size 16:9|1920x1080] [--layout 0-2] [--slides N] [--force]
-omashow import <file.pptx|file.key> [--out <file.omashow>] [--force]
+omashow import <file.pptx|.key|.odp…> [--out <file.omashow>] [--force]
 omashow inspect <file> [--slide N] [--full]
 omashow apply <file> [ops.json|-] [--out <file>] [--dry-run] [--keep-going] [--force]
 omashow export <file> --kind pdf|images|video|package|print|pptx --out <path> [...]
@@ -33,8 +33,8 @@ Themes are 0, 1 and 2; layouts are 0, 1 and 2; sizes are `16:9`, `4:3`, `16:10`,
 
 ## Bringing one in
 
-A PowerPoint deck (`.pptx`) or a Keynote deck (`.key`) reads anywhere a deck is
-named — `inspect`, `review` and `export` take one directly — and `import`
+A PowerPoint deck (`.pptx`), a Keynote deck (`.key`) or an OpenDocument deck
+(`.odp`, `.otp`, `.fodp`) reads anywhere a deck is named — `inspect`, `review` and `export` take one directly — and `import`
 turns it into an OmaShow deck beside it:
 
 ```

@@ -115,10 +115,10 @@ bool readDeck(Backend &backend, const QString &path, QString *error, QVariantMap
 // unless --force says so.
 int importDeck(Backend &backend, const Flags &flags) {
     const auto path = flags.rest.value(0);
-    if (path.isEmpty()) return refuse(QStringLiteral("name the .pptx or .key file to import."));
+    if (path.isEmpty()) return refuse(QStringLiteral("name the PowerPoint, Keynote or OpenDocument file to import."));
     const auto kind = Interchange::kindOf(path);
     if (!Interchange::isForeign(kind))
-        return refuse(QStringLiteral("import takes a .pptx or .key file; %1 is not one.").arg(QFileInfo(path).fileName()));
+        return refuse(QStringLiteral("import takes a PowerPoint, Keynote or OpenDocument file; %1 is not one.").arg(QFileInfo(path).fileName()));
     QString trouble;
     QVariantMap source;
     if (!readDeck(backend, path, &trouble, &source)) return refuse(trouble);
@@ -243,7 +243,7 @@ void usage() {
     out() << QStringLiteral(R"(OmaShow — presentations for Omarchy, without a window.
 
   omashow new <file> [--theme 0-2] [--size 16:9|1920x1080] [--layout 0-2] [--slides N] [--force]
-  omashow import <file.pptx|file.key> [--out <file.omashow>] [--force]
+  omashow import <file.pptx|.key|.odp…> [--out <file.omashow>] [--force]
   omashow inspect <file> [--slide N] [--full]
   omashow apply <file> [ops.json|-] [--out <file>] [--dry-run] [--keep-going] [--force]
   omashow export <file> --kind pdf|images|video|package|print|pptx --out <path>

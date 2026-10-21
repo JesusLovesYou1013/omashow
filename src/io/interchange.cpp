@@ -4,6 +4,7 @@
 
 #include "io/bundle.h"
 #include "io/keynote.h"
+#include "io/odp.h"
 #include "io/odpwriter.h"
 #include "io/pptx.h"
 #include "io/pptxwriter.h"
@@ -36,9 +37,9 @@ const Format kFormats[] = {
     {"ppt", "PowerPoint 97–2003 presentation", false, false},
     {"pps", "PowerPoint 97–2003 show", false, false},
     {"pot", "PowerPoint 97–2003 template", false, false},
-    {"odp", "OpenDocument presentation (LibreOffice Impress)", false, true},
-    {"otp", "OpenDocument presentation template (LibreOffice Impress)", false, true},
-    {"fodp", "Flat OpenDocument presentation (LibreOffice Impress)", false, true},
+    {"odp", "OpenDocument presentation (LibreOffice Impress)", true, true},
+    {"otp", "OpenDocument presentation template (LibreOffice Impress)", true, true},
+    {"fodp", "Flat OpenDocument presentation (LibreOffice Impress)", true, true},
     {"dps", "WPS Presentation", false, false},
     {"dpt", "WPS Presentation template", false, false},
     {"prdx", "SoftMaker Presentations", false, false},
@@ -81,8 +82,7 @@ QString kindName(Kind kind) {
 Result load(const QString &path) {
     Result result;
     result.kind = kindOf(path);
-    // OpenDocument is written, not yet read.
-    if (result.kind == Unknown || result.kind == OpenDocument) {
+    if (result.kind == Unknown) {
         const auto *format = formatOf(path);
         result.error = format ? QStringLiteral("%1 is a %2 file, which OmaShow can't open yet.")
                                     .arg(QFileInfo(path).fileName(), QString::fromUtf8(format->name))
@@ -132,6 +132,14 @@ Result fromBytes(const QByteArray &raw, Kind kind) {
         result.warnings = read.warnings;
         // Office fonts this computer lacks become their measured free matches;
         // what they were is kept and written back on PowerPoint save.
+        if (result.ok && !qEnvironmentVariableIsSet("OMASHOW_NO_FONT_SWAP")) FontSwap::apply(result.document);
+    } else if (kind == OpenDocument) {
+        const auto read = Odp::read(raw);
+        result.ok = read.ok;
+        result.error = read.error;
+        result.document = read.document;
+        result.warnings = read.warnings;
+        // Office fonts named in the deck become their free matches, as on PowerPoint import.
         if (result.ok && !qEnvironmentVariableIsSet("OMASHOW_NO_FONT_SWAP")) FontSwap::apply(result.document);
     } else if (kind == Keynote) {
         const auto read = Keynote::read(raw);
