@@ -4,7 +4,10 @@
 
 #include "io/bundle.h"
 #include "io/keynote.h"
+#include "io/odpwriter.h"
 #include "io/pptx.h"
+#include "io/pptxwriter.h"
+#include "io/zip.h"
 
 #include <QDir>
 #include <QFile>
@@ -24,8 +27,8 @@ struct Format {
 const Format kFormats[] = {
     {"omashow", "OmaShow deck", true, true},
     {"pptx", "PowerPoint presentation", true, true},
-    {"ppsx", "PowerPoint show", false, false},
-    {"potx", "PowerPoint template", false, false},
+    {"ppsx", "PowerPoint show", true, true},
+    {"potx", "PowerPoint template", true, true},
     {"pptm", "PowerPoint macro-enabled presentation", false, false},
     {"ppsm", "PowerPoint macro-enabled show", false, false},
     {"potm", "PowerPoint macro-enabled template", false, false},
@@ -55,7 +58,10 @@ Kind kindOf(const QString &path) {
     // A Keynote package is a folder; a shell may hand it over with a slash.
     const auto suffix = QFileInfo(QDir::cleanPath(path)).suffix().toLower();
     if (suffix == QStringLiteral("omashow")) return Native;
-    if (suffix == QStringLiteral("pptx")) return PowerPoint;
+    // A PowerPoint show or template is the same package as a .pptx, with
+    // another name for its main part.
+    if (suffix == QStringLiteral("pptx") || suffix == QStringLiteral("ppsx") || suffix == QStringLiteral("potx"))
+        return PowerPoint;
     if (suffix == QStringLiteral("key")) return Keynote;
     if (suffix == QStringLiteral("odp") || suffix == QStringLiteral("otp") || suffix == QStringLiteral("fodp")) return OpenDocument;
     return Unknown;
@@ -137,6 +143,44 @@ Result fromBytes(const QByteArray &raw, Kind kind) {
         result.error = QStringLiteral("not a deck OmaShow can open.");
     }
     return result;
+}
+
+QByteArray encode(const Document &document, const QString &path, QStringList *warnings,
+                  const std::shared_ptr<Workers::Job> &job) {
+    if (warnings) warnings->clear();
+    switch (kindOf(path)) {
+    case PowerPoint: return PptxWriter::bytes(document, warnings, job, path);
+    case OpenDocument: return OdpWriter::bytes(document, OdpWriter::flavorOf(path), warnings, job);
+    default: return unwritableFormat(path).isEmpty() ? Bundle::toBytes(document) : QByteArray();
+    }
+}
+
+Written write(const Document &document, const QString &path, const std::shared_ptr<Workers::Job> &job,
+              bool keepPrevious) {
+    Written written;
+    const auto name = QFileInfo(path).fileName();
+    if (const auto other = unwritableFormat(path); !other.isEmpty()) {
+        written.error = QStringLiteral("OmaShow can't save %1 files (%2).").arg(other, name);
+        return written;
+    }
+    if (document.slides.isEmpty() && kindOf(path) != Native && kindOf(path) != Unknown) {
+        written.error = QStringLiteral("The deck has no slides to write.");
+        return written;
+    }
+    const auto data = encode(document, path, &written.lines, job);
+    if (job && job->canceled) { written.error = QStringLiteral("Cancelled."); return written; }
+    if (data.isEmpty()) { written.error = QStringLiteral("%1 could not be written.").arg(name); return written; }
+    if (data.size() > Zip::kMaxArchiveBytes) {
+        written.error = QStringLiteral("The deck is too large to save: it holds more than 512 MB of pictures and film. "
+                                       "Link films instead of embedding them, or split the deck.");
+        return written;
+    }
+    if (!Workers::write(path, data, &written.error, job, keepPrevious)) {
+        if (written.error.isEmpty()) written.error = QStringLiteral("%1 could not be written.").arg(name);
+        return written;
+    }
+    written.ok = true;
+    return written;
 }
 
 QStringList openPatterns() {

@@ -793,35 +793,24 @@ QString Backend::currentSaveSuffix() const {
   return QStringLiteral("omashow");
 }
 
-// The save dialog; the format of the suggested name is the one selected.
+// The save dialog. An OmaShow deck shows the OmaShow format; a deck in any
+// other format shows All Files, so a name typed without an extension saves
+// back into the format it is in.
 void Backend::chooseSaveFile(const QString &suggested, const QString &why) {
   m_pending = Pending::SaveDeck;
   const auto filters = Interchange::saveFilters();
-  const QString wanted = QStringLiteral("*.") + QFileInfo(suggested).suffix().toLower();
-  int shown = 0;
-  for (int i = 0; i < filters.size(); ++i) if (filters.at(i).second.contains(wanted)) shown = i;
+  const bool native = Interchange::kindOf(suggested) == Interchange::Native;
+  const int shown = native ? 0 : int(filters.size()) - 1;
   m_chooser->saveFile(why.isEmpty() ? tr("Save deck") : why, suggested, filters, shown);
 }
 
 bool Backend::saveTo(const QString &path) {
-  QString error;
+  // The name's suffix is the format; films go into foreign formats only as
+  // the deck allows.
   const auto kind = Interchange::kindOf(path);
-  if (const auto other = Interchange::unwritableFormat(path); !other.isEmpty()) {
-    error = tr("OmaShow can't save %1 files (%2); save the deck as .omashow, .pptx or .odp instead.")
-                .arg(other, QFileInfo(path).fileName());
-    setStatus(error);
-    emit failed(error);
-    return false;
-  }
-  if (kind == Interchange::PowerPoint) {
-    const auto written = PptxWriter::write(withMediaAllowed(m_document), path);
-    if (!written.ok) error = written.error;
-  } else if (kind == Interchange::OpenDocument) {
-    const auto written = OdpWriter::write(withMediaAllowed(m_document), path);
-    if (!written.ok) error = written.error;
-  } else if (!Bundle::save(m_document, path, &error) && error.isEmpty()) {
-    error = tr("%1 could not be written.").arg(QFileInfo(path).fileName());
-  }
+  const auto document = kind == Interchange::Native || kind == Interchange::Unknown ? m_document : withMediaAllowed(m_document);
+  const auto written = Interchange::write(document, path, {}, true);
+  const QString error = written.error;
   if (!error.isEmpty()) {
     setStatus(tr("Could not save: %1").arg(error));
     emit failed(error);

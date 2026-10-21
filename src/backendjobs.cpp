@@ -95,8 +95,8 @@ Document Backend::withMediaAllowed(Document document) const {
 
 void Backend::saveAsync(const QString &path) {
     if (!beginOperation(tr("Saving deck…"))) return;
-    // The name's suffix is the format: .pptx is written as PowerPoint, .odp,
-    // .otp and .fodp as OpenDocument, anything else as an OmaShow deck.
+    // The name's suffix is the format (Interchange::write); anything that is no
+    // other format is an OmaShow deck.
     const auto kind = Interchange::kindOf(path);
     const auto document = kind == Interchange::Native || kind == Interchange::Unknown ? m_document : withMediaAllowed(m_document);
     const auto job = m_operationJob;
@@ -125,18 +125,11 @@ void Backend::saveAsync(const QString &path) {
         setStatus(tr("Saved %1").arg(fileName()));
         emit saved();
     });
-    watcher->setFuture(QtConcurrent::run(Workers::io(), [document, path, job, kind] {
+    watcher->setFuture(QtConcurrent::run(Workers::io(), [document, path, job] {
         QString error;
         if (job->canceled) return error;
-        const QByteArray bytes = kind == Interchange::PowerPoint ? PptxWriter::bytes(document, nullptr, job)
-                               : kind == Interchange::OpenDocument ? OdpWriter::bytes(document, OdpWriter::flavorOf(path), nullptr, job)
-                               : Bundle::toBytes(document);
-        if (job->canceled) return error;
-        if (bytes.isEmpty())
-            return kind == Interchange::OpenDocument ? QStringLiteral("the deck could not be written as OpenDocument.")
-                                                     : QStringLiteral("the deck could not be written as PowerPoint.");
-        Workers::write(path, bytes, &error, job, true);
-        return error;
+        const auto written = Interchange::write(document, path, job, true);
+        return job->canceled ? error : written.error;
     }));
 }
 
