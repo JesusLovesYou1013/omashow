@@ -109,17 +109,23 @@ Sheet {
                     readonly property real radius: width / 2
                     Canvas {
                         anchors.fill: parent
+                        // Two gradients, not a colour per pixel: hue around the circle
+                        // (anticlockwise from the right, as pick() reads it), then white
+                        // fading out towards the edge, which is the strength.
                         onPaint: {
-                            const ctx = getContext("2d"), size = width, r = size / 2
-                            const image = ctx.createImageData(size, size), d = image.data
-                            for (let y = 0; y < size; ++y) for (let x = 0; x < size; ++x) {
-                                const dx = x - r, dy = r - y, dist = Math.sqrt(dx * dx + dy * dy) / r
-                                if (dist > 1) continue
-                                let h = Math.atan2(dy, dx) / (2 * Math.PI); if (h < 0) h += 1
-                                const c = Qt.hsva(h, dist, 1, 1), i = (y * size + x) * 4
-                                d[i] = c.r * 255; d[i + 1] = c.g * 255; d[i + 2] = c.b * 255; d[i + 3] = 255
+                            const ctx = getContext("2d"), r = width / 2
+                            ctx.reset()
+                            const hues = ctx.createConicalGradient(r, r, 0)
+                            for (let i = 0; i <= 6; ++i) hues.addColorStop(i / 6, Qt.hsva((i % 6) / 6, 1, 1, 1))
+                            const strength = ctx.createRadialGradient(r, r, 0, r, r, r)
+                            strength.addColorStop(0, Qt.rgba(1, 1, 1, 1))
+                            strength.addColorStop(1, Qt.rgba(1, 1, 1, 0))
+                            for (const fill of [hues, strength]) {
+                                ctx.fillStyle = fill
+                                ctx.beginPath()
+                                ctx.arc(r, r, r, 0, 2 * Math.PI)
+                                ctx.fill()
                             }
-                            ctx.drawImage(image, 0, 0)
                         }
                     }
                     Rectangle { anchors.fill: parent; radius: width / 2; color: "black"; opacity: 1 - root.val }

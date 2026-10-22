@@ -66,9 +66,16 @@ Rectangle {
         return value !== undefined ? value : Theme.controlBg
     }
     readonly property string swatchText: {
+        // Selected words (or the caret while typing) have a colour of their own.
+        if (isText && (range.active || range.caret))
+            return (range.mixed ?? []).includes("color") ? "" : (range.color ?? "")
         if (several && isMixed(isText ? "textColor" : "fill")) return ""
         const value = root.isText ? root.sel.textColor : root.sel.fill
         return value !== undefined ? value : ""
+    }
+    function pickColour(v) {
+        if (isText && (range.active || range.caret)) backend.formatSelection("color", v)
+        else backend.setSelectedProperty(isText ? "textColor" : "fill", v)
     }
 
     property string tabFor: ""
@@ -277,9 +284,9 @@ Rectangle {
                 visible: !root.isImage && !root.isMedia
                 ColorField {
                     value: root.swatchText
-                    placeholder: root.several ? qsTr("Mixed") : ""
+                    placeholder: root.several || (root.range.mixed ?? []).includes("color") ? qsTr("Mixed") : ""
                     accessibleName: root.isText ? qsTr("Text colour") : qsTr("Fill colour")
-                    onPicked: v => backend.setSelectedProperty(root.isText ? "textColor" : "fill", v)
+                    onPicked: v => root.pickColour(v)
                 }
             }
 
