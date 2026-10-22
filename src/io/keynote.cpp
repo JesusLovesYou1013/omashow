@@ -182,10 +182,23 @@ public:
             o.fillStyle = 0;
             if (const RVNGProperty *c = pick("draw:fill-color")) o.fill = QColor(QString::fromUtf8(c->getStr().cstr()));
         } else if (fillKind == QLatin1String("gradient")) {
-            o.fillStyle = 1;
-            if (const RVNGProperty *c = pick("draw:start-color")) o.fill = QColor(QString::fromUtf8(c->getStr().cstr()));
-            if (const RVNGProperty *c = pick("draw:end-color")) o.fillSecondary = QColor(QString::fromUtf8(c->getStr().cstr()));
-            if (const RVNGProperty *a = pick("draw:angle")) o.fillAngle = a->getDouble();
+            const RVNGProperty *style = pick("draw:style");
+            const bool radial = style && QString::fromUtf8(style->getStr().cstr()) == QLatin1String("radial");
+            QColor start, end;
+            if (const RVNGProperty *c = pick("draw:start-color")) start = QColor(QString::fromUtf8(c->getStr().cstr()));
+            if (const RVNGProperty *c = pick("draw:end-color")) end = QColor(QString::fromUtf8(c->getStr().cstr()));
+            if (radial) {
+                // From the outside (start) in, as in OpenDocument; OmaShow names the middle first.
+                o.fillStyle = 2;
+                if (end.isValid()) o.fill = end;
+                if (start.isValid()) o.fillSecondary = start;
+            } else {
+                o.fillStyle = 1;
+                if (start.isValid()) o.fill = start;
+                if (end.isValid()) o.fillSecondary = end;
+                // OpenDocument turns anticlockwise from top-to-bottom; OmaShow clockwise from left-to-right.
+                if (const RVNGProperty *a = pick("draw:angle")) o.fillAngle = std::fmod(std::fmod(90.0 - a->getDouble(), 360.0) + 360.0, 360.0);
+            }
         } else if (fillKind == QLatin1String("bitmap")) {
             o.fillStyle = 5;
         } else o.fillStyle = 5;
@@ -210,7 +223,8 @@ public:
                 if (const RVNGProperty *a = pick("draw:shadow-opacity")) o.shadowColor.setAlphaF(qBound(0.0, a->getDouble() > 1 ? a->getDouble() / 100.0 : a->getDouble(), 1.0));
                 const RVNGProperty *x = pick("draw:shadow-offset-x"), *y = pick("draw:shadow-offset-y");
                 if (x) o.shadowX = (x->getUnit() == librevenge::RVNG_POINT ? x->getDouble() / 72.0 : x->getDouble()) * k;
-                if (y) o.shadowY = (y->getUnit() == librevenge::RVNG_POINT ? y->getDouble() / 72.0 : y->getDouble()) * k;
+                // libetonyek turns Keynote's angle (anticlockwise, y up) without flipping y for the page.
+                if (y) o.shadowY = -(y->getUnit() == librevenge::RVNG_POINT ? y->getDouble() / 72.0 : y->getDouble()) * k;
             }
         }
     }
@@ -234,10 +248,11 @@ public:
     SpanLook spanLook(const RVNGPropertyList &props) const {
         SpanLook look = spans.isEmpty() ? SpanLook() : spans.last();
         if (has(props, "fo:font-size")) look.sizePt = inches(props, "fo:font-size") * 72.0;
-        if (has(props, "fo:font-weight")) look.bold = str(props, "fo:font-weight") == QLatin1String("bold");
-        if (has(props, "fo:font-style")) look.italic = str(props, "fo:font-style") == QLatin1String("italic");
-        if (has(props, "style:text-underline-type")) look.underline = str(props, "style:text-underline-type") != QLatin1String("none");
-        if (has(props, "style:text-line-through-type")) look.strike = str(props, "style:text-line-through-type") != QLatin1String("none");
+        // libetonyek names these only when they are on: a stretch without them has them off.
+        look.bold = has(props, "fo:font-weight") && str(props, "fo:font-weight") == QLatin1String("bold");
+        look.italic = has(props, "fo:font-style") && str(props, "fo:font-style") == QLatin1String("italic");
+        look.underline = has(props, "style:text-underline-type") && str(props, "style:text-underline-type") != QLatin1String("none");
+        look.strike = has(props, "style:text-line-through-type") && str(props, "style:text-line-through-type") != QLatin1String("none");
         if (has(props, "fo:color")) look.color = color(props, "fo:color");
         if (has(props, "style:font-name")) look.family = str(props, "style:font-name");
         if (has(props, "fo:text-transform")) {
@@ -449,6 +464,7 @@ public:
         const RVNGPropertyListVector *vec = props.child("svg:points");
         if (!vec) return path;
         RVNGPropertyListVector::Iter it(*vec);
+        it.rewind();   // without it the first entry is skipped
         bool first = true;
         while (it.next()) {
             const QPointF p(inches(it(), "svg:x") * k, inches(it(), "svg:y") * k);
@@ -467,6 +483,7 @@ public:
         if (!vec) return;
         QPainterPath path;
         RVNGPropertyListVector::Iter it(*vec);
+        it.rewind();   // without it the first entry is skipped
         while (it.next()) {
             const auto &cmd = it();
             const auto action = str(cmd, "librevenge:path-action");
@@ -612,6 +629,7 @@ public:
         if (!columns) columns = props.child("librevenge:columns");
         if (columns) {
             RVNGPropertyListVector::Iter it(*columns);
+            it.rewind();
             while (it.next()) tableColumns.append(qMax(0.01, inches(it(), "style:column-width", 1)));
         }
     }
