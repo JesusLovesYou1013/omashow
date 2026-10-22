@@ -70,9 +70,11 @@ Item {
         if (!root.editingText)
             return
         root.editingText = false
-        backend.setTextEditing(false)
+        // Committed while still editing, so a look waiting at the caret
+        // reaches the letters typed with it.
         backend.setTextSelection(0, 0)
         backend.commitTextDocument(root.textSlideId,root.textObjectId,textEditor.textDocument)
+        backend.setTextEditing(false)
         root.forceActiveFocus()
     }
 
@@ -501,6 +503,8 @@ Item {
                 }
             }
             selectByMouse: true
+            // The words stay selected while the colour chooser is in front.
+            persistentSelection: true
             // The inspector formats whatever is selected here, so it needs to
             // know what that is — and to be rebuilt when the looks change.
             onSelectionStartChanged: {
@@ -517,21 +521,26 @@ Item {
             Connections {
                 target: backend
                 function onTextFormattingChanged() {
-                    if (!textEditor.activeFocus) return
+                    if (!root.editingText) return
                     const from = textEditor.selectionStart, to = textEditor.selectionEnd
                     textEditor.text = backend.selection.editHtml
                     textEditor.select(from, to)
                     root.typingFormatLen = textEditor.length
                 }
                 function onTypingFormatChanged() {
-                    if (!textEditor.activeFocus) return
+                    if (!root.editingText) return
                     root.typingFormatLen = textEditor.length
                     backend.applyTypingFormatToEditor(textEditor.textDocument, textEditor.cursorPosition)
                 }
             }
 
             Keys.onEscapePressed: root.commitTextEdit()
-            onActiveFocusChanged: if (!activeFocus) root.commitTextEdit()
+            onActiveFocusChanged: if (!activeFocus && !Sheets.holdsTextEdit) root.commitTextEdit()
+            // The colour chooser closed: the words it coloured go on being edited.
+            Connections {
+                target: Sheets
+                function onHoldsTextEditChanged() { if (!Sheets.holdsTextEdit && root.editingText) textEditor.forceActiveFocus() }
+            }
         }
     }
 

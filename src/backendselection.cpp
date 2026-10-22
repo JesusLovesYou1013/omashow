@@ -805,6 +805,8 @@ QVariantMap Backend::textSelection() const {
       underline = m_typingFormat.value(QLatin1String("underline")).toInt() == 1;
     if (m_typingFormat.contains(QLatin1String("strike")))
       strike = m_typingFormat.value(QLatin1String("strike")).toInt() == 1;
+    if (m_typingFormat.contains(QLatin1String("color")))
+      colour = QColor(m_typingFormat.value(QLatin1String("color")).toString());
   }
   values["weight"] = weight;
   values["italic"] = italic;
@@ -856,11 +858,13 @@ bool Backend::formatSelection(const QString &key, const QVariant &value) {
   // Caret with nothing selected: remember the look for the next typed stretch.
   if (m_textSelectionEnd <= m_textSelectionStart) {
     if (!m_textEditing) return false;
-    static const QStringList keys{"weight", "italic", "underline", "strike"};
+    static const QStringList keys{"weight", "italic", "underline", "strike", "color"};
     if (!keys.contains(key)) return false;
     if (key == QLatin1String("weight")) {
       const int weight = value.toInt();
       if (weight != 0 && (weight < 100 || weight > 900)) return false;
+    } else if (key == QLatin1String("color")) {
+      if (!QColor(value.toString()).isValid()) return false;
     } else {
       const int state = value.toInt();
       if (state < 0 || state > 2) return false;
@@ -887,20 +891,39 @@ bool Backend::formatSelection(const QString &key, const QVariant &value) {
 
 void Backend::applyTypingFormatToEditor(QQuickTextDocument *editor, int cursorPos) {
   if (!editor || !editor->textDocument() || m_typingFormat.isEmpty()) return;
+  const auto format = [this] {
+    QTextCharFormat format;
+    if (m_typingFormat.contains(QLatin1String("weight")))
+      format.setFontWeight(QFont::Weight(m_typingFormat.value(QLatin1String("weight")).toInt()));
+    if (m_typingFormat.contains(QLatin1String("italic")))
+      format.setFontItalic(m_typingFormat.value(QLatin1String("italic")).toInt() == 1);
+    if (m_typingFormat.contains(QLatin1String("underline")))
+      format.setFontUnderline(m_typingFormat.value(QLatin1String("underline")).toInt() == 1);
+    if (m_typingFormat.contains(QLatin1String("strike")))
+      format.setFontStrikeOut(m_typingFormat.value(QLatin1String("strike")).toInt() == 1);
+    if (m_typingFormat.contains(QLatin1String("color")))
+      format.setForeground(QColor(m_typingFormat.value(QLatin1String("color")).toString()));
+    return format;
+  };
   QTextCursor cursor(editor->textDocument());
   cursor.setPosition(qBound(0, cursorPos, editor->textDocument()->characterCount() - 1));
-  QTextCharFormat format;
-  if (m_typingFormat.contains(QLatin1String("weight")))
-    format.setFontWeight(QFont::Weight(m_typingFormat.value(QLatin1String("weight")).toInt()));
-  if (m_typingFormat.contains(QLatin1String("italic")))
-    format.setFontItalic(m_typingFormat.value(QLatin1String("italic")).toInt() == 1);
-  if (m_typingFormat.contains(QLatin1String("underline")))
-    format.setFontUnderline(m_typingFormat.value(QLatin1String("underline")).toInt() == 1);
-  if (m_typingFormat.contains(QLatin1String("strike")))
-    format.setFontStrikeOut(m_typingFormat.value(QLatin1String("strike")).toInt() == 1);
-  cursor.mergeCharFormat(format);
+  cursor.mergeCharFormat(format());
   // So the next keypress inherits it even with an empty document.
   cursor.setCharFormat(cursor.charFormat());
+  // The editor types with a format of its own, taken from the letter before
+  // the caret, so letters typed now are given the waiting look as they land.
+  if (m_typingDocument == editor->textDocument()) return;
+  if (m_typingDocument) disconnect(m_typingDocument, nullptr, this, nullptr);
+  m_typingDocument = editor->textDocument();
+  connect(m_typingDocument, &QTextDocument::contentsChange, this, [this, format](int position, int removed, int added) {
+    if (m_typingFormat.isEmpty() || m_typingFormatting || added <= removed) return;
+    m_typingFormatting = true;
+    QTextCursor typed(m_typingDocument);
+    typed.setPosition(position);
+    typed.setPosition(qMin(position + added - removed, m_typingDocument->characterCount() - 1), QTextCursor::KeepAnchor);
+    typed.mergeCharFormat(format());
+    m_typingFormatting = false;
+  });
 }
 
 // --- named text styles -------------------------------------------------------

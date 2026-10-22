@@ -34,9 +34,10 @@ RowLayout {
         ToolTip.text: qsTr("Choose a colour")
         TapHandler {
             onTapped: {
+                Sheets.holdsTextEdit = true
                 const picker = chooser.createObject(root)
                 picker.chosen.connect(c => root.picked(c))
-                picker.closed.connect(() => picker.destroy())
+                picker.closed.connect(() => { Sheets.holdsTextEdit = false; picker.destroy() })
                 picker.openWith(root.value)
             }
         }

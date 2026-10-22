@@ -9,6 +9,7 @@
 #include <QString>
 #include <QTimer>
 #include <QUrl>
+#include <QPointer>
 #include <QQuickTextDocument>
 
 #include <QVariantMap>
@@ -839,6 +840,10 @@ private:
     // Looks chosen at a caret with nothing selected: applied to the next typed
     // stretch on commit, and mirrored into the live editor.
     QVariantMap m_typingFormat;
+    // The slide editor's document while a caret look waits: letters typed into
+    // it take that look as they land (see applyTypingFormatToEditor).
+    QPointer<QTextDocument> m_typingDocument;
+    bool m_typingFormatting = false;
     QStringList m_selectedIds;
     QStringList m_groupScope;
     QVariantMap m_diagramPreview;
