@@ -2084,6 +2084,8 @@ static const char *mainTypeFor(const QString &path) {
     const auto suffix = QFileInfo(path).suffix().toLower();
     if (suffix == QLatin1String("ppsx")) return "application/vnd.openxmlformats-officedocument.presentationml.slideshow.main+xml";
     if (suffix == QLatin1String("potx")) return "application/vnd.openxmlformats-officedocument.presentationml.template.main+xml";
+    // SoftMaker Presentations keeps the same package under its own name for the main part.
+    if (suffix == QLatin1String("prdx")) return "application/sm.presentations.presentationml.presentation.main+xml";
     return "application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml";
 }
 
