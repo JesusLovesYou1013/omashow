@@ -12,6 +12,7 @@
 #include "core/svgasset.h"
 #include "core/table.h"
 #include "core/textruns.h"
+#include "io/metafile.h"
 #include "io/zip.h"
 #include "render/textlayout.h"
 
@@ -1241,8 +1242,10 @@ struct Reader {
         QString error;
         if (suffix == QLatin1String("svg")) {
             if (SvgAsset::decode(o, bytes, &error)) return true;
-        } else if (suffix == QLatin1String("emf") || suffix == QLatin1String("wmf")) {
-            warnings.add(QStringLiteral("A picture in the %1 format was left out").arg(suffix.toUpper()), slideNumber);
+        } else if (suffix == QLatin1String("emf") || suffix == QLatin1String("wmf") || Metafile::recognise(bytes)) {
+            const QByteArray svg = Metafile::toSvg(bytes, &error);
+            if (!svg.isEmpty() && SvgAsset::decode(o, svg, &error)) return true;
+            warnings.add(QStringLiteral("A picture in the %1 format could not be drawn").arg(suffix.toUpper()), slideNumber);
             return false;
         } else if (ImageAsset::decode(o, bytes, &error)) return true;
         warnings.add(QStringLiteral("A picture could not be read: %1").arg(error.isEmpty() ? suffix : error), slideNumber);

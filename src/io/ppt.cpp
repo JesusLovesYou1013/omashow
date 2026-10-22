@@ -2,11 +2,13 @@
 
 #include "core/edit.h"
 #include "core/imageasset.h"
+#include "core/svgasset.h"
 #include "core/link.h"
 #include "core/shape.h"
 #include "core/table.h"
 #include "core/textruns.h"
 #include "io/cfb.h"
+#include "io/metafile.h"
 #include "render/textlayout.h"
 
 #include <QBuffer>
@@ -472,7 +474,32 @@ struct Reader {
                 bytes = file + dib;
                 break;
             }
-            case 0xF01A: case 0xF01B: case 0xF01C:
+            case 0xF01A: case 0xF01B: {                          // EMF, WMF: a metafile header, then deflated
+                const qint64 at = r.at + skip;
+                const quint32 full = u32(source, at);
+                QByteArray data = source.mid(at + 34, qMin<qint64>(u32(source, at + 28), r.len - skip - 34));
+                if (quint8(source.at(at + 32)) == 0x00) {
+                    QByteArray out(int(qMin<quint32>(full, 64u << 20)), Qt::Uninitialized);
+                    uLongf length = uLongf(out.size());
+                    if (uncompress(reinterpret_cast<Bytef *>(out.data()), &length,
+                                   reinterpret_cast<const Bytef *>(data.constData()), uLong(data.size())) == Z_OK) {
+                        out.truncate(int(length));
+                        data = out;
+                    } else data.clear();
+                }
+                QString error;
+                const QByteArray svg = Metafile::toSvg(data, &error);
+                if (!svg.isEmpty() && SvgAsset::decode(o, svg, &error)) {
+                    SceneObject keep;
+                    keep.type = ObjectType::Image;
+                    ImageAsset::copyData(keep, o);
+                    pictureCache.insert(pib, keep);
+                    return true;
+                }
+                why = QStringLiteral("metafile");
+                break;
+            }
+            case 0xF01C:
                 why = QStringLiteral("metafile");
                 break;
             default:
@@ -489,7 +516,7 @@ struct Reader {
         }
         badPictures.insert(pib);
         if (why == QLatin1String("metafile"))
-            warnings.add(QStringLiteral("A picture in a Windows or Mac drawing format (WMF, EMF or PICT) was left out"), slide);
+            warnings.add(QStringLiteral("A picture in a drawing format OmaShow can't draw (Mac PICT, or a damaged WMF/EMF) was left out"), slide);
         else
             warnings.add(QStringLiteral("A picture could not be read%1").arg(error.isEmpty() ? QString() : QStringLiteral(": ") + error), slide);
         return false;
