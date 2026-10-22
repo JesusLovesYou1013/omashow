@@ -426,6 +426,277 @@ int captureInterface(QQmlApplicationEngine &engine, Backend &backend, Presenter 
         qInfo().noquote() << QStringLiteral("ui-shot cursor: %1 = %2 (want %3) %4")
                                  .arg(what).arg(got).arg(want).arg(got == want ? "ok" : "FAIL");
     };
+    // COLOR-PICK-2 (OMASHOW_UI_SHOT_COLORS=1): every colour setting, by hand. Each swatch is
+    // clicked, the chooser photographed, a colour typed in its hex box (or a grid swatch
+    // clicked) and "Use colour" clicked; what the deck now holds is read back.
+    if (qEnvironmentVariableIsSet("OMASHOW_UI_SHOT_COLORS")) {
+        int failures = 0, cases = 0;
+        const auto centreOf = [](QQuickItem *item) { return item->mapToScene(QPointF(item->width() / 2, item->height() / 2)); };
+        const auto click = [&](QQuickItem *item) {
+            const QPointF at = centreOf(item);
+            mouse(QEvent::MouseMove, at, Qt::NoButton);
+            mouse(QEvent::MouseButtonPress, at, Qt::LeftButton);
+            mouse(QEvent::MouseButtonRelease, at, Qt::NoButton);
+        };
+        const auto sameRgb = [](const QString &a, const QString &b) {
+            const QColor x(a), y(b);
+            return x.isValid() && y.isValid() && x.rgb() == y.rgb();
+        };
+        // The visible swatch whose field is named so; the inspectors' tabs and scroll are moved to it.
+        const auto swatchFor = [&](const QString &name) -> QQuickItem * {
+            const std::function<void(QQuickItem *, QList<QQuickItem *> &)> all = [&](QQuickItem *item, QList<QQuickItem *> &out) {
+                if (item->objectName() == QLatin1String("colorSwatch")) out.append(item);
+                for (QQuickItem *child : item->childItems()) all(child, out);
+            };
+            QList<QPair<QQuickItem *, int>> places{{nullptr, 0}};
+            for (const char *bar : {"inspectorTabs", "designInspectorTabs"})
+                if (QQuickItem *tabs = findItem(window->contentItem(), QString::fromLatin1(bar)); tabs && tabs->isVisible())
+                    for (int tab = 0; tab < 4; ++tab) places.append({tabs, tab});
+            for (const auto &[tabs, tab] : places) {
+                if (tabs) { tabs->setProperty("currentIndex", tab); settle(150); }
+                QList<QQuickItem *> found;
+                all(window->contentItem(), found);
+                for (QQuickItem *swatch : found) {
+                    QQuickItem *field = swatch->parentItem();
+                    if (!swatch->isVisible() || !field || field->property("accessibleName").toString() != name) continue;
+                    bool shown = true;
+                    for (QQuickItem *up = field; up; up = up->parentItem()) if (!up->isVisible()) shown = false;
+                    if (!shown) continue;
+                    // Scrolled into view, if it sits in a scrolling panel.
+                    for (QQuickItem *up = field->parentItem(); up; up = up->parentItem())
+                        if (up->inherits("QQuickFlickable")) {
+                            const QPointF in = field->mapToItem(up->property("contentItem").value<QQuickItem *>(), QPointF());
+                            up->setProperty("contentY", qMax(0.0, in.y() - 60));
+                            settle(100);
+                            break;
+                        }
+                    return swatch;
+                }
+            }
+            return nullptr;
+        };
+        const auto pickerOf = [&](QQuickItem *swatch) -> QObject * {
+            for (QObject *o : swatch->parentItem()->findChildren<QObject *>(QStringLiteral("colorPicker")))
+                if (o->property("opened").toBool()) return o;
+            return nullptr;
+        };
+        const auto inPicker = [&](QObject *picker, const QString &name) {
+            auto *content = picker->property("contentItem").value<QQuickItem *>();
+            for (QQuickItem *up = content; up && up->parentItem(); up = up->parentItem()) content = up;
+            return content ? findItem(content, name) : nullptr;
+        };
+        // how: "hex" types the colour, "grid" clicks the first grid swatch, "cancel" cancels.
+        const auto check = [&](const QString &label, const QString &field, const QString &want, const QString &how,
+                               const std::function<QString()> &read, const std::function<bool()> &also = {}) {
+            ++cases;
+            QQuickItem *swatch = swatchFor(field);
+            if (!swatch) { ++failures; qInfo().noquote() << "ui-shot colors:" << label << "- no visible swatch FAIL"; return; }
+            const QString before = read();
+            save(window, QStringLiteral("color-before-%1").arg(cases, 2, 10, QLatin1Char('0')));
+            click(swatch);
+            settle(250);
+            QObject *picker = pickerOf(swatch);
+            if (!picker) {
+                ++failures;
+                const QPointF at = centreOf(swatch);
+                QQuickItem *hit = window->contentItem()->childAt(at.x(), at.y());
+                int pickers = 0;
+                for (QObject *o : window->findChildren<QObject *>(QStringLiteral("colorPicker"))) { ++pickers; Q_UNUSED(o); }
+                save(window, QStringLiteral("color-fail-%1").arg(cases, 2, 10, QLatin1Char('0')));
+                qInfo().noquote() << "ui-shot colors:" << label << "- click opened no chooser FAIL at" << at
+                                  << "window" << window->size() << "top item" << (hit ? hit->objectName() : QString()) << "pickers" << pickers;
+                return;
+            }
+            save(window, QStringLiteral("color-%1").arg(cases, 2, 10, QLatin1Char('0')));
+            if (cases == 1)
+                if (QQuickItem *pickerTabs = inPicker(picker, QStringLiteral("colorPickerTabs"))) {
+                    pickerTabs->setProperty("currentIndex", 1);
+                    save(window, QStringLiteral("color-wheel"));
+                    pickerTabs->setProperty("currentIndex", 0);
+                    settle(100);
+                }
+            QString expected = want;
+            if (how == QLatin1String("grid")) {
+                QQuickItem *grid = inPicker(picker, QStringLiteral("colorSwatches"));
+                QQuickItem *first = nullptr;
+                const std::function<void(QQuickItem *)> seek = [&](QQuickItem *item) {
+                    if (first) return;
+                    if (item != grid && item->property("swatch").isValid() && item->width() > 4
+                        && item->property("swatch").value<QColor>().hsvSaturationF() > 0.3) { first = item; return; }
+                    for (QQuickItem *c : item->childItems()) seek(c);
+                };
+                if (grid) seek(grid);
+                if (first) { expected = first->property("swatch").value<QColor>().name(); click(first); }
+            } else if (how == QLatin1String("hex")) {
+                if (QQuickItem *hex = inPicker(picker, QStringLiteral("colorPickerHex"))) {
+                    hex->setProperty("text", want);
+                    QMetaObject::invokeMethod(hex, "textEdited");
+                }
+            }
+            settle(100);
+            QQuickItem *button = inPicker(picker, how == QLatin1String("cancel") ? QStringLiteral("colorPickerCancel") : QStringLiteral("colorPickerUse"));
+            if (button) click(button);
+            settle(300);
+            const QString after = read();
+            const bool closed = !pickerOf(swatch);
+            bool ok = closed && (how == QLatin1String("cancel") ? after == before : sameRgb(after, expected));
+            const bool extra = !also || also();
+            if (!ok || !extra) ++failures;
+            qInfo().noquote() << QStringLiteral("ui-shot colors: %1: %2 -> %3 (want %4)%5 %6")
+                                     .arg(label, before, after, how == QLatin1String("cancel") ? before : expected,
+                                          extra ? QString() : QStringLiteral(" [side check failed]"),
+                                          ok && extra ? QStringLiteral("ok") : QStringLiteral("FAIL"));
+        };
+        const auto selection = [&](const char *key) { return backend.property("selection").toMap().value(QLatin1String(key)).toString(); };
+        QQuickItem *editCanvas = findItem(window->contentItem(), QStringLiteral("editCanvas"));
+        backend.setProperty("currentSlide", 0);
+
+        // Slide background, nothing selected.
+        backend.select(QString());
+        settle(200);
+        check(QStringLiteral("slide background"), QStringLiteral("Slide background colour"), QStringLiteral("#203040"), QStringLiteral("hex"),
+              [&] { return backend.property("slideDesign").toMap().value("background").toString(); });
+
+        // A text box: the whole box, then selected words, then cancel.
+        backend.addText();
+        settle(300);
+        const QString textId = backend.selectedId();
+        check(QStringLiteral("text box colour"), QStringLiteral("Text colour"), QStringLiteral("#c03030"), QStringLiteral("hex"),
+              [&] { return selection("textColor"); });
+        check(QStringLiteral("text box colour, cancelled"), QStringLiteral("Text colour"), QString(), QStringLiteral("cancel"),
+              [&] { return selection("textColor"); });
+        if (editCanvas) {
+            QMetaObject::invokeMethod(editCanvas, "beginTextEdit");
+            settle(200);
+            if (QQuickItem *editor = findItem(window->contentItem(), QStringLiteral("inlineTextEditor")))
+                QMetaObject::invokeMethod(editor, "select", Q_ARG(int, 0), Q_ARG(int, 4));
+            settle(200);
+            const QString boxBefore = selection("textColor");
+            check(QStringLiteral("selected words' colour"), QStringLiteral("Text colour"), QStringLiteral("#2060c0"), QStringLiteral("grid"),
+                  // The selected letters' own colour, as the deck holds it.
+                  [&] { return backend.textSelection().value("color").toString(); },
+                  [&] { return sameRgb(selection("textColor"), boxBefore); });
+            // The caret: the colour waits for the next letter typed.
+            QQuickItem *editor = findItem(window->contentItem(), QStringLiteral("inlineTextEditor"));
+            const int end = editor ? editor->property("length").toInt() : 0;
+            if (editor) QMetaObject::invokeMethod(editor, "select", Q_ARG(int, end), Q_ARG(int, end));
+            settle(200);
+            // The colour the deck holds for the letter after the caret's place.
+            const auto lastRun = [&] {
+                backend.setTextSelection(end, end + 1);
+                const QString colour = backend.textSelection().value("color").toString();
+                backend.setTextSelection(0, 0);
+                return colour;
+            };
+            check(QStringLiteral("caret colour"), QStringLiteral("Text colour"), QStringLiteral("#20a0a0"), QStringLiteral("hex"),
+                  [&] { return backend.textSelection().value("color").toString(); },
+                  [&] {
+                      // Typed after the choice, the letter carries it into the deck.
+                      if (!editor || !editor->hasActiveFocus()) return false;
+                      QKeyEvent press(QEvent::KeyPress, Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
+                      QKeyEvent release(QEvent::KeyRelease, Qt::Key_X, Qt::NoModifier, QStringLiteral("x"));
+                      QCoreApplication::sendEvent(window, &press);
+                      QCoreApplication::sendEvent(window, &release);
+                      settle(200);
+                      QMetaObject::invokeMethod(editCanvas, "commitTextEdit");
+                      settle(200);
+                      return sameRgb(lastRun(), QStringLiteral("#20a0a0")) && !sameRgb(selection("textColor"), QStringLiteral("#20a0a0"));
+                  });
+            QMetaObject::invokeMethod(editCanvas, "commitTextEdit");
+            settle(200);
+        }
+
+        // A shape: fill, second colour (gradient), outline, shadow.
+        backend.addRect();
+        settle(300);
+        check(QStringLiteral("shape fill"), QStringLiteral("Fill colour"), QStringLiteral("#30a060"), QStringLiteral("hex"), [&] { return selection("fill"); });
+        backend.setSelectedProperty(QStringLiteral("fillStyle"), 1);
+        settle(200);
+        check(QStringLiteral("shape second fill colour"), QStringLiteral("Second fill colour"), QStringLiteral("#f0c020"), QStringLiteral("hex"), [&] { return selection("fillSecondary"); });
+        check(QStringLiteral("shape outline"), QStringLiteral("Stroke colour"), QStringLiteral("#602080"), QStringLiteral("hex"), [&] { return selection("strokeColor"); });
+        backend.setSelectedProperty(QStringLiteral("shadowEnabled"), true);
+        settle(200);
+        check(QStringLiteral("shape shadow"), QStringLiteral("Shadow colour"), QStringLiteral("#404040"), QStringLiteral("hex"), [&] { return selection("shadowColor"); });
+        const QString shapeA = backend.selectedId();
+
+        // A connector between two shapes.
+        backend.addRect();
+        settle(200);
+        backend.setSelectedProperty(QStringLiteral("x"), 1200);
+        const QString shapeB = backend.selectedId();
+        backend.selectIds(QStringList{shapeA, shapeB});
+        settle(200);
+        if (backend.connectSelected()) {
+            settle(300);
+            check(QStringLiteral("connector"), QStringLiteral("Connector colour"), QStringLiteral("#e06010"), QStringLiteral("hex"), [&] { return selection("strokeColor"); });
+        } else { ++failures; ++cases; qInfo() << "ui-shot colors: connector - could not connect FAIL"; }
+
+        // A picture's tint.
+        {
+            QImage dot(64, 64, QImage::Format_RGB32);
+            dot.fill(QColor(200, 200, 200));
+            const QString png = outDir + QStringLiteral("/tint-source.png");
+            dot.save(png);
+            if (backend.insertImage(QUrl::fromLocalFile(png))) {
+                settle(400);
+                check(QStringLiteral("picture tint"), QStringLiteral("Tint colour"), QStringLiteral("#806040"), QStringLiteral("hex"), [&] { return selection("imageTint"); });
+            } else { ++failures; ++cases; qInfo() << "ui-shot colors: picture - not inserted FAIL"; }
+        }
+
+        // A chart's first series.
+        if (backend.addChart(0)) {
+            settle(400);
+            const auto series = [&] {
+                const QVariantList list = backend.property("selection").toMap().value("chartSeries").toList();
+                return list.isEmpty() ? QString() : list.first().toMap().value("color").toString();
+            };
+            check(QStringLiteral("chart series"), QStringLiteral("Series colour"), QStringLiteral("#a02060"), QStringLiteral("hex"), series);
+        }
+
+        // A table cell: text, fill, border (the table editor).
+        if (backend.addTable(3, 3)) {
+            settle(300);
+            QObject *editor = nullptr;
+            for (QObject *o : window->findChildren<QObject *>(QStringLiteral("tableEditor"))) editor = o;
+            if (editor) QMetaObject::invokeMethod(editor, "show");
+            settle(400);
+            const auto cell = [&](const char *key) {
+                return std::function<QString()>([&backend, key] {
+                    return backend.tableModel()->property("selection").toMap().value(QLatin1String(key)).toString();
+                });
+            };
+            check(QStringLiteral("table cell text"), QStringLiteral("Cell text colour"), QStringLiteral("#103070"), QStringLiteral("hex"), cell("textColor"));
+            check(QStringLiteral("table cell fill"), QStringLiteral("Cell fill colour"), QStringLiteral("#e0f0ff"), QStringLiteral("hex"), cell("fill"));
+            check(QStringLiteral("table cell border"), QStringLiteral("Cell border colour"), QStringLiteral("#505050"), QStringLiteral("hex"), cell("borderColor"));
+            if (editor) QMetaObject::invokeMethod(editor, "close");
+            settle(200);
+        }
+
+        // Masters and layouts: master background, placeholder colour, theme colours.
+        backend.select(QString());
+        window->setProperty("workspace", 1);
+        settle(500);
+        const auto design = [&] { return backend.property("design").toMap(); };
+        check(QStringLiteral("master background"), QStringLiteral("Master background colour"), QStringLiteral("#182028"), QStringLiteral("hex"),
+              [&] { const QVariantList m = design().value("masters").toList(); return m.isEmpty() ? QString() : m.first().toMap().value("background").toString(); });
+        for (const QString &name : {QStringLiteral("Placeholder text colour"), QStringLiteral("Placeholder fill colour")})
+            if (swatchFor(name))
+                check(QStringLiteral("layout placeholder"), name, QStringLiteral("#d0a000"), QStringLiteral("hex"), [&, name] {
+                    QObject *ws = nullptr;
+                    for (QObject *o : window->findChildren<QObject *>(QStringLiteral("designWorkspace"))) ws = o;
+                    const QVariantMap p = ws ? ws->property("placeholder").toMap() : QVariantMap();
+                    return p.value(name.contains(QLatin1String("text")) ? "textColor" : "fill").toString();
+                });
+        for (const QString &token : {QStringLiteral("background"), QStringLiteral("foreground"), QStringLiteral("muted"), QStringLiteral("accent")})
+            check(QStringLiteral("theme colour %1").arg(token), QStringLiteral("Theme colour %1").arg(token),
+                  token == QLatin1String("accent") ? QString() : QStringLiteral("#%1").arg(QString::number(0x305070 + token.size() * 0x111111, 16)),
+                  token == QLatin1String("accent") ? QStringLiteral("grid") : QStringLiteral("hex"),
+                  [&, token] { return design().value("colors").toMap().value(token).toString(); });
+        window->setProperty("workspace", 0);
+        settle(200);
+        qInfo().noquote() << QStringLiteral("ui-shot colors: %1 of %2 cases failed").arg(failures).arg(cases);
+        return failures ? 3 : 0;
+    }
     QQuickItem *canvas = findItem(window->contentItem(), QStringLiteral("editSlideView"));
     if (canvas && backend.slideCount() > 1) {
         backend.select(QString());
