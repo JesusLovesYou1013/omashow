@@ -7,6 +7,7 @@
 #include "io/odp.h"
 #include "io/odpwriter.h"
 #include "io/ppt.h"
+#include "io/pptwriter.h"
 #include "io/pptx.h"
 #include "io/pptxwriter.h"
 #include "io/zip.h"
@@ -35,14 +36,14 @@ const Format kFormats[] = {
     {"ppsm", "PowerPoint macro-enabled show", false, false},
     {"potm", "PowerPoint macro-enabled template", false, false},
     {"key", "Keynote presentation", true, false},
-    {"ppt", "PowerPoint 97–2003 presentation", true, false},
-    {"pps", "PowerPoint 97–2003 show", true, false},
-    {"pot", "PowerPoint 97–2003 template", true, false},
+    {"ppt", "PowerPoint 97–2003 presentation", true, true},
+    {"pps", "PowerPoint 97–2003 show", true, true},
+    {"pot", "PowerPoint 97–2003 template", true, true},
     {"odp", "OpenDocument presentation (LibreOffice Impress)", true, true},
     {"otp", "OpenDocument presentation template (LibreOffice Impress)", true, true},
     {"fodp", "Flat OpenDocument presentation (LibreOffice Impress)", true, true},
-    {"dps", "WPS Presentation", true, false},
-    {"dpt", "WPS Presentation template", true, false},
+    {"dps", "WPS Presentation", true, true},
+    {"dpt", "WPS Presentation template", true, true},
     {"prdx", "SoftMaker Presentations", false, false},
     {"prd", "SoftMaker Presentations (older)", false, false},
 };
@@ -170,6 +171,7 @@ QByteArray encode(const Document &document, const QString &path, QStringList *wa
     if (warnings) warnings->clear();
     switch (kindOf(path)) {
     case PowerPoint: return PptxWriter::bytes(document, warnings, job, path);
+    case PowerPointBinary: return PptWriter::bytes(document, warnings, job);
     case OpenDocument: return OdpWriter::bytes(document, OdpWriter::flavorOf(path), warnings, job);
     default: return unwritableFormat(path).isEmpty() ? Bundle::toBytes(document) : QByteArray();
     }
