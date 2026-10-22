@@ -1782,6 +1782,21 @@ struct Reader {
             Look look;
             readFill(pr, look, color);
             if (!look.blipRid.isEmpty() && picturePath) *picturePath = pkg.target(partPath, look.blipRid);
+            // A gradient of its own is drawn, as theme ones are, rather than kept as its first colour.
+            if (const Node *grad = pr->child(QStringLiteral("gradFill")); grad && picturePath) {
+                const QString key = QStringLiteral("generated/background-%1.png").arg(QString::number(qHash(partPath)));
+                if (!generated.contains(key)) {
+                    const QImage out = drawGradient(grad, color, QSize(qRound(doc.size.width()), qRound(doc.size.height())));
+                    if (!out.isNull()) {
+                        QByteArray png;
+                        QBuffer buffer(&png);
+                        buffer.open(QIODevice::WriteOnly);
+                        out.save(&buffer, "PNG");
+                        generated.insert(key, png);
+                    }
+                }
+                if (generated.contains(key)) { *picturePath = key; return QColor(); }
+            }
             if (look.fillSet && look.fillStyle != 5 && look.fill.isValid()) return look.fill;
             if (!look.blipRid.isEmpty()) return QColor();
             return look.fillSet ? QColor(Qt::white) : QColor();
@@ -1795,6 +1810,38 @@ struct Reader {
             if (c.isValid()) return c;
         }
         return QColor();
+    }
+
+    // A gradFill drawn over a whole slide.
+    QImage drawGradient(const Node *style, const ColorContext &ph, const QSize &size) const {
+        QGradientStops stops;
+        if (const Node *list = style->child(QStringLiteral("gsLst")))
+            for (const auto &gs : list->kids) stops.append({gs.attr(QStringLiteral("pos")).toDouble() / 100000.0, colorIn(&gs, ph)});
+        if (stops.size() < 2) return QImage();
+        std::sort(stops.begin(), stops.end(), [](const auto &a, const auto &b) { return a.first < b.first; });
+        QImage out(size, QImage::Format_ARGB32);
+        out.fill(Qt::transparent);
+        QPainter painter(&out);
+        if (const Node *path = style->child(QStringLiteral("path"))) {
+            // A circle or rectangle from its fillToRect centre outwards.
+            const Node *to = path->child(QStringLiteral("fillToRect"));
+            const qreal l = to ? to->attr(QStringLiteral("l")).toDouble() / 100000.0 : 0.5, t = to ? to->attr(QStringLiteral("t")).toDouble() / 100000.0 : 0.5;
+            const qreal r = to ? to->attr(QStringLiteral("r")).toDouble() / 100000.0 : 0.5, b = to ? to->attr(QStringLiteral("b")).toDouble() / 100000.0 : 0.5;
+            const QPointF centre(size.width() * (l + (1 - l - r) / 2), size.height() * (t + (1 - t - b) / 2));
+            QRadialGradient g(centre, std::hypot(size.width(), size.height()) / 2);
+            g.setStops(stops);
+            painter.fillRect(out.rect(), g);
+        } else {
+            const qreal angle = (style->child(QStringLiteral("lin")) ? style->child(QStringLiteral("lin"))->attr(QStringLiteral("ang")).toDouble() : 0) / 60000.0;
+            const qreal rad = qDegreesToRadians(angle);
+            const QPointF c(size.width() / 2.0, size.height() / 2.0);
+            const qreal half = (std::abs(std::cos(rad)) * size.width() + std::abs(std::sin(rad)) * size.height()) / 2;
+            QLinearGradient g(c - QPointF(std::cos(rad), std::sin(rad)) * half, c + QPointF(std::cos(rad), std::sin(rad)) * half);
+            g.setStops(stops);
+            painter.fillRect(out.rect(), g);
+        }
+        painter.end();
+        return out;
     }
 
     // Pictures made while reading (theme backgrounds), by the path they are
@@ -1870,33 +1917,8 @@ struct Reader {
             painter.end();
             out = base;
         } else {
-            QGradientStops stops;
-            if (const Node *list = style->child(QStringLiteral("gsLst")))
-                for (const auto &gs : list->kids) stops.append({gs.attr(QStringLiteral("pos")).toDouble() / 100000.0, colorIn(&gs, ph)});
-            if (stops.size() < 2) return {};
-            std::sort(stops.begin(), stops.end(), [](const auto &a, const auto &b) { return a.first < b.first; });
-            out = QImage(size, QImage::Format_ARGB32);
-            out.fill(Qt::transparent);
-            QPainter painter(&out);
-            if (const Node *path = style->child(QStringLiteral("path"))) {
-                // A circle or rectangle from its fillToRect centre outwards.
-                const Node *to = path->child(QStringLiteral("fillToRect"));
-                const qreal l = to ? to->attr(QStringLiteral("l")).toDouble() / 100000.0 : 0.5, t = to ? to->attr(QStringLiteral("t")).toDouble() / 100000.0 : 0.5;
-                const qreal r = to ? to->attr(QStringLiteral("r")).toDouble() / 100000.0 : 0.5, b = to ? to->attr(QStringLiteral("b")).toDouble() / 100000.0 : 0.5;
-                const QPointF centre(size.width() * (l + (1 - l - r) / 2), size.height() * (t + (1 - t - b) / 2));
-                QRadialGradient g(centre, std::hypot(size.width(), size.height()) / 2);
-                g.setStops(stops);
-                painter.fillRect(out.rect(), g);
-            } else {
-                const qreal angle = (style->child(QStringLiteral("lin")) ? style->child(QStringLiteral("lin"))->attr(QStringLiteral("ang")).toDouble() : 0) / 60000.0;
-                const qreal rad = qDegreesToRadians(angle);
-                const QPointF c(size.width() / 2.0, size.height() / 2.0);
-                const qreal half = (std::abs(std::cos(rad)) * size.width() + std::abs(std::sin(rad)) * size.height()) / 2;
-                QLinearGradient g(c - QPointF(std::cos(rad), std::sin(rad)) * half, c + QPointF(std::cos(rad), std::sin(rad)) * half);
-                g.setStops(stops);
-                painter.fillRect(out.rect(), g);
-            }
-            painter.end();
+            out = drawGradient(style, ph, size);
+            if (out.isNull()) return {};
         }
         QByteArray png;
         QBuffer buffer(&png);
