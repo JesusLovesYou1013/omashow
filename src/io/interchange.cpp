@@ -45,7 +45,7 @@ const Format kFormats[] = {
     {"fodp", "Flat OpenDocument presentation (LibreOffice Impress)", true, true},
     {"dps", "WPS Presentation", true, true},
     {"dpt", "WPS Presentation template", true, true},
-    {"prdx", "SoftMaker Presentations", false, false},
+    {"prdx", "SoftMaker Presentations", true, true},
     {"prd", "SoftMaker Presentations (older)", false, false},
 };
 
@@ -75,9 +75,10 @@ Kind kindOf(const QString &path) {
     // A Keynote package is a folder; a shell may hand it over with a slash.
     const auto suffix = QFileInfo(QDir::cleanPath(path)).suffix().toLower();
     if (suffix == QStringLiteral("omashow")) return Native;
-    // A PowerPoint show or template is the same package as a .pptx, with
-    // another name for its main part.
-    if (suffix == QStringLiteral("pptx") || suffix == QStringLiteral("ppsx") || suffix == QStringLiteral("potx"))
+    // A PowerPoint show or template, or a SoftMaker deck, is the same package
+    // as a .pptx, with another name for its main part.
+    if (suffix == QStringLiteral("pptx") || suffix == QStringLiteral("ppsx") || suffix == QStringLiteral("potx") ||
+        suffix == QStringLiteral("prdx"))
         return PowerPoint;
     if (suffix == QStringLiteral("ppt") || suffix == QStringLiteral("pps") || suffix == QStringLiteral("pot") ||
         suffix == QStringLiteral("dps") || suffix == QStringLiteral("dpt"))
