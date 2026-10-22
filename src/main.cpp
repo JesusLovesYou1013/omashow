@@ -466,6 +466,7 @@ int captureInterface(QQmlApplicationEngine &engine, Backend &backend, Presenter 
             const auto text = backend.effectState(QStringLiteral("text")), shape = backend.effectState(QStringLiteral("shape"));
             qInfo().noquote() << "ui-shot effects:" << name << "target" << panel->property("target").toString()
                               << "text" << text.value("count").toInt() << "glow" << text.value("glowRadius").toDouble() << "shadow" << text.value("shadowEnabled").toBool()
+                              << "inner" << text.value("shadowInner").toBool() << "sy" << text.value("shadowScaleY").toDouble() << "kx" << text.value("shadowSkewX").toDouble()
                               << "| shape" << shape.value("count").toInt() << "glow" << shape.value("glowRadius").toDouble() << "shadow" << shape.value("shadowEnabled").toBool()
                               << "inner" << shape.value("shadowInner").toBool();
         };
@@ -489,6 +490,23 @@ int captureInterface(QQmlApplicationEngine &engine, Backend &backend, Presenter 
         objects = onSlide(4);
         if (const QString id = firstOf(objects, [](const QVariantMap &m) { return m.value("name").toString() == QLatin1String("Shape"); }); !id.isEmpty()) {
             ++found; backend.select(id); fold(true); shoot(QStringLiteral("shape-inner-expanded"));
+        }
+        // TEXT-SHADOW-2: words with an inner, then a perspective, shadow; the
+        // shadow unfolded (glow folded) so the Inner and Perspective presets show.
+        const auto shadowOnly = [&] {
+            fold(false);
+            panel->setProperty("shadowOpen", true);
+            panel->setProperty("shadowPresetsOpen", true);
+            settle(200);
+        };
+        for (const auto &[slide, name] : {std::pair{7, "text-inner-expanded"}, std::pair{8, "text-perspective-expanded"}}) {
+            objects = onSlide(slide);
+            const QString id = firstOf(objects, [](const QVariantMap &m) {
+                const QString n = m.value("name").toString();
+                return n == QLatin1String("Shadow") || n == QLatin1String("Text");
+            });
+            if (id.isEmpty()) continue;
+            ++found; backend.select(id); shadowOnly(); shoot(QString::fromLatin1(name));
         }
         // A filled box with words: both, so "Apply to" shows; then the box chosen.
         objects = onSlide(6);
@@ -516,8 +534,8 @@ int captureInterface(QQmlApplicationEngine &engine, Backend &backend, Presenter 
             const QString plain = firstOf(objects, [](const QVariantMap &m) { return m.value("name").toString() == QLatin1String("Text box"); }, 1);
             if (!plain.isEmpty()) { backend.select(plain); fold(true); shoot(QStringLiteral("plain-textbox-expanded")); }
         }
-        qInfo().noquote() << "ui-shot effects: cases" << found << (found == 4 ? "ok" : "FAIL");
-        return found == 4 ? 0 : 3;
+        qInfo().noquote() << "ui-shot effects: cases" << found << (found == 6 ? "ok" : "FAIL");
+        return found == 6 ? 0 : 3;
     }
     // COLOR-PICK-2 (OMASHOW_UI_SHOT_COLORS=1): every colour setting, by hand. Each swatch is
     // clicked, the chooser photographed, a colour typed in its hex box (or a grid swatch
