@@ -6,6 +6,7 @@
 #include "io/keynote.h"
 #include "io/odp.h"
 #include "io/odpwriter.h"
+#include "io/ppt.h"
 #include "io/pptx.h"
 #include "io/pptxwriter.h"
 #include "io/zip.h"
@@ -34,14 +35,14 @@ const Format kFormats[] = {
     {"ppsm", "PowerPoint macro-enabled show", false, false},
     {"potm", "PowerPoint macro-enabled template", false, false},
     {"key", "Keynote presentation", true, false},
-    {"ppt", "PowerPoint 97–2003 presentation", false, false},
-    {"pps", "PowerPoint 97–2003 show", false, false},
-    {"pot", "PowerPoint 97–2003 template", false, false},
+    {"ppt", "PowerPoint 97–2003 presentation", true, false},
+    {"pps", "PowerPoint 97–2003 show", true, false},
+    {"pot", "PowerPoint 97–2003 template", true, false},
     {"odp", "OpenDocument presentation (LibreOffice Impress)", true, true},
     {"otp", "OpenDocument presentation template (LibreOffice Impress)", true, true},
     {"fodp", "Flat OpenDocument presentation (LibreOffice Impress)", true, true},
-    {"dps", "WPS Presentation", false, false},
-    {"dpt", "WPS Presentation template", false, false},
+    {"dps", "WPS Presentation", true, false},
+    {"dpt", "WPS Presentation template", true, false},
     {"prdx", "SoftMaker Presentations", false, false},
     {"prd", "SoftMaker Presentations (older)", false, false},
 };
@@ -63,6 +64,9 @@ Kind kindOf(const QString &path) {
     // another name for its main part.
     if (suffix == QStringLiteral("pptx") || suffix == QStringLiteral("ppsx") || suffix == QStringLiteral("potx"))
         return PowerPoint;
+    if (suffix == QStringLiteral("ppt") || suffix == QStringLiteral("pps") || suffix == QStringLiteral("pot") ||
+        suffix == QStringLiteral("dps") || suffix == QStringLiteral("dpt"))
+        return PowerPointBinary;
     if (suffix == QStringLiteral("key")) return Keynote;
     if (suffix == QStringLiteral("odp") || suffix == QStringLiteral("otp") || suffix == QStringLiteral("fodp")) return OpenDocument;
     return Unknown;
@@ -72,6 +76,7 @@ QString kindName(Kind kind) {
     switch (kind) {
     case Native: return QStringLiteral("OmaShow");
     case PowerPoint: return QStringLiteral("PowerPoint");
+    case PowerPointBinary: return QStringLiteral("PowerPoint 97–2003");
     case Keynote: return QStringLiteral("Keynote");
     case OpenDocument: return QStringLiteral("OpenDocument");
     case Unknown: break;
@@ -132,6 +137,13 @@ Result fromBytes(const QByteArray &raw, Kind kind) {
         result.warnings = read.warnings;
         // Office fonts this computer lacks become their measured free matches;
         // what they were is kept and written back on PowerPoint save.
+        if (result.ok && !qEnvironmentVariableIsSet("OMASHOW_NO_FONT_SWAP")) FontSwap::apply(result.document);
+    } else if (kind == PowerPointBinary) {
+        const auto read = Ppt::read(raw);
+        result.ok = read.ok;
+        result.error = read.error;
+        result.document = read.document;
+        result.warnings = read.warnings;
         if (result.ok && !qEnvironmentVariableIsSet("OMASHOW_NO_FONT_SWAP")) FontSwap::apply(result.document);
     } else if (kind == OpenDocument) {
         const auto read = Odp::read(raw);
