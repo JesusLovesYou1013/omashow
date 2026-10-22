@@ -243,7 +243,7 @@ void usage() {
     out() << QStringLiteral(R"(OmaShow — presentations for Omarchy, without a window.
 
   omashow new <file> [--theme 0-2] [--size 16:9|1920x1080] [--layout 0-2] [--slides N] [--force]
-  omashow import <file.pptx|.key|.odp…> [--out <file.omashow>] [--force]
+  omashow import <file.pptx|.ppt|.key|.odp…> [--out <file.omashow>] [--force]
   omashow inspect <file> [--slide N] [--full]
   omashow apply <file> [ops.json|-] [--out <file>] [--dry-run] [--keep-going] [--force]
   omashow export <file> --kind pdf|images|video|package|print|pptx --out <path>

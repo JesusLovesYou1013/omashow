@@ -5,7 +5,7 @@
 // A `.pptx` (PowerPoint, Google Slides, LibreOffice) or a `.key` (Keynote)
 // opens like any other deck, but what arrives is a new, unsaved OmaShow deck:
 // it is written back only when the person saves to that name themselves, and
-// what it could not bring across is said, not hidden. The readers live in `pptx.*` and `keynote.*`; this is
+// what it could not bring across is said, not hidden. The readers live in `pptx.*`, `ppt.*`, `odp.*` and `keynote.*`; this is
 // the one place that decides which of them a path needs.
 
 #include <QPair>
@@ -17,11 +17,12 @@
 
 namespace Interchange {
 
-enum Kind { Native, PowerPoint, Keynote, OpenDocument, Unknown };
+// PowerPointBinary: the 97–2003 format (.ppt, .pps, .pot) and WPS's (.dps, .dpt).
+enum Kind { Native, PowerPoint, PowerPointBinary, Keynote, OpenDocument, Unknown };
 
 Kind kindOf(const QString &path);
 QString kindName(Kind kind);
-inline bool isForeign(Kind kind) { return kind == PowerPoint || kind == Keynote || kind == OpenDocument; }
+inline bool isForeign(Kind kind) { return kind == PowerPoint || kind == PowerPointBinary || kind == Keynote || kind == OpenDocument; }
 // The kinds a deck can be saved as: the name typed in the save dialog decides.
 inline bool canSave(Kind kind) { return kind == Native || kind == PowerPoint || kind == OpenDocument; }
 // A presentation format known by its suffix that OmaShow can't write (.ppt,
