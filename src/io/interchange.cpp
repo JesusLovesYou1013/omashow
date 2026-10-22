@@ -56,6 +56,19 @@ const Format *formatOf(const QString &path) {
     return nullptr;
 }
 
+// What the bytes are, when the name says a deck of another kind: WPS saves
+// both PowerPoint packages under its own names, and renamed decks are common.
+Kind contentKind(const QByteArray &raw, Kind named) {
+    if (named != PowerPoint && named != PowerPointBinary && named != OpenDocument) return named;
+    if (raw.startsWith(QByteArray::fromHex("D0CF11E0A1B11AE1"))) return PowerPointBinary;
+    if (raw.startsWith("PK")) {
+        const Zip::Reader zip(raw);
+        if (zip.contains(QStringLiteral("[Content_Types].xml"))) return PowerPoint;
+        if (zip.contains(QStringLiteral("mimetype")) || zip.contains(QStringLiteral("content.xml"))) return OpenDocument;
+    }
+    return named;   // a flat .fodp is XML; anything else is left to the named reader
+}
+
 } // namespace
 
 Kind kindOf(const QString &path) {
@@ -117,7 +130,8 @@ Result load(const QString &path) {
         result.error = QStringLiteral("%1 could not be read.").arg(QFileInfo(path).fileName());
         return result;
     }
-    return fromBytes(file.readAll(), result.kind);
+    const QByteArray raw = file.readAll();
+    return fromBytes(raw, contentKind(raw, result.kind));
 }
 
 Result fromBytes(const QByteArray &raw, Kind kind) {
