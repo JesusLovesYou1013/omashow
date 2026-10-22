@@ -526,6 +526,11 @@ struct RunLook {
     int shadow = -1;
     QColor shadowColor;
     qreal shadowDist = 0, shadowDir = 0, shadowBlur = 0;
+    // TEXT-SHADOW-2: an inner shadow (innerShdw), or the outer one's size,
+    // slant and anchor (sx/sy %, kx/ky degrees, algn as SceneObject counts it).
+    bool shadowInner = false;
+    qreal shadowSx = 100, shadowSy = 100, shadowKx = 0, shadowKy = 0;
+    int shadowAlign = 7;
 };
 
 // Bold on top of any face is bold; otherwise a weight-named family's weight.
@@ -608,7 +613,9 @@ void applyRPr(RunLook &run, const Node *rPr, const TextContext &ctx) {
             if (c.isValid()) { run.glowRad = glow->attr(QStringLiteral("rad")).toDouble(); run.glowColor = c; }
         }
         run.shadow = 0;
-        if (const Node *shadow = effects->child(QStringLiteral("outerShdw"))) {
+        // TEXT-SHADOW-2: the outer shadow, else the inner one (OmaShow keeps one).
+        const Node *outer = effects->child(QStringLiteral("outerShdw"));
+        if (const Node *shadow = outer ? outer : effects->child(QStringLiteral("innerShdw"))) {
             const auto c = colorIn(shadow, *ctx.color);
             if (c.isValid()) {
                 run.shadow = 1;
@@ -616,6 +623,12 @@ void applyRPr(RunLook &run, const Node *rPr, const TextContext &ctx) {
                 run.shadowDist = shadow->attr(QStringLiteral("dist"), QStringLiteral("0")).toDouble();
                 run.shadowDir = shadow->attr(QStringLiteral("dir"), QStringLiteral("0")).toDouble() / 60000.0;
                 run.shadowBlur = shadow->attr(QStringLiteral("blurRad"), QStringLiteral("0")).toDouble();
+                run.shadowInner = !outer;
+                run.shadowSx = outer ? shadow->attr(QStringLiteral("sx"), QStringLiteral("100000")).toDouble() / 1000.0 : 100;
+                run.shadowSy = outer ? shadow->attr(QStringLiteral("sy"), QStringLiteral("100000")).toDouble() / 1000.0 : 100;
+                run.shadowKx = outer ? shadow->attr(QStringLiteral("kx"), QStringLiteral("0")).toDouble() / 60000.0 : 0;
+                run.shadowKy = outer ? shadow->attr(QStringLiteral("ky"), QStringLiteral("0")).toDouble() / 60000.0 : 0;
+                run.shadowAlign = outer ? shadowAlignOf(shadow->attr(QStringLiteral("algn"), QStringLiteral("b"))) : 7;
             }
         }
     }
@@ -1058,8 +1071,8 @@ struct Reader {
 
     // EFFECTS-UI-1: a box with no fill and no outline has its glow and shadow
     // drawn on its words by PowerPoint, so they become the words' own, unless
-    // the words already name theirs. Only an outer shadow carries over: the
-    // words draw no inner one. A box with an outline but no fill casts its
+    // the words already name theirs. The whole shadow carries over, inner and
+    // perspective too (TEXT-SHADOW-2: the words draw them). A box with an outline but no fill casts its
     // shadow from the outline and the words alike, so then only the shadow
     // carries over (shadowOnly).
     void boxEffectsOnWords(SceneObject &words, const Look &look, bool shadowOnly = false) const {
@@ -1067,13 +1080,19 @@ struct Reader {
             words.textGlowRadius = look.glowRadEmu / 12700.0 * u.pt;
             words.textGlowColor = look.glowColor;
         }
-        if (look.shadow && !look.shadowInner && !words.shadowEnabled) {
+        if (look.shadow && !words.shadowEnabled) {
             words.shadowEnabled = true;
             words.shadowColor = look.shadowColor;
             const qreal d = look.shadowDistEmu * u.k;
             words.shadowX = d * qCos(qDegreesToRadians(look.shadowDir));
             words.shadowY = d * qSin(qDegreesToRadians(look.shadowDir));
             words.shadowBlur = look.shadowBlurEmu * u.k;
+            words.shadowInner = look.shadowInner;
+            words.shadowScaleX = qBound(-200.0, look.shadowSx, 200.0);
+            words.shadowScaleY = qBound(-200.0, look.shadowSy, 200.0);
+            words.shadowSkewX = qBound(-89.0, look.shadowKx, 89.0);
+            words.shadowSkewY = qBound(-89.0, look.shadowKy, 89.0);
+            words.shadowAlign = look.shadowInner ? 0 : look.shadowAlign;
         }
     }
 
@@ -1111,6 +1130,12 @@ struct Reader {
             o.shadowX = d * qCos(qDegreesToRadians(b.shadowDir));
             o.shadowY = d * qSin(qDegreesToRadians(b.shadowDir));
             o.shadowBlur = b.shadowBlur * u.k;
+            o.shadowInner = b.shadowInner;
+            o.shadowScaleX = qBound(-200.0, b.shadowSx, 200.0);
+            o.shadowScaleY = qBound(-200.0, b.shadowSy, 200.0);
+            o.shadowSkewX = qBound(-89.0, b.shadowKx, 89.0);
+            o.shadowSkewY = qBound(-89.0, b.shadowKy, 89.0);
+            o.shadowAlign = b.shadowInner ? 0 : b.shadowAlign;
         }
         if (!b.lang.isEmpty()) { o.language = b.lang; o.language.replace(QLatin1Char('-'), QLatin1Char('_')); }
         o.textAlign = text.para.algn < 0 ? 0 : text.para.algn;

@@ -671,9 +671,20 @@ struct Writer {
                 x.end();
             }
             if (o.shadowEnabled) {
-                x.start("a:outerShdw").attr("blurRad", qRound64(o.shadowBlur * e)).attr("dist", qRound64(std::hypot(o.shadowX, o.shadowY) * e))
-                    .attr("dir", qRound64(std::fmod(qRadiansToDegrees(std::atan2(o.shadowY, o.shadowX)) + 360.0, 360.0) * 60000))
-                    .attr("algn", "tl").attr("rotWithShape", "0");
+                // TEXT-SHADOW-2: inner, or outer with its size, slant and anchor.
+                const qint64 dist = qRound64(std::hypot(o.shadowX, o.shadowY) * e);
+                const qint64 dir = qRound64(std::fmod(qRadiansToDegrees(std::atan2(o.shadowY, o.shadowX)) + 360.0, 360.0) * 60000) % 21600000;
+                if (o.shadowInner) {
+                    x.start("a:innerShdw").attr("blurRad", qRound64(o.shadowBlur * e)).attr("dist", dist).attr("dir", dir);
+                } else {
+                    static const char *aligns[] = {"tl", "t", "tr", "l", "ctr", "r", "bl", "b", "br"};
+                    x.start("a:outerShdw").attr("blurRad", qRound64(o.shadowBlur * e)).attr("dist", dist).attr("dir", dir);
+                    if (!qFuzzyCompare(o.shadowScaleX, 100.0)) x.attr("sx", qRound64(o.shadowScaleX * 1000));
+                    if (!qFuzzyCompare(o.shadowScaleY, 100.0)) x.attr("sy", qRound64(o.shadowScaleY * 1000));
+                    if (!qFuzzyIsNull(o.shadowSkewX)) x.attr("kx", qRound64(o.shadowSkewX * 60000));
+                    if (!qFuzzyIsNull(o.shadowSkewY)) x.attr("ky", qRound64(o.shadowSkewY * 60000));
+                    x.attr("algn", aligns[qBound(0, o.shadowAlign, 8)]).attr("rotWithShape", "0");
+                }
                 writeColor(x, o.shadowColor, o.opacity);
                 x.end();
             }
