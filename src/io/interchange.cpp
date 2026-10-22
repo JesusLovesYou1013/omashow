@@ -8,6 +8,7 @@
 #include "io/odpwriter.h"
 #include "io/ppt.h"
 #include "io/pptwriter.h"
+#include "io/keynotewriter.h"
 #include "io/pptx.h"
 #include "io/pptxwriter.h"
 #include "io/zip.h"
@@ -35,7 +36,7 @@ const Format kFormats[] = {
     {"pptm", "PowerPoint macro-enabled presentation", false, false},
     {"ppsm", "PowerPoint macro-enabled show", false, false},
     {"potm", "PowerPoint macro-enabled template", false, false},
-    {"key", "Keynote presentation", true, false},
+    {"key", "Keynote presentation", true, true},
     {"ppt", "PowerPoint 97–2003 presentation", true, true},
     {"pps", "PowerPoint 97–2003 show", true, true},
     {"pot", "PowerPoint 97–2003 template", true, true},
@@ -172,6 +173,7 @@ QByteArray encode(const Document &document, const QString &path, QStringList *wa
     switch (kindOf(path)) {
     case PowerPoint: return PptxWriter::bytes(document, warnings, job, path);
     case PowerPointBinary: return PptWriter::bytes(document, warnings, job);
+    case Keynote: return KeynoteWriter::bytes(document, warnings, job);
     case OpenDocument: return OdpWriter::bytes(document, OdpWriter::flavorOf(path), warnings, job);
     default: return unwritableFormat(path).isEmpty() ? Bundle::toBytes(document) : QByteArray();
     }
@@ -183,6 +185,12 @@ Written write(const Document &document, const QString &path, const std::shared_p
     const auto name = QFileInfo(path).fileName();
     if (const auto other = unwritableFormat(path); !other.isEmpty()) {
         written.error = QStringLiteral("OmaShow can't save %1 files (%2).").arg(other, name);
+        return written;
+    }
+    if (QFileInfo(QDir::cleanPath(path)).isDir()) {
+        // A Keynote package can be a folder; OmaShow writes one file and never removes a folder.
+        written.error = QStringLiteral("%1 is a folder (a Keynote package). OmaShow saves Keynote decks as one file: "
+                                       "save it under another name.").arg(QFileInfo(QDir::cleanPath(path)).fileName());
         return written;
     }
     if (document.slides.isEmpty() && kindOf(path) != Native && kindOf(path) != Unknown) {
