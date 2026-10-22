@@ -8,6 +8,7 @@
 #include "core/svgasset.h"
 #include "core/table.h"
 #include "core/textruns.h"
+#include "io/metafile.h"
 #include "io/zip.h"
 #include "render/textlayout.h"
 
@@ -975,6 +976,10 @@ struct Reader {
         const bool svg = suffix == QLatin1String("svg") || mime.contains(QLatin1String("svg")) ||
                          bytes.left(256).contains("<svg") || (bytes.startsWith("<?xml") && bytes.left(1024).contains("<svg"));
         if (svg && (SvgAsset::decode(o, bytes, &error) || SvgAsset::decode(o, plainSvg(bytes), &error))) return true;
+        if (Metafile::recognise(bytes)) {
+            const QByteArray svg = Metafile::toSvg(bytes, &error);
+            if (!svg.isEmpty() && SvgAsset::decode(o, svg, &error)) return true;
+        }
         if (bytes.startsWith("VCLMTF") || suffix == QLatin1String("svm") || suffix == QLatin1String("wmf") || suffix == QLatin1String("emf") ||
             bytes.startsWith(QByteArray("\xd7\xcd\xc6\x9a", 4)) || (bytes.size() > 44 && bytes.mid(40, 4) == " EMF")) {
             if (!quiet) warnings.add(QStringLiteral("A picture in a Windows or StarOffice drawing format was left out"), slide);
