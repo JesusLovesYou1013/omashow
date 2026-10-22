@@ -17,4 +17,10 @@
     <sub-class-of type="application/x-ole-storage"/>
     <glob pattern="*.dpt"/>
   </mime-type>
+  <!-- The name SoftMaker Office and FreeOffice use; shared-mime-info has none. -->
+  <mime-type type="application/x-prdx">
+    <comment>SoftMaker Presentations</comment>
+    <sub-class-of type="application/zip"/>
+    <glob pattern="*.prdx"/>
+  </mime-type>
 </mime-info>
