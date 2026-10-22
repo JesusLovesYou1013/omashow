@@ -368,6 +368,10 @@ Rectangle {
                 Button { objectName: "discardOriginalPicture"; Layout.fillWidth: true; visible: root.sel.imageHasOriginal??false; text: qsTr("Discard original to reduce deck size"); onClicked: backend.discardOriginalMedia() }
             }
 
+            // EFFECTS-UI-1: glow and shadow, on the words or the shape.
+            Divider { visible: effectsPanel.visible }
+            EffectsPanel { id: effectsPanel; Layout.fillWidth: true }
+
             // How the box treats text that does not fit it (TEXT-FIT-1). The
             // list shows the default first; the stored values are 0 cut off,
             // 1 shrink, 2 spill, 3 grow.

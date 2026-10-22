@@ -47,4 +47,5 @@ void DeckResize::scaleObject(SceneObject &o, qreal scale, const QPointF &origin)
   o.shadowX *= scale;
   o.shadowY *= scale;
   o.shadowBlur *= scale;
+  o.glowRadius *= scale;
 }

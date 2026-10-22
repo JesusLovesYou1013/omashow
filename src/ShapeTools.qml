@@ -26,15 +26,7 @@ ColumnLayout {
         ComboBox { Layout.fillWidth: true; model: [qsTr("Miter join"),qsTr("Bevel join"),qsTr("Round join")]; currentIndex: root.sel.strokeJoin ?? 1; onActivated: backend.setSelectedProperty("strokeJoin",currentIndex) }
         ComboBox { Layout.fillWidth: true; model: [qsTr("Flat cap"),qsTr("Square cap"),qsTr("Round cap")]; currentIndex: root.sel.strokeCap ?? 1; onActivated: backend.setSelectedProperty("strokeCap",currentIndex) }
     }
-    CheckBox { text: qsTr("Offset shadow"); checked: root.sel.shadowEnabled ?? false; onToggled: backend.setSelectedProperty("shadowEnabled",checked) }
-    ColumnLayout {
-        visible: root.sel.shadowEnabled ?? false; Layout.fillWidth: true
-        ColorField { Layout.fillWidth: true; value: root.sel.shadowColor ?? "#64000000"; accessibleName: qsTr("Shadow colour"); onPicked: v => backend.setSelectedProperty("shadowColor",v) }
-        RowLayout {
-            NumField { Layout.fillWidth: true; label: qsTr("X"); value: root.sel.shadowX ?? 8; onCommitted: v=>backend.setSelectedProperty("shadowX",v) }
-            NumField { Layout.fillWidth: true; label: qsTr("Y"); value: root.sel.shadowY ?? 8; onCommitted: v=>backend.setSelectedProperty("shadowY",v) }
-        }
-    }
+    // The shadow moved to the Style tab's Effects (EffectsPanel.qml, EFFECTS-UI-1).
     Button { objectName: "convertPath"; Layout.fillWidth: true; visible: root.sel.shapeKind!==99; text: qsTr("Convert to editable path"); onClicked: backend.convertToPath() }
     RowLayout {
         visible: root.sel.shapeKind===99

@@ -99,6 +99,24 @@ struct SceneObject {
     // hard edge. On text the shadow follows PowerPoint's own sizing (see
     // TextLayout's paintEffects).
     qreal shadowBlur = 0;
+    // EFFECTS-UI-1: the rest of PowerPoint's shadow (a:outerShdw / a:innerShdw).
+    // Inside the shape instead of behind it (inner); its size and slant as
+    // PowerPoint's sx/sy (percent) and kx/ky (degrees), taken about the point
+    // of the shape named by shadowAlign (0-8: tl t tr l ctr r bl b br, as
+    // a:outerShdw's algn). Shapes and pictures draw all of it; text draws the
+    // outer shadow by PowerPoint's own measured rule and keeps the rest only
+    // to write it back.
+    bool shadowInner = false;
+    qreal shadowScaleX = 100, shadowScaleY = 100;
+    qreal shadowSkewX = 0, shadowSkewY = 0;
+    int shadowAlign = 0;
+    // EFFECTS-UI-1: a glow around the shape itself (spPr a:glow): its outline
+    // and fill, or just the outline when it has no fill. How far it reaches in
+    // slide units, and its colour with its own transparency. 0: none. Text
+    // boxes glow their words instead (textGlowRadius), as PowerPoint does for
+    // a box with no fill and no outline.
+    qreal glowRadius = 0;
+    QColor glowColor = QColor(68, 114, 196, 102);
 
     // Embedded raster data is implicitly shared between snapshots and duplicates.
     std::shared_ptr<const SceneObject> imageOriginal;

@@ -1,4 +1,5 @@
 #include "core/shape.h"
+#include "render/shapeeffects.h"
 #include "core/imageasset.h"
 #include "core/connector.h"
 #include <QLinearGradient>
@@ -229,7 +230,18 @@ bool Shape::contains(const SceneObject &o, const QPointF &point) {
 }
 void Shape::paint(QPainter &painter, const SceneObject &o) {
   const auto p = path(o);
-  if (o.shadowEnabled) {
+  // EFFECTS-UI-1: a glow, a soft, inner, resized or slanted shadow is drawn
+  // from the shape's silhouette (render/shapeeffects.h); a plain offset shadow
+  // stays the solid copy it always was.
+  const bool soft = ShapeEffects::soft(o);
+  QPainterPath outline;
+  if (soft && o.strokeWidth > 0) {
+    QPainterPathStroker stroker(pen(o));
+    outline = stroker.createStroke(p);
+  }
+  const QPainterPath area = o.fillStyle == 5 ? QPainterPath() : p;
+  if (soft) ShapeEffects::paintBehind(painter, o, area, outline);
+  else if (o.shadowEnabled) {
     painter.save();
     painter.translate(o.shadowX, o.shadowY);
     painter.setPen(Qt::NoPen);
@@ -267,7 +279,16 @@ void Shape::paint(QPainter &painter, const SceneObject &o) {
   } else if (o.fillStyle == 5)
     brush = Qt::NoBrush;
   painter.setBrush(brush);
-  painter.drawPath(p);
+  if (soft && o.shadowEnabled && o.shadowInner) {
+    // The inner shadow goes over the fill and under the outline.
+    painter.save();
+    painter.setPen(Qt::NoPen);
+    painter.drawPath(p);
+    painter.restore();
+    ShapeEffects::paintInside(painter, o, p);
+    if (o.strokeWidth > 0) { painter.setBrush(Qt::NoBrush); painter.drawPath(p); }
+  } else
+    painter.drawPath(p);
   if(o.connector) painter.fillPath(Connector::arrows(o),o.strokeColor);
 }
 QVariantList Shape::encode(const QPainterPath &p) {
