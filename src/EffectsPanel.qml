@@ -70,7 +70,7 @@ ColumnLayout {
         const a = Math.atan2(fx.shadowY ?? 0, fx.shadowX ?? 0) * 180 / Math.PI
         return Math.round(((a % 360) + 360) % 360)
     }
-    readonly property bool perspective: !onText && shadowOn && !(fx.shadowInner ?? false) &&
+    readonly property bool perspective: shadowOn && !(fx.shadowInner ?? false) &&
                                         ((fx.shadowSkewX ?? 0) !== 0 || (fx.shadowSkewY ?? 0) !== 0 || (fx.shadowScaleX ?? 100) !== (fx.shadowScaleY ?? 100))
 
     function set(values) { backend.setSelectedEffect(root.target, values) }
@@ -348,8 +348,8 @@ ColumnLayout {
             }
             Repeater {
                 model: [{ title: qsTr("Outer"), list: root.outerPresets, shown: true },
-                        { title: qsTr("Inner"), list: root.innerPresets, shown: !root.onText },
-                        { title: qsTr("Perspective"), list: root.perspectivePresets, shown: !root.onText }]
+                        { title: qsTr("Inner"), list: root.innerPresets, shown: true },
+                        { title: qsTr("Perspective"), list: root.perspectivePresets, shown: true }]
                 delegate: ColumnLayout {
                     required property var modelData
                     visible: modelData.shown
@@ -373,17 +373,8 @@ ColumnLayout {
                     }
                 }
             }
-            Label {
-                visible: root.onText
-                Layout.fillWidth: true
-                wrapMode: Text.Wrap
-                color: Theme.textMuted
-                font.pixelSize: Theme.fsLabel
-                text: qsTr("Inner and perspective shadows are for shapes and pictures.")
-            }
         }
         FieldRow {
-            visible: !root.onText
             label: qsTr("Type")
             ComboBox {
                 objectName: "effectsShadowType"
@@ -414,7 +405,7 @@ ColumnLayout {
             Percent { value: (1 - root.alphaOf(root.fx.shadowColor)) * 100 }
         }
         FieldRow {
-            visible: !root.onText && !(root.fx.shadowInner ?? false)
+            visible: !(root.fx.shadowInner ?? false)
             label: qsTr("Size")
             NumField {
                 objectName: "effectsShadowSize"
