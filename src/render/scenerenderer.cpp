@@ -7,6 +7,9 @@
 #include "core/shape.h"
 #include "core/table.h"
 #include "core/chart.h"
+#include "render/shapeeffects.h"
+
+#include <QPainterPath>
 
 #include <QFont>
 #include <QPainter>
@@ -47,7 +50,23 @@ void paintObject(QPainter &painter, const SceneObject &object, qreal slideHeight
         ImageAsset::paint(painter,picture);
         break;
     }
-    case ObjectType::Image: ImageAsset::paint(painter,object); break;
+    case ObjectType::Image: {
+        // EFFECTS-UI-1: a picture's glow and shadows follow its frame (or
+        // mask), as PowerPoint draws them.
+        const bool effects = (object.glowRadius > 0 && object.glowColor.alpha() > 0) || object.shadowEnabled;
+        QPainterPath frame;
+        if (effects) {
+            SceneObject mask;
+            mask.rect = object.rect;
+            mask.shapeKind = object.imageMask == 1 ? 1 : object.imageMask == 2 ? 0 : object.imageMask == 3 ? 5 : object.imageMask == 4 ? 7 : 0;
+            mask.cornerRadius = object.imageMask == 2 ? (object.cornerRadius > 0 ? object.cornerRadius : qMin(object.rect.width(), object.rect.height()) * .1) : 0;
+            frame = Shape::path(mask);
+            ShapeEffects::paintBehind(painter, object, frame, QPainterPath());
+        }
+        ImageAsset::paint(painter,object);
+        if (effects) ShapeEffects::paintInside(painter, object, frame);
+        break;
+    }
     case ObjectType::Text: {
         TextLayout::paint(painter, object, slideHeight);
         break;

@@ -416,6 +416,70 @@ void Backend::setSelectedProperty(const QString &key, const QVariant &given) {
     clearSelection();
   touch();
 }
+namespace {
+// EFFECTS-UI-1: which objects an effect target means, and what each key is
+// called on them. A text box's words carry their glow as textGlow*; shapes
+// and pictures carry their own glow* (PowerPoint's shape glow).
+bool effectTarget(const SceneObject &o, const QString &target) {
+  if (target == QLatin1String("text")) return o.type == ObjectType::Text;
+  return o.type == ObjectType::Rect || o.type == ObjectType::Image;
+}
+QString effectKey(const QString &target, const QString &key) {
+  if (target == QLatin1String("text") && key == QLatin1String("glowRadius")) return QStringLiteral("textGlowRadius");
+  if (target == QLatin1String("text") && key == QLatin1String("glowColor")) return QStringLiteral("textGlowColor");
+  return key;
+}
+const QStringList &effectKeys() {
+  static const QStringList keys{"glowRadius", "glowColor", "shadowEnabled", "shadowColor", "shadowX", "shadowY", "shadowBlur",
+                                "shadowInner", "shadowScaleX", "shadowScaleY", "shadowSkewX", "shadowSkewY", "shadowAlign"};
+  return keys;
+}
+} // namespace
+QVariantMap Backend::effectState(const QString &target) const {
+  QVariantMap state{{"count", 0}};
+  const auto ids = selectedIds();
+  if (ids.isEmpty()) return state;
+  const auto slide = Design::resolve(m_document, m_currentSlide);
+  int count = 0;
+  for (const auto &id : ids) {
+    const auto *o = slide.find(id);
+    if (!o || !effectTarget(*o, target)) continue;
+    if (count++ == 0) {
+      const auto all = Design::properties(*o);
+      for (const auto &key : effectKeys()) state[key] = all.value(effectKey(target, key));
+    }
+  }
+  state["count"] = count;
+  return state;
+}
+void Backend::setSelectedEffect(const QString &target, const QVariantMap &values) {
+  if (target != QLatin1String("text") && target != QLatin1String("shape")) return;
+  for (auto it = values.cbegin(); it != values.cend(); ++it)
+    if (!effectKeys().contains(it.key())) return;
+  const auto ids = selectedIds();
+  const auto shown = Design::resolve(m_document, m_currentSlide);
+  bool changed = false;
+  for (const auto &id : ids) {
+    const auto *o = shown.find(id);
+    if (!o || !effectTarget(*o, target)) continue;
+    auto copy = *o;
+    for (auto it = values.cbegin(); it != values.cend(); ++it)
+      if (!Design::setProperty(copy, effectKey(target, it.key()), it.value())) return;
+    if (Design::properties(copy) != Design::properties(*o)) changed = true;
+  }
+  if (!changed) return;
+  m_history.begin(m_document, target == QLatin1String("text") ? tr("Change text effects") : tr("Change shape effects"));
+  for (const auto &id : ids)
+    if (auto *o = m_document.slides[m_currentSlide].find(id)) {
+      if (!effectTarget(*o, target)) continue;
+      for (auto it = values.cbegin(); it != values.cend(); ++it) {
+        Design::setProperty(*o, effectKey(target, it.key()), it.value());
+        Design::markOverride(*o, effectKey(target, it.key()));
+      }
+    }
+  m_history.commit();
+  touch();
+}
 void Backend::deleteSelected() {
   const auto ids = selectedIds();
   if (ids.isEmpty())

@@ -507,6 +507,14 @@ public:
                                      qreal tolerance = 0.0, bool keepSize = true);
     Q_INVOKABLE void nudgeSelected(qreal dx, qreal dy);
     Q_INVOKABLE void setSelectedProperty(const QString &name, const QVariant &value);
+    // EFFECTS-UI-1: glow and shadow for the Style tab. `target` is "text" (the
+    // words of the selected text boxes: textGlow*, shadow*) or "shape" (the
+    // selected shapes and pictures: glow*, shadow*). The keys are the shape's
+    // names (glowRadius, glowColor, shadowEnabled, shadowColor, shadowX, ...);
+    // all of them are set in one undo step. effectState is what the first
+    // selected object of that kind has, with "count" (0: none selected).
+    Q_INVOKABLE void setSelectedEffect(const QString &target, const QVariantMap &values);
+    Q_INVOKABLE QVariantMap effectState(const QString &target) const;
 
     Q_INVOKABLE void undo();
     Q_INVOKABLE void redo();

@@ -579,14 +579,35 @@ struct Writer {
         x.end();
     }
 
+    // EFFECTS-UI-1: the shape's own glow and shadow (p:spPr/a:effectLst), in
+    // the schema's order: glow, then inner shadow, then outer shadow. The blur,
+    // size, slant and anchor are written as set (they were left out, and the
+    // blur fixed at 3 pt, before).
     void writeEffects(Xml &x, const SceneObject &o) const {
-        if (!o.shadowEnabled) return;
+        const bool glows = o.glowRadius > 0 && o.glowColor.alpha() > 0;
+        if (!o.shadowEnabled && !glows) return;
         x.start("a:effectLst");
-        x.start("a:outerShdw").attr("blurRad", 38100).attr("dist", emu(std::hypot(o.shadowX, o.shadowY)))
-            .attr("dir", qRound64(std::fmod(qRadiansToDegrees(std::atan2(o.shadowY, o.shadowX)) + 360.0, 360.0) * 60000))
-            .attr("algn", "tl").attr("rotWithShape", "0");
-        writeColor(x, o.shadowColor);
-        x.end();
+        if (glows) {
+            x.start("a:glow").attr("rad", qMax<qint64>(1, emu(o.glowRadius)));
+            writeColor(x, o.glowColor);
+            x.end();
+        }
+        if (o.shadowEnabled) {
+            const qint64 dir = qRound64(std::fmod(qRadiansToDegrees(std::atan2(o.shadowY, o.shadowX)) + 360.0, 360.0) * 60000) % 21600000;
+            if (o.shadowInner) {
+                x.start("a:innerShdw").attr("blurRad", emu(o.shadowBlur)).attr("dist", emu(std::hypot(o.shadowX, o.shadowY))).attr("dir", dir);
+            } else {
+                static const char *aligns[] = {"tl", "t", "tr", "l", "ctr", "r", "bl", "b", "br"};
+                x.start("a:outerShdw").attr("blurRad", emu(o.shadowBlur)).attr("dist", emu(std::hypot(o.shadowX, o.shadowY))).attr("dir", dir);
+                if (!qFuzzyCompare(o.shadowScaleX, 100.0)) x.attr("sx", qRound64(o.shadowScaleX * 1000));
+                if (!qFuzzyCompare(o.shadowScaleY, 100.0)) x.attr("sy", qRound64(o.shadowScaleY * 1000));
+                if (!qFuzzyIsNull(o.shadowSkewX)) x.attr("kx", qRound64(o.shadowSkewX * 60000));
+                if (!qFuzzyIsNull(o.shadowSkewY)) x.attr("ky", qRound64(o.shadowSkewY * 60000));
+                x.attr("algn", aligns[qBound(0, o.shadowAlign, 8)]).attr("rotWithShape", "0");
+            }
+            writeColor(x, o.shadowColor);
+            x.end();
+        }
         x.end();
     }
 

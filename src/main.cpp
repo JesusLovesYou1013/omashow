@@ -32,6 +32,7 @@
 
 #include <QCommandLineOption>
 #include "cli/cli.h"
+#include "render/effectpreview.h"
 #include <QCommandLineParser>
 #include <QDebug>
 #include <QQmlEngine>
@@ -426,6 +427,98 @@ int captureInterface(QQmlApplicationEngine &engine, Backend &backend, Presenter 
         qInfo().noquote() << QStringLiteral("ui-shot cursor: %1 = %2 (want %3) %4")
                                  .arg(what).arg(got).arg(want).arg(got == want ? "ok" : "FAIL");
     };
+    // EFFECTS-UI-1 (OMASHOW_UI_SHOT_EFFECTS=1): the Style tab's Effects for a
+    // text box, a shape and a filled box with words (the "Apply to" choice),
+    // folded and unfolded. The deck is the effects test deck: slide 1 text
+    // glows, slide 2 shape glows, slide 7 text boxes. Says what each holds.
+    if (qEnvironmentVariableIsSet("OMASHOW_UI_SHOT_EFFECTS")) {
+        QQuickItem *panel = findItem(window->contentItem(), QStringLiteral("effectsPanel"));
+        QQuickItem *tabs = findItem(window->contentItem(), QStringLiteral("inspectorTabs"));
+        if (!panel || !tabs) { qInfo().noquote() << "ui-shot effects: no effects panel FAIL"; return 3; }
+        const auto fold = [&](bool open) {
+            for (const char *key : {"glowOpen", "glowPresetsOpen", "shadowOpen", "shadowPresetsOpen"}) panel->setProperty(key, open);
+            settle(200);
+        };
+        const auto scrollTo = [&](QQuickItem *item) {
+            for (QQuickItem *up = item->parentItem(); up; up = up->parentItem())
+                if (up->inherits("QQuickFlickable")) {
+                    const QPointF in = item->mapToItem(up->property("contentItem").value<QQuickItem *>(), QPointF());
+                    const qreal most = qMax(0.0, up->property("contentHeight").toReal() - up->height());
+                    up->setProperty("contentY", qBound(0.0, in.y() - 40, most));
+                    settle(150);
+                    return up;
+                }
+            return static_cast<QQuickItem *>(nullptr);
+        };
+        const auto shoot = [&](const QString &name) {
+            tabs->setProperty("currentIndex", 1);
+            settle(150);
+            QQuickItem *flick = scrollTo(panel);
+            settle(300);
+            const QImage whole = window->grabWindow();
+            whole.save(outDir + QStringLiteral("/effects-%1-window.png").arg(name));
+            if (flick) {
+                const QRectF r = flick->mapRectToScene(QRectF(0, 0, flick->width(), flick->height()));
+                const qreal dpr = whole.devicePixelRatio();
+                const QRect crop = QRect(int((r.left() - 8) * dpr), 0, int((r.width() + 16) * dpr), whole.height()).intersected(whole.rect());
+                whole.copy(crop).save(outDir + QStringLiteral("/effects-%1.png").arg(name));
+            }
+            const auto text = backend.effectState(QStringLiteral("text")), shape = backend.effectState(QStringLiteral("shape"));
+            qInfo().noquote() << "ui-shot effects:" << name << "target" << panel->property("target").toString()
+                              << "text" << text.value("count").toInt() << "glow" << text.value("glowRadius").toDouble() << "shadow" << text.value("shadowEnabled").toBool()
+                              << "| shape" << shape.value("count").toInt() << "glow" << shape.value("glowRadius").toDouble() << "shadow" << shape.value("shadowEnabled").toBool()
+                              << "inner" << shape.value("shadowInner").toBool();
+        };
+        const auto onSlide = [&](int slide) { backend.setProperty("currentSlide", slide); settle(300); return backend.slideObjects(); };
+        const auto firstOf = [](const QVariantList &objects, const std::function<bool(const QVariantMap &)> &want, int skip = 0) {
+            for (const auto &v : objects) { const auto m = v.toMap(); if (want(m) && skip-- == 0) return m.value("id").toString(); }
+            return QString();
+        };
+        int found = 0;
+        // A text box (glowing words).
+        auto objects = onSlide(0);
+        if (const QString id = firstOf(objects, [](const QVariantMap &m) { return m.value("name").toString() == QLatin1String("Glow"); }); !id.isEmpty()) {
+            ++found; backend.select(id); fold(false); shoot(QStringLiteral("text-collapsed")); fold(true); shoot(QStringLiteral("text-expanded"));
+        }
+        // A shape (glowing).
+        objects = onSlide(1);
+        if (const QString id = firstOf(objects, [](const QVariantMap &m) { return m.value("name").toString() == QLatin1String("Shape"); }); !id.isEmpty()) {
+            ++found; backend.select(id); fold(false); shoot(QStringLiteral("shape-collapsed")); fold(true); shoot(QStringLiteral("shape-expanded"));
+        }
+        // A shape with an inner shadow, unfolded.
+        objects = onSlide(4);
+        if (const QString id = firstOf(objects, [](const QVariantMap &m) { return m.value("name").toString() == QLatin1String("Shape"); }); !id.isEmpty()) {
+            ++found; backend.select(id); fold(true); shoot(QStringLiteral("shape-inner-expanded"));
+        }
+        // A filled box with words: both, so "Apply to" shows; then the box chosen.
+        objects = onSlide(6);
+        {
+            QString box, words;
+            const QString filled = firstOf(objects, [](const QVariantMap &m) { return m.value("name").toString() == QLatin1String("Shape"); }, 1);
+            bool after = false;
+            for (const auto &v : objects) {
+                const auto m = v.toMap();
+                if (m.value("id").toString() == filled) { after = true; continue; }
+                if (after && m.value("name").toString() == QLatin1String("Text box")) { words = m.value("id").toString(); break; }
+            }
+            box = filled;
+            if (!box.isEmpty() && !words.isEmpty()) {
+                ++found;
+                backend.selectIds(QStringList{box, words});
+                fold(false); shoot(QStringLiteral("both-collapsed"));
+                fold(true); shoot(QStringLiteral("both-text-expanded"));
+                panel->setProperty("chosen", QStringLiteral("shape"));
+                settle(200);
+                shoot(QStringLiteral("both-box-expanded"));
+                panel->setProperty("chosen", QString());
+            }
+            // The plain text box (no fill, no line): its box glow is now the words'.
+            const QString plain = firstOf(objects, [](const QVariantMap &m) { return m.value("name").toString() == QLatin1String("Text box"); }, 1);
+            if (!plain.isEmpty()) { backend.select(plain); fold(true); shoot(QStringLiteral("plain-textbox-expanded")); }
+        }
+        qInfo().noquote() << "ui-shot effects: cases" << found << (found == 4 ? "ok" : "FAIL");
+        return found == 4 ? 0 : 3;
+    }
     // COLOR-PICK-2 (OMASHOW_UI_SHOT_COLORS=1): every colour setting, by hand. Each swatch is
     // clicked, the chooser photographed, a colour typed in its hex box (or a grid swatch
     // clicked) and "Use colour" clicked; what the deck now holds is read back.
@@ -615,6 +708,8 @@ int captureInterface(QQmlApplicationEngine &engine, Backend &backend, Presenter 
         check(QStringLiteral("shape second fill colour"), QStringLiteral("Second fill colour"), QStringLiteral("#f0c020"), QStringLiteral("hex"), [&] { return selection("fillSecondary"); });
         check(QStringLiteral("shape outline"), QStringLiteral("Stroke colour"), QStringLiteral("#602080"), QStringLiteral("hex"), [&] { return selection("strokeColor"); });
         backend.setSelectedProperty(QStringLiteral("shadowEnabled"), true);
+        // EFFECTS-UI-1: the shadow's colour sits in the Style tab's Effects, folded away.
+        if (QQuickItem *effects = findItem(window->contentItem(), QStringLiteral("effectsPanel"))) effects->setProperty("shadowOpen", true);
         settle(200);
         check(QStringLiteral("shape shadow"), QStringLiteral("Shadow colour"), QStringLiteral("#404040"), QStringLiteral("hex"), [&] { return selection("shadowColor"); });
         const QString shapeA = backend.selectedId();
@@ -1112,6 +1207,7 @@ int main(int argc, char *argv[]) {
 
     QQmlApplicationEngine engine;
     engine.addImageProvider(QStringLiteral("slides"), new SlideThumbnailProvider(&backend));
+    engine.addImageProvider(QStringLiteral("effects"), new EffectPreviewProvider);   // EFFECTS-UI-1
     QObject::connect(&engine, &QQmlApplicationEngine::warnings, &app,
                      [](const QList<QQmlError> &warnings) {
         for (const QQmlError &warning : warnings)

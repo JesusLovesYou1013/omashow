@@ -10,7 +10,11 @@ QStringList ObjectStyles::keys() {
           "fontToken",     "textColor",     "textColorToken",   "uppercase",
           "letterSpacing", "italic",        "underline",        "textAlign",
           "verticalAlign", "lineHeight",    "paragraphSpacing", "textIndent",
-          "listStyle",     "listStart",     "textFit"};
+          "listStyle",     "listStart",     "textFit",
+          // EFFECTS-UI-1: glow and shadow travel with a saved appearance.
+          "shadowBlur",    "shadowInner",   "shadowScaleX",     "shadowScaleY",
+          "shadowSkewX",   "shadowSkewY",   "shadowAlign",      "glowRadius",
+          "glowColor",     "textGlowRadius", "textGlowColor"};
 }
 SceneObject ObjectStyles::capture(const SceneObject &object) {
   SceneObject appearance;

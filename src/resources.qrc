@@ -43,6 +43,7 @@
         <file alias="SlideNavigator.qml">SlideNavigator.qml</file>
         <file alias="ShapeGallery.qml">ShapeGallery.qml</file>
         <file alias="ShapeTools.qml">ShapeTools.qml</file>
+        <file alias="EffectsPanel.qml">EffectsPanel.qml</file>
         <file alias="CombineShapesDialog.qml">CombineShapesDialog.qml</file>
         <file alias="PathTools.qml">PathTools.qml</file>
         <file alias="PictureAdjustments.qml">PictureAdjustments.qml</file>

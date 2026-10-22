@@ -65,6 +65,9 @@ SceneObject interpolate(const SceneObject &from, const SceneObject &to, qreal u)
     state.fillAngle = lerp(from.fillAngle,to.fillAngle,u);
     state.shadowX = lerp(from.shadowX,to.shadowX,u); state.shadowY = lerp(from.shadowY,to.shadowY,u);
     state.shadowColor = lerpColor(from.shadowColor,to.shadowColor,u);
+    state.shadowBlur = lerp(from.shadowBlur,to.shadowBlur,u);
+    state.glowRadius = lerp(from.glowRadius,to.glowRadius,u); state.glowColor = lerpColor(from.glowColor,to.glowColor,u);
+    state.textGlowRadius = lerp(from.textGlowRadius,to.textGlowRadius,u); state.textGlowColor = lerpColor(from.textGlowColor,to.textGlowColor,u);
     state.textColor = lerpColor(from.textColor, to.textColor, u);
 
     // Identical text interpolates its metrics. Differing text would cross-fade

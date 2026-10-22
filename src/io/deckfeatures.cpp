@@ -89,6 +89,8 @@ const QString kPptxInteractive = QStringLiteral("pptx.interactive");
 const QString kShrinkKept = QStringLiteral("pptx.shrink-kept");
 const QString kTextGlow = QStringLiteral("text.glow");
 const QString kSoftShadow = QStringLiteral("shadow.soft");
+const QString kShapeGlow = QStringLiteral("shape.glow");          // EFFECTS-UI-1
+const QString kShadowDetail = QStringLiteral("shadow.detail");    // EFFECTS-UI-1
 
 // What each feature is called, written into every features.json so an app that
 // doesn't know a feature can still name it (e.g. to say what a deck uses that
@@ -104,7 +106,9 @@ QString readableName(const QString &feature) {
         {kPptxInteractive, QStringLiteral("PowerPoint click-triggered animations kept for saving back to PowerPoint")},
         {kShrinkKept, QStringLiteral("PowerPoint's shrink-to-fit size, kept until the box is changed")},
         {kTextGlow, QStringLiteral("Glow around text")},
-        {kSoftShadow, QStringLiteral("Soft-edged shadows")}};
+        {kSoftShadow, QStringLiteral("Soft-edged shadows")},
+        {kShapeGlow, QStringLiteral("Glow around shapes")},
+        {kShadowDetail, QStringLiteral("Inner, resized and slanted (perspective) shadows")}};
     if (names.contains(feature)) return names.value(feature);
     if (feature.startsWith(QLatin1String("key:"))) return QStringLiteral("The setting \"%1\"").arg(feature.section(QLatin1Char('.'), -1));
     return feature;
@@ -119,6 +123,9 @@ QString featureFor(const QString &part, const QString &key) {
     if (part == QLatin1String("object") && key == QLatin1String("fitKept")) return kShrinkKept;
     if (part == QLatin1String("object") && key.startsWith(QLatin1String("textGlow"))) return kTextGlow;
     if (part == QLatin1String("object") && key == QLatin1String("shadowBlur")) return kSoftShadow;
+    if (part == QLatin1String("object") && (key == QLatin1String("glowRadius") || key == QLatin1String("glowColor"))) return kShapeGlow;
+    if (part == QLatin1String("object") && (key == QLatin1String("shadowInner") || key.startsWith(QLatin1String("shadowScale")) ||
+                                            key.startsWith(QLatin1String("shadowSkew")) || key == QLatin1String("shadowAlign"))) return kShadowDetail;
     if (part == QLatin1String("build") && timing.contains(key)) return kTiming;
     if (part == QLatin1String("build") && key.startsWith(QLatin1String("pptx"))) return kPptxAnimation;
     if (part == QLatin1String("slide") && key.startsWith(QLatin1String("pptxInteractive"))) return kPptxInteractive;
@@ -378,7 +385,7 @@ bool splits(const QString &name) {
 // ---- What this build knows ---------------------------------------------------
 
 bool knows(const QString &feature) {
-    static const QSet<QString> named{kStrike, kFitModes, kFontSwap, kEffects, kTiming, kPptxAnimation, kPptxInteractive, kShrinkKept, kTextGlow, kSoftShadow};
+    static const QSet<QString> named{kStrike, kFitModes, kFontSwap, kEffects, kTiming, kPptxAnimation, kPptxInteractive, kShrinkKept, kTextGlow, kSoftShadow, kShapeGlow, kShadowDetail};
     if (named.contains(feature)) return true;
     // A field put aside by name: known when this build's objects have it.
     if (feature.startsWith(QLatin1String("key:object."))) {
@@ -403,7 +410,7 @@ QStringList DeckFeatures::unknownNames(const QByteArray &passthrough) {
 }
 
 QStringList DeckFeatures::known() {
-    return {kStrike, kFitModes, kFontSwap, kEffects, kTiming, kPptxAnimation, kPptxInteractive, kShrinkKept, kTextGlow, kSoftShadow};
+    return {kStrike, kFitModes, kFontSwap, kEffects, kTiming, kPptxAnimation, kPptxInteractive, kShrinkKept, kTextGlow, kSoftShadow, kShapeGlow, kShadowDetail};
 }
 
 void DeckFeatures::split(QVector<Zip::Entry> &entries, const QByteArray &passthrough) {
