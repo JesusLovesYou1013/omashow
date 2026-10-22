@@ -6,4 +6,15 @@
     <icon name="omashow"/>
     <glob pattern="*.omashow" weight="80"/>
   </mime-type>
+  <!-- WPS Office names these on Linux; shared-mime-info has no type for them. -->
+  <mime-type type="application/wps-office.dps">
+    <comment>WPS Presentation</comment>
+    <sub-class-of type="application/x-ole-storage"/>
+    <glob pattern="*.dps"/>
+  </mime-type>
+  <mime-type type="application/wps-office.dpt">
+    <comment>WPS Presentation template</comment>
+    <sub-class-of type="application/x-ole-storage"/>
+    <glob pattern="*.dpt"/>
+  </mime-type>
 </mime-info>
