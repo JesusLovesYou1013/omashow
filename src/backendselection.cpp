@@ -492,6 +492,18 @@ void Backend::setSelectedEffect(const QString &target, const QVariantMap &values
         Design::markOverride(*o, effectKey(target, it.key(), onWords));
       }
     }
+  // BOX-SHADOW-2: an outlined box with no fill casts its shadow from its words
+  // too (PowerPoint draws one shadow of both), so the box's words follow its shadow.
+  if (target == QLatin1String("shape") && !onWords)
+    for (const auto &id : ids)
+      if (const auto *box = shown.find(id); box && box->type == ObjectType::Rect && box->fillStyle == 5 && box->strokeWidth > 0)
+        for (const auto &other : ids)
+          if (auto *words = m_document.slides[m_currentSlide].find(other); words && words->type == ObjectType::Text && !words->groups.isEmpty() && words->groups == box->groups)
+            for (auto it = values.cbegin(); it != values.cend(); ++it)
+              if (it.key().startsWith(QLatin1String("shadow"))) {
+                Design::setProperty(*words, QStringLiteral("boxShadow") + it.key().mid(6), it.value());
+                Design::markOverride(*words, QStringLiteral("boxShadow") + it.key().mid(6));
+              }
   m_history.commit();
   touch();
 }
