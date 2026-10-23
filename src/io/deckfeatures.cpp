@@ -92,6 +92,11 @@ const QString kSoftShadow = QStringLiteral("shadow.soft");
 const QString kShapeGlow = QStringLiteral("shape.glow");          // EFFECTS-UI-1
 const QString kShadowDetail = QStringLiteral("shadow.detail");    // EFFECTS-UI-1
 const QString kBoxShadow = QStringLiteral("textbox.shadow");      // BOTH-EFFECTS-1
+const QString kGradient = QStringLiteral("fill.gradient");        // FILL-UI-1
+const QString kPattern = QStringLiteral("fill.pattern");          // FILL-UI-1
+const QString kPicture = QStringLiteral("fill.picture");          // FILL-UI-1
+const QString kLine = QStringLiteral("line.style");               // FILL-UI-1
+const QString kBoxFill = QStringLiteral("textbox.fill");          // FILL-UI-1
 
 // What each feature is called, written into every features.json so an app that
 // doesn't know a feature can still name it (e.g. to say what a deck uses that
@@ -110,7 +115,12 @@ QString readableName(const QString &feature) {
         {kSoftShadow, QStringLiteral("Soft-edged shadows")},
         {kShapeGlow, QStringLiteral("Glow around shapes")},
         {kShadowDetail, QStringLiteral("Inner, resized and slanted (perspective) shadows")},
-        {kBoxShadow, QStringLiteral("A text box's own shadow, apart from its words'")}};
+        {kBoxShadow, QStringLiteral("A text box's own shadow, apart from its words'")},
+        {kGradient, QStringLiteral("Gradients with more colours, rectangle and shape gradients, focus and rotation")},
+        {kPattern, QStringLiteral("PowerPoint's preset fill patterns")},
+        {kPicture, QStringLiteral("Picture fills tiled, inset or see-through")},
+        {kLine, QStringLiteral("Line dashes, double and triple lines, gradient lines")},
+        {kBoxFill, QStringLiteral("A text box's own fill and outline")}};
     if (names.contains(feature)) return names.value(feature);
     if (feature.startsWith(QLatin1String("key:"))) return QStringLiteral("The setting \"%1\"").arg(feature.section(QLatin1Char('.'), -1));
     return feature;
@@ -126,6 +136,13 @@ QString featureFor(const QString &part, const QString &key) {
     if (part == QLatin1String("object") && key.startsWith(QLatin1String("textGlow"))) return kTextGlow;
     if (part == QLatin1String("object") && key == QLatin1String("shadowBlur")) return kSoftShadow;
     if (part == QLatin1String("object") && key.startsWith(QLatin1String("boxShadow"))) return kBoxShadow;
+    if (part == QLatin1String("object") && key.startsWith(QLatin1String("gradient"))) return kGradient;
+    if (part == QLatin1String("object") && key == QLatin1String("patternPreset")) return kPattern;
+    if (part == QLatin1String("object") && key.startsWith(QLatin1String("picture"))) return kPicture;
+    if (part == QLatin1String("object") && (key.startsWith(QLatin1String("strokeDash")) || key == QLatin1String("strokeCompound") ||
+                                            key.startsWith(QLatin1String("strokeGradient")) || key == QLatin1String("strokeStops") ||
+                                            key == QLatin1String("strokeAngle"))) return kLine;
+    if (part == QLatin1String("object") && (key == QLatin1String("boxDrawn") || key.startsWith(QLatin1String("boxInset")))) return kBoxFill;
     if (part == QLatin1String("object") && (key == QLatin1String("glowRadius") || key == QLatin1String("glowColor"))) return kShapeGlow;
     if (part == QLatin1String("object") && (key == QLatin1String("shadowInner") || key.startsWith(QLatin1String("shadowScale")) ||
                                             key.startsWith(QLatin1String("shadowSkew")) || key == QLatin1String("shadowAlign"))) return kShadowDetail;
@@ -388,7 +405,7 @@ bool splits(const QString &name) {
 // ---- What this build knows ---------------------------------------------------
 
 bool knows(const QString &feature) {
-    static const QSet<QString> named{kStrike, kFitModes, kFontSwap, kEffects, kTiming, kPptxAnimation, kPptxInteractive, kShrinkKept, kTextGlow, kSoftShadow, kShapeGlow, kShadowDetail, kBoxShadow};
+    static const QSet<QString> named{kStrike, kFitModes, kFontSwap, kEffects, kTiming, kPptxAnimation, kPptxInteractive, kShrinkKept, kTextGlow, kSoftShadow, kShapeGlow, kShadowDetail, kBoxShadow, kGradient, kPattern, kPicture, kLine, kBoxFill};
     if (named.contains(feature)) return true;
     // A field put aside by name: known when this build's objects have it.
     if (feature.startsWith(QLatin1String("key:object."))) {
@@ -413,7 +430,7 @@ QStringList DeckFeatures::unknownNames(const QByteArray &passthrough) {
 }
 
 QStringList DeckFeatures::known() {
-    return {kStrike, kFitModes, kFontSwap, kEffects, kTiming, kPptxAnimation, kPptxInteractive, kShrinkKept, kTextGlow, kSoftShadow, kShapeGlow, kShadowDetail, kBoxShadow};
+    return {kStrike, kFitModes, kFontSwap, kEffects, kTiming, kPptxAnimation, kPptxInteractive, kShrinkKept, kTextGlow, kSoftShadow, kShapeGlow, kShadowDetail, kBoxShadow, kGradient, kPattern, kPicture, kLine, kBoxFill};
 }
 
 void DeckFeatures::split(QVector<Zip::Entry> &entries, const QByteArray &passthrough) {

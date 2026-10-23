@@ -23,6 +23,16 @@
 
 enum class ObjectType { Rect, Text, Image, Media, Table, Chart };
 
+// FILL-UI-1: one colour stop of a gradient (PowerPoint's a:gs): where it sits
+// (0-1 along the gradient), its colour with its own transparency (alpha), and
+// PowerPoint's Brightness (-1 to 1: darker or lighter, as lumMod/lumOff).
+struct GradientStop {
+    qreal position = 0;
+    QColor color;
+    qreal brightness = 0;
+    bool operator==(const GradientStop &o) const { return qFuzzyCompare(position + 1, o.position + 1) && color == o.color && qFuzzyCompare(brightness + 1, o.brightness + 1); }
+};
+
 // A stretch of text that does not look like the rest of its box. Only what
 // differs is stored: an empty family, a zero size or weight and an invalid
 // colour all mean "as the box says", so changing the box still carries.
@@ -93,6 +103,60 @@ struct SceneObject {
     QColor strokeColor = QColor(0,0,0);
     qreal strokeWidth = 0;
     int strokeStyle = 0, strokeJoin = 1, strokeCap = 1;
+    // FILL-UI-1: the rest of PowerPoint's Format Shape > Fill and Line (see
+    // render/fillpaint.h). Left at these values an object draws exactly as it
+    // always did: two-colour gradients from fill/fillSecondary, the 13 Qt
+    // patterns, the five Qt dashes.
+    //   gradient   any number of stops (empty: fill to fillSecondary); for a
+    //              path gradient (fillStyle 2) its shape, 0 circle, 1 rectangle,
+    //              2 the shape's own outline, growing from the focus box
+    //              (a:fillToRect: insets from the left, top, right and bottom,
+    //              0-1; all 0.5 is the middle); a:lin scaled; rotate with shape.
+    //              fill and fillSecondary follow the first and last stop, so
+    //              older builds show a two-colour version.
+    QVector<GradientStop> gradientStops;
+    int gradientPath = 0;
+    qreal gradientFocusL = .5, gradientFocusT = .5, gradientFocusR = .5, gradientFocusB = .5;
+    bool gradientScaled = false, gradientRotate = true;
+    //   pattern    one of PowerPoint's preset patterns by its a:pattFill name
+    //              (empty: patternStyle's Qt pattern); fill is its foreground,
+    //              fillSecondary its background. patternStyle follows the
+    //              nearest Qt pattern for older builds.
+    QString patternPreset;
+    //   picture    (fillStyle 4, the picture in image*) tiled instead of placed
+    //              by imageMode: offset (slide units), scale (%), the corner or
+    //              side the tiles start from (0-8 as shadowAlign) and mirroring
+    //              (0 none, 1 x, 2 y, 3 both); stretched (imageMode 2) with
+    //              insets (a:fillRect l/t/r/b, fractions; negative bleeds out);
+    //              its own transparency (0-1) and rotate with shape.
+    bool pictureTile = false;
+    qreal pictureTileX = 0, pictureTileY = 0, pictureTileScaleX = 100, pictureTileScaleY = 100;
+    int pictureTileAlign = 0, pictureTileFlip = 0;
+    qreal pictureInsetL = 0, pictureInsetT = 0, pictureInsetR = 0, pictureInsetB = 0;
+    qreal pictureTransparency = 0;
+    bool pictureRotate = true;
+    //   line       a dash by PowerPoint's preset name (empty: strokeStyle's Qt
+    //              dash), or "custom" with strokeDashCustom (dash, space, ... in
+    //              line widths); compound 0 single, 1 double, 2 thick-thin,
+    //              3 thin-thick, 4 triple; a gradient line (strokeGradient)
+    //              from strokeStops along strokeAngle, or a path gradient
+    //              (strokeGradientPath 1 circle, 2 rectangle, 3 shape; 0 linear).
+    //              strokeStyle and strokeColor follow for older builds.
+    QString strokeDash;
+    QVariantList strokeDashCustom;
+    int strokeCompound = 0;
+    bool strokeGradient = false;
+    QVector<GradientStop> strokeStops;
+    qreal strokeAngle = 0;
+    int strokeGradientPath = 0;
+    // FILL-UI-1: a text box with a fill and outline of its own (the fill* and
+    // stroke* fields above, and its glow and boxShadow* effects drawn about
+    // that box), as one PowerPoint p:sp holding both. The box is the text's
+    // rectangle grown by these insets (PowerPoint's lIns/tIns/rIns/bIns: OmaShow
+    // lays words out in rect itself). Off, a text box draws no box: older decks
+    // stored a white solid fill on every text object that was never drawn.
+    bool boxDrawn = false;
+    qreal boxInsetL = 0, boxInsetT = 0, boxInsetR = 0, boxInsetB = 0;
     bool shadowEnabled = false;
     QColor shadowColor = QColor(0,0,0,100);
     qreal shadowX = 8, shadowY = 8;

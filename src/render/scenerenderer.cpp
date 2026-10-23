@@ -8,6 +8,8 @@
 #include "core/table.h"
 #include "core/chart.h"
 #include "render/shapeeffects.h"
+#include "render/fillpaint.h"
+#include "core/fillstyle.h"
 
 #include <QPainterPath>
 
@@ -68,7 +70,17 @@ void paintObject(QPainter &painter, const SceneObject &object, qreal slideHeight
         break;
     }
     case ObjectType::Text: {
-        TextLayout::paint(painter, object, slideHeight);
+        // FILL-UI-1: a text box with a fill or an outline of its own draws
+        // that box first, with the box's glow and shadow about it (as
+        // PowerPoint does once the box has something to carry them); the
+        // words keep their own effects. An outline with no fill casts its
+        // shadow from the words as well (BOX-SHADOW-2).
+        if (FillStyle::boxVisible(object)) {
+            const auto pieces = FillStyle::split(object);
+            Shape::paint(painter, pieces.first());
+            TextLayout::paint(painter, pieces.last(), slideHeight);
+        } else
+            TextLayout::paint(painter, object, slideHeight);
         break;
     }
     }
@@ -79,6 +91,7 @@ void paintObject(QPainter &painter, const SceneObject &object, qreal slideHeight
 } // namespace
 
 void SceneRenderer::paint(QPainter &painter, const QVector<SceneObject> &states, qreal slideHeight) {
+    FillPaint::setUnitsPerPoint(slideHeight / 540.0);   // FILL-UI-1: PowerPoint's slides are 540 pt high
     for (const SceneObject &state : states)
         paintObject(painter, state, slideHeight);
 }

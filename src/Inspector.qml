@@ -281,7 +281,8 @@ Rectangle {
             Divider {}
             FieldRow {
                 label: root.isText ? qsTr("Colour") : qsTr("Fill")
-                visible: !root.isImage && !root.isMedia
+                // FILL-UI-1: a shape's fill is in Fill and Line below.
+                visible: !root.isImage && !root.isMedia && (root.isText || root.sel.type !== "rect")
                 ColorField {
                     value: root.swatchText
                     placeholder: root.several || (root.range.mixed ?? []).includes("color") ? qsTr("Mixed") : ""
@@ -367,6 +368,10 @@ Rectangle {
                 Button { objectName: "restoreOriginalPicture"; Layout.fillWidth: true; visible: root.sel.imageHasOriginal??false; text: qsTr("Restore original picture"); onClicked: backend.restoreOriginalMedia() }
                 Button { objectName: "discardOriginalPicture"; Layout.fillWidth: true; visible: root.sel.imageHasOriginal??false; text: qsTr("Discard original to reduce deck size"); onClicked: backend.discardOriginalMedia() }
             }
+
+            // FILL-UI-1: fill and line, of the shapes or a text box's own box.
+            Divider { visible: fillPanel.visible }
+            FillPanel { id: fillPanel; Layout.fillWidth: true }
 
             // EFFECTS-UI-1: glow and shadow, on the words or the shape.
             Divider { visible: effectsPanel.visible }

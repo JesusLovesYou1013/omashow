@@ -550,6 +550,82 @@ int captureInterface(QQmlApplicationEngine &engine, Backend &backend, Presenter 
         qInfo().noquote() << "ui-shot effects: cases" << found << (found == 6 ? "ok" : "FAIL");
         return found == 6 ? 0 : 3;
     }
+    // FILL-UI-1 (OMASHOW_UI_SHOT_FILL=1): the Style tab's Fill and Line for
+    // shapes and text boxes, folded and unfolded, on the fill test deck
+    // (scratch FILL-UI-test.pptx). Says what each holds.
+    if (qEnvironmentVariableIsSet("OMASHOW_UI_SHOT_FILL")) {
+        QQuickItem *panel = findItem(window->contentItem(), QStringLiteral("fillPanel"));
+        QQuickItem *tabs = findItem(window->contentItem(), QStringLiteral("inspectorTabs"));
+        if (!panel || !tabs) { qInfo().noquote() << "ui-shot fill: no fill panel FAIL"; return 3; }
+        // The deck's Office fonts (Aptos) hold it behind the font check: use the fallbacks.
+        if (backend.fontGate()) { backend.skipFontGate(); settle(500); }
+        if (QObject *check = window->findChild<QObject *>(QStringLiteral("fontCheckDialog")); check && check->property("visible").toBool()) {
+            QMetaObject::invokeMethod(check, "close");
+            settle(800);
+        }
+        const auto fold = [&](bool fill, bool line, bool presets = false) {
+            panel->setProperty("fillOpen", fill); panel->setProperty("lineOpen", line); panel->setProperty("fillPresetsOpen", presets);
+            settle(250);
+        };
+        const auto shoot = [&](const QString &name) {
+            tabs->setProperty("currentIndex", 1);
+            settle(150);
+            QQuickItem *flick = nullptr;
+            for (QQuickItem *up = panel->parentItem(); up; up = up->parentItem())
+                if (up->inherits("QQuickFlickable")) {
+                    const QPointF in = panel->mapToItem(up->property("contentItem").value<QQuickItem *>(), QPointF());
+                    const qreal most = qMax(0.0, up->property("contentHeight").toReal() - up->height());
+                    up->setProperty("contentY", qBound(0.0, in.y() - 40, most));
+                    flick = up;
+                    break;
+                }
+            settle(500);
+            const QImage whole = window->grabWindow();
+            whole.save(outDir + QStringLiteral("/fill-%1-window.png").arg(name));
+            if (flick) {
+                const QRectF r = flick->mapRectToScene(QRectF(0, 0, flick->width(), flick->height()));
+                const qreal dpr = whole.devicePixelRatio();
+                const QRect crop = QRect(int((r.left() - 8) * dpr), 0, int((r.width() + 16) * dpr), whole.height()).intersected(whole.rect());
+                whole.copy(crop).save(outDir + QStringLiteral("/fill-%1.png").arg(name));
+            }
+            const auto st = backend.fillState();
+            qInfo().noquote() << "ui-shot fill:" << name << "target" << st.value("target").toString() << "count" << st.value("count").toInt()
+                              << "fillStyle" << st.value("fillStyle").toInt() << "stops" << st.value("gradientStops").toList().size()
+                              << "pattern" << st.value("patternPreset").toString() << "tile" << st.value("pictureTile").toBool()
+                              << "line" << st.value("strokeWidth").toDouble() << "dash" << st.value("strokeDash").toString()
+                              << "compound" << st.value("strokeCompound").toInt() << "visible" << panel->isVisible();
+        };
+        const auto onSlide = [&](int slide) { backend.setProperty("currentSlide", slide); settle(300); return backend.slideObjects(); };
+        // The deck's objects in order (title, then each sample and its label).
+        struct Case { int slide, index; const char *shot; bool fill, line, presets; };
+        const Case cases[] = {
+            {1, 5, "shape-gradient", true, false, false},         // 5 stops 45°
+            {1, 5, "shape-collapsed", false, false, false},
+            {1, 5, "shape-presets", true, false, true},
+            {2, 19, "shape-path-gradient", true, false, false},   // shape path, off centre
+            {3, 23, "shape-picture-tile", true, false, false},    // tile 40% mirror xy
+            {3, 3, "shape-picture-stretch", true, false, false},  // stretch with offsets
+            {4, 97, "shape-pattern", true, false, false},         // weave
+            {6, 13, "shape-line", false, true, false},            // triple 4 pt dash
+            {8, 3, "shape-gradient-line", false, true, false},    // gradient line, 5 stops
+            {1, 25, "textbox-gradient", true, false, false},      // text box, gradient fill
+            {9, 17, "textbox-fill-line", true, true, false},      // text box, fill, line and insets
+            {9, 15, "textbox-line", false, true, false},          // text box, dashed outline
+            {0, 0, "textbox-plain", true, true, false},           // the title: no fill, no line
+        };
+        int found = 0;
+        for (const auto &c : cases) {
+            const auto objects = onSlide(c.slide);
+            if (c.index >= objects.size()) { qInfo().noquote() << "ui-shot fill: missing" << c.shot << "slide" << backend.property("currentSlide").toInt() << "has" << objects.size() << "FAIL"; continue; }
+            ++found;
+            backend.select(objects.at(c.index).toMap().value("id").toString());
+            fold(c.fill, c.line, c.presets);
+            shoot(QString::fromLatin1(c.shot));
+        }
+        const int want = int(sizeof cases / sizeof cases[0]);
+        qInfo().noquote() << "ui-shot fill: cases" << found << (found == want ? "ok" : "FAIL");
+        return found == want ? 0 : 3;
+    }
     // COLOR-PICK-2 (OMASHOW_UI_SHOT_COLORS=1): every colour setting, by hand. Each swatch is
     // clicked, the chooser photographed, a colour typed in its hex box (or a grid swatch
     // clicked) and "Use colour" clicked; what the deck now holds is read back.
@@ -733,10 +809,15 @@ int captureInterface(QQmlApplicationEngine &engine, Backend &backend, Presenter 
         // A shape: fill, second colour (gradient), outline, shadow.
         backend.addRect();
         settle(300);
+        // FILL-UI-1: a shape's colours sit in the Style tab's Fill and Line, folded away.
+        if (QQuickItem *fills = findItem(window->contentItem(), QStringLiteral("fillPanel"))) { fills->setProperty("fillOpen", true); fills->setProperty("lineOpen", true); }
+        settle(200);
         check(QStringLiteral("shape fill"), QStringLiteral("Fill colour"), QStringLiteral("#30a060"), QStringLiteral("hex"), [&] { return selection("fill"); });
-        backend.setSelectedProperty(QStringLiteral("fillStyle"), 1);
+        backend.setSelectedProperty(QStringLiteral("fillStyle"), 3);   // FILL-UI-1: a pattern's background
         settle(200);
         check(QStringLiteral("shape second fill colour"), QStringLiteral("Second fill colour"), QStringLiteral("#f0c020"), QStringLiteral("hex"), [&] { return selection("fillSecondary"); });
+        backend.setSelectedProperty(QStringLiteral("strokeWidth"), 2);   // FILL-UI-1: the line's colour shows once it has one
+        settle(200);
         check(QStringLiteral("shape outline"), QStringLiteral("Stroke colour"), QStringLiteral("#602080"), QStringLiteral("hex"), [&] { return selection("strokeColor"); });
         backend.setSelectedProperty(QStringLiteral("shadowEnabled"), true);
         // EFFECTS-UI-1: the shadow's colour sits in the Style tab's Effects, folded away.

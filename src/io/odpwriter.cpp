@@ -1,6 +1,7 @@
 #include "io/odpwriter.h"
 
 #include "anim/presentation.h"
+#include "core/fillstyle.h"
 #include "core/chart.h"
 #include "core/design.h"
 #include "core/fontswap.h"
@@ -868,7 +869,10 @@ struct Writer {
             if (canceled()) return;
             switch (o.type) {
             case ObjectType::Rect: writeShape(x, o); break;
-            case ObjectType::Text: writeText(x, o); break;
+            case ObjectType::Text:
+                // FILL-UI-1: a text box's own box goes as a shape under its words.
+                for (const auto &part : FillStyle::split(o)) { if (part.type == ObjectType::Rect) writeShape(x, part); else writeText(x, part); }
+                break;
             case ObjectType::Image: writePicture(x, o); break;
             case ObjectType::Media: writeMedia(x, o); break;
             case ObjectType::Table: writeTable(x, o); break;

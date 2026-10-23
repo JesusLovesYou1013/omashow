@@ -1,5 +1,6 @@
 #include <functional>
 #include "io/pptx.h"
+#include "core/fillstyle.h"
 
 #include "anim/build.h"
 #include "anim/presentation.h"
@@ -386,6 +387,20 @@ struct Look {
     int shadowAlign = 0;
     qreal glowRadEmu = 0;
     QColor glowColor;
+    // FILL-UI-1: the rest of a:gradFill, a:pattFill and a:blipFill, and of a:ln.
+    QVector<GradientStop> stops;
+    int gradPath = 0;                       // circle, rect, shape
+    qreal focus[4] = {0, 0, 0, 0};          // a:fillToRect l t r b (the schema's 0)
+    bool scaled = false, rotate = true;
+    QString pattern;
+    const Node *blip = nullptr;             // the a:blipFill
+    QString dashPreset;
+    QVariantList customDash;
+    int compound = 0, cap = -1, join = -1;
+    bool lineGradient = false;
+    QVector<GradientStop> lineStops;
+    qreal lineAngle = 0;
+    int lineGradPath = 0;
 };
 
 // a:outerShdw's algn, as SceneObject::shadowAlign counts them.
@@ -408,27 +423,76 @@ bool readFill(const Node *owner, Look &look, const ColorContext &ctx) {
         if (k.name == QLatin1String("noFill")) { look.fillSet = true; look.fillStyle = 5; return true; }
         if (k.name == QLatin1String("gradFill")) {
             look.fillSet = true;
-            QVector<QPair<qreal, QColor>> stops;
+            // FILL-UI-1: every stop, the path and its focus, scaled, rotate with shape.
+            QVector<GradientStop> stops;
             if (const Node *list = k.child(QStringLiteral("gsLst")))
-                for (const auto *gs : list->all(QStringLiteral("gs")))
-                    stops.append({gs->attr(QStringLiteral("pos")).toDouble() / 100000.0, colorIn(gs, ctx)});
+                for (const auto *gs : list->all(QStringLiteral("gs"))) {
+                    // A stop's Brightness (what PowerPoint writes: lumMod 1-b with
+                    // lumOff b, or lumMod 1+b alone) is kept apart from its colour.
+                    qreal brightness = 0;
+                    QColor c;
+                    for (const auto &clr : gs->kids) {
+                        Node plain = clr;
+                        QVector<Node> lum;
+                        plain.kids.erase(std::remove_if(plain.kids.begin(), plain.kids.end(), [&](const Node &m) {
+                            const bool l = m.name == QLatin1String("lumMod") || m.name == QLatin1String("lumOff");
+                            if (l) lum.append(m);
+                            return l;
+                        }), plain.kids.end());
+                        const auto val = [](const Node &m) { return m.attr(QStringLiteral("val")).toDouble() / 100000.0; };
+                        if (lum.size() == 2 && lum[0].name == QLatin1String("lumMod") && lum[1].name == QLatin1String("lumOff") &&
+                            std::abs(val(lum[0]) + val(lum[1]) - 1) < 1e-4 && val(lum[1]) > 0) brightness = val(lum[1]);
+                        else if (lum.size() == 1 && lum[0].name == QLatin1String("lumMod") && val(lum[0]) < 1 && val(lum[0]) >= 0) brightness = val(lum[0]) - 1;
+                        c = readColor(brightness != 0 ? &plain : &clr, ctx);
+                        if (c.isValid()) break;
+                        brightness = 0;
+                    }
+                    if (c.isValid()) stops.append({qBound(0.0, gs->attr(QStringLiteral("pos")).toDouble() / 100000.0, 1.0), c, brightness});
+                }
+            std::stable_sort(stops.begin(), stops.end(), [](const GradientStop &a, const GradientStop &b) { return a.position < b.position; });
             if (stops.isEmpty()) { look.fillStyle = 5; return true; }
-            look.fillStyle = k.child(QStringLiteral("path")) ? 2 : 1;
-            look.fill = stops.first().second;
-            look.fill2 = stops.last().second;
-            if (const Node *lin = k.child(QStringLiteral("lin")))
+            if (stops.size() == 1) stops.append({1, stops.first().color, 0});
+            while (stops.size() > 10) stops.removeAt(stops.size() / 2);
+            const Node *path = k.child(QStringLiteral("path"));
+            look.fillStyle = path ? 2 : 1;
+            look.fill = stops.first().color;
+            look.fill2 = stops.last().color;
+            look.stops = stops;
+            look.rotate = k.attr(QStringLiteral("rotWithShape"), QStringLiteral("1")) != QLatin1String("0") &&
+                          k.attr(QStringLiteral("rotWithShape")) != QLatin1String("false");
+            if (const Node *lin = k.child(QStringLiteral("lin"))) {
                 look.angle = lin->attr(QStringLiteral("ang")).toDouble() / 60000.0;
+                const auto sc = lin->attr(QStringLiteral("scaled"));
+                look.scaled = sc == QLatin1String("1") || sc == QLatin1String("true");
+            }
+            if (path) {
+                const auto kind = path->attr(QStringLiteral("path"));
+                // Office's defaults (MS-OI29500 20.1.8): path shape, focus 50% each side.
+                look.gradPath = kind == QLatin1String("rect") ? 1 : kind == QLatin1String("circle") ? 0 : 2;
+                for (auto &f : look.focus) f = .5;
+                if (const Node *to = path->child(QStringLiteral("fillToRect"))) {
+                    const char *names[] = {"l", "t", "r", "b"};
+                    for (int i = 0; i < 4; ++i) look.focus[i] = to->attr(QLatin1String(names[i]), QStringLiteral("0")).toDouble() / 100000.0;
+                }
+            }
             return true;
         }
         if (k.name == QLatin1String("pattFill")) {
             look.fillSet = true; look.fillStyle = 3;
+            // FILL-UI-1: the pattern itself (the schema's default is pct5),
+            // black on white unless the colours are named.
+            look.pattern = k.attr(QStringLiteral("prst"), QStringLiteral("pct5"));
+            if (FillStyle::patternCells(look.pattern).isEmpty()) look.pattern = QStringLiteral("pct5");
             look.fill = colorIn(k.child(QStringLiteral("fgClr")), ctx);
             look.fill2 = colorIn(k.child(QStringLiteral("bgClr")), ctx);
+            if (!look.fill.isValid()) look.fill = QColor(Qt::black);
+            if (!look.fill2.isValid()) look.fill2 = QColor(Qt::white);
             return true;
         }
         if (k.name == QLatin1String("blipFill")) {
             look.fillSet = true; look.fillStyle = 5;
             if (const Node *blip = k.child(QStringLiteral("blip"))) look.blipRid = blip->attr(QStringLiteral("embed"));
+            look.blip = &k;   // FILL-UI-1: drawn once the picture is read (convertShape)
             return true;
         }
         if (k.name == QLatin1String("grpFill")) { look.fillSet = true; look.fillStyle = 5; return true; }
@@ -449,9 +513,29 @@ void readLine(const Node *ln, Look &look, const ColorContext &ctx) {
     look.line = true;
     if (const Node *dash = ln->child(QStringLiteral("prstDash"))) {
         const auto v = dash->attr(QStringLiteral("val"));
-        if (v.contains(QLatin1String("dot")) && !v.contains(QLatin1String("dash"))) look.dash = 2;
-        else if (v.contains(QLatin1String("dashDot"))) look.dash = 3;
-        else if (v.contains(QLatin1String("dash"))) look.dash = 1;
+        // FILL-UI-1: the dash by its own name (dash keeps the nearest Qt one).
+        if (FillStyle::dashPresets().contains(v) && v != QLatin1String("solid")) look.dashPreset = v;
+        look.dash = FillStyle::nearestQtDash(v);
+    } else if (const Node *custom = ln->child(QStringLiteral("custDash"))) {
+        // Dash and space, each in thousandths of a percent of the line's width.
+        QVariantList list;
+        for (const auto *ds : custom->all(QStringLiteral("ds"))) {
+            list.append(qBound(0.01, ds->attr(QStringLiteral("d"), QStringLiteral("100000")).toDouble() / 100000.0, 1000.0));
+            list.append(qBound(0.01, ds->attr(QStringLiteral("sp"), QStringLiteral("100000")).toDouble() / 100000.0, 1000.0));
+        }
+        if (!list.isEmpty() && list.size() <= 20) { look.dashPreset = QStringLiteral("custom"); look.customDash = list; look.dash = 1; }
+    }
+    look.compound = qMax(0, FillStyle::compoundNames().indexOf(ln->attr(QStringLiteral("cmpd"), QStringLiteral("sng"))));
+    const auto cap = ln->attr(QStringLiteral("cap"));
+    if (cap == QLatin1String("flat")) look.cap = 0; else if (cap == QLatin1String("sq")) look.cap = 1; else if (cap == QLatin1String("rnd")) look.cap = 2;
+    if (ln->child(QStringLiteral("miter"))) look.join = 0;
+    else if (ln->child(QStringLiteral("bevel"))) look.join = 1;
+    else if (ln->child(QStringLiteral("round"))) look.join = 2;
+    if (inner.fillStyle == 1 || inner.fillStyle == 2) {
+        look.lineGradient = true;
+        look.lineStops = inner.stops;
+        look.lineAngle = inner.angle;
+        look.lineGradPath = inner.fillStyle == 1 ? 0 : 1 + inner.gradPath;
     }
 }
 
@@ -1044,11 +1128,35 @@ struct Reader {
         if (look.fill.isValid()) o.fill = look.fill;
         if (look.fill2.isValid()) o.fillSecondary = look.fill2;
         o.fillAngle = look.angle;
+        // FILL-UI-1: the gradient's own stops and path, the pattern's name.
+        if (o.fillStyle == 1 || o.fillStyle == 2) {
+            o.gradientStops = look.stops;
+            o.gradientPath = look.gradPath;
+            o.gradientFocusL = look.focus[0]; o.gradientFocusT = look.focus[1];
+            o.gradientFocusR = look.focus[2]; o.gradientFocusB = look.focus[3];
+            o.gradientScaled = look.scaled;
+            o.gradientRotate = look.rotate;
+        }
+        if (o.fillStyle == 3) o.patternPreset = look.pattern;
         if (look.line) {
             o.strokeColor = look.lineColor;
             o.strokeWidth = qMax(0.5, look.lineWidthEmu * u.k);
             o.strokeStyle = look.dash;
+            o.strokeDash = look.dashPreset;
+            o.strokeDashCustom = look.customDash;
+            o.strokeCompound = look.compound;
+            // Office draws a line with no cap or join given flat and round
+            // (MS-OI29500 20.1.2.2.24 and 20.1.8), not the schema's square.
+            o.strokeCap = look.cap >= 0 ? look.cap : 0;
+            o.strokeJoin = look.join >= 0 ? look.join : 2;
+            if (look.lineGradient && look.lineStops.size() >= 2) {
+                o.strokeGradient = true;
+                o.strokeStops = look.lineStops;
+                o.strokeAngle = look.lineAngle;
+                o.strokeGradientPath = look.lineGradPath;
+            }
         } else o.strokeWidth = 0;
+        FillStyle::syncLegacy(o);
         if (look.shadow) {
             o.shadowEnabled = true;
             o.shadowColor = look.shadowColor;
@@ -1249,7 +1357,12 @@ struct Reader {
             if (!look.lineSet && pr) readLine(pr->child(QStringLiteral("ln")), look, color);
         }
         applyStyleRefs(sp->child(QStringLiteral("style")), look, color);
-        if (!look.blipRid.isEmpty()) warnings.add(QStringLiteral("A shape filled with a picture was given no fill"), scope.slideNumber);
+        // FILL-UI-1: a shape filled with a picture keeps it.
+        SceneObject picture;
+        if (look.blip) {
+            if (readBlipFill(picture, look.blip, scope)) look.fillStyle = 4;
+            else warnings.add(QStringLiteral("A shape filled with a picture was given no fill"), scope.slideNumber);
+        }
 
         // Words.
         const Node *txBody = sp->child(QStringLiteral("txBody"));
@@ -1277,7 +1390,14 @@ struct Reader {
 
         QStringList own = groups;
         QString firstId;
-        if (visibleBox) {
+        const bool hasWords = !text.empty && !text.text.trimmed().isEmpty();
+        // FILL-UI-1: a rectangle with words and a fill or an outline is one
+        // text box with a box of its own, as PowerPoint has it; other shapes
+        // with words stay a shape and a text box, grouped.
+        const Node *prstOf = spPr ? spPr->child(QStringLiteral("prstGeom")) : nullptr;
+        const bool ownBox = visibleBox && hasWords && !(spPr && spPr->child(QStringLiteral("custGeom"))) &&
+                            (!prstOf || prstOf->attr(QStringLiteral("prst")) == QLatin1String("rect"));
+        if (visibleBox && !ownBox) {
             SceneObject box;
             box.id = Edit::newId(QStringLiteral("shape"));
             box.type = ObjectType::Rect;
@@ -1322,6 +1442,7 @@ struct Reader {
             }
             if (!name.isEmpty()) box.altTitle = name;
             box.hidden = hidden;
+            if (box.fillStyle == 4) FillStyle::copyPicture(box, picture);
             scope.objects->append(box);
             firstId = box.id;
         }
@@ -1330,7 +1451,19 @@ struct Reader {
             words.id = Edit::newId(QStringLiteral("text"));
             finish(words, place, own);
             applyText(words, text, fallback);
-            if (!visibleBox) boxEffectsOfWords(words, look);
+            if (ownBox) {
+                // The box is the shape's own rectangle: the words' less the insets taken off.
+                SceneObject box;
+                applyLook(box, look);
+                if (box.fillStyle == 4) FillStyle::copyPicture(box, picture);
+                FillStyle::copyFillAndLine(words, box);
+                words.boxDrawn = true;
+                words.boxInsetL = qMax(0.0, words.rect.left() - place.rect.left());
+                words.boxInsetT = qMax(0.0, words.rect.top() - place.rect.top());
+                words.boxInsetR = qMax(0.0, place.rect.right() - words.rect.right());
+                words.boxInsetB = qMax(0.0, place.rect.bottom() - words.rect.bottom());
+                boxEffectsOfWords(words, look);
+            } else if (!visibleBox) boxEffectsOfWords(words, look);
             // BOX-SHADOW-2: an outlined box with no fill casts one shadow from
             // its outline and its words together, turned about the box (sx/sy,
             // kx/ky, algn): the words carry it as their box's shadow (boxShadow*,
@@ -1370,6 +1503,57 @@ struct Reader {
         } else if (ImageAsset::decode(o, bytes, &error)) return true;
         warnings.add(QStringLiteral("A picture could not be read: %1").arg(error.isEmpty() ? suffix : error), slideNumber);
         return false;
+    }
+
+    // FILL-UI-1: a shape's a:blipFill: the picture, cropped (srcRect), stretched
+    // into the box less its insets (fillRect) or tiled (tile), see-through
+    // (alphaModFix), with the picture's own adjustments.
+    bool readBlipFill(SceneObject &o, const Node *blipFill, const Scope &scope) {
+        const Node *blip = blipFill->child(QStringLiteral("blip"));
+        if (!blip) return false;
+        QString mediaPath;
+        QVector<const Node *> svgs;
+        blip->collect(QStringLiteral("svgBlip"), svgs);
+        if (!svgs.isEmpty()) {
+            const auto svgPath = pkg.target(scope.partPath, svgs.first()->attr(QStringLiteral("embed")));
+            if (pkg.has(svgPath)) mediaPath = svgPath;
+        }
+        if (mediaPath.isEmpty()) mediaPath = pkg.target(scope.partPath, blip->attr(QStringLiteral("embed")));
+        if (mediaPath.isEmpty() || !decodePicture(o, mediaPath, scope.slideNumber)) return false;
+        o.fillStyle = 4;
+        o.imageMode = 2;
+        const auto frac = [](const Node *n, const char *name) { return n->attr(QLatin1String(name), QStringLiteral("0")).toDouble() / 100000.0; };
+        if (const Node *src = blipFill->child(QStringLiteral("srcRect"))) {
+            const qreal l = frac(src, "l"), t = frac(src, "t"), r = frac(src, "r"), b = frac(src, "b");
+            if (l + r < 1 && t + b < 1 && (l > 0 || t > 0 || r > 0 || b > 0)) o.imageCrop = QRectF(l, t, 1 - l - r, 1 - t - b);
+        }
+        if (const Node *tile = blipFill->child(QStringLiteral("tile"))) {
+            o.pictureTile = true;
+            o.pictureTileX = tile->attr(QStringLiteral("tx"), QStringLiteral("0")).toDouble() * u.k;
+            o.pictureTileY = tile->attr(QStringLiteral("ty"), QStringLiteral("0")).toDouble() * u.k;
+            o.pictureTileScaleX = qBound(1.0, tile->attr(QStringLiteral("sx"), QStringLiteral("100000")).toDouble() / 1000.0, 1000.0);
+            o.pictureTileScaleY = qBound(1.0, tile->attr(QStringLiteral("sy"), QStringLiteral("100000")).toDouble() / 1000.0, 1000.0);
+            const auto flip = tile->attr(QStringLiteral("flip"), QStringLiteral("none"));
+            o.pictureTileFlip = flip == QLatin1String("x") ? 1 : flip == QLatin1String("y") ? 2 : flip == QLatin1String("xy") ? 3 : 0;
+            static const QStringList aligns{"tl", "t", "tr", "l", "ctr", "r", "bl", "b", "br"};
+            o.pictureTileAlign = qMax(0, aligns.indexOf(tile->attr(QStringLiteral("algn"), QStringLiteral("tl"))));
+        } else if (const Node *stretch = blipFill->child(QStringLiteral("stretch"))) {
+            if (const Node *fill = stretch->child(QStringLiteral("fillRect"))) {
+                o.pictureInsetL = qBound(-10.0, frac(fill, "l"), 10.0); o.pictureInsetT = qBound(-10.0, frac(fill, "t"), 10.0);
+                o.pictureInsetR = qBound(-10.0, frac(fill, "r"), 10.0); o.pictureInsetB = qBound(-10.0, frac(fill, "b"), 10.0);
+            }
+        }
+        const auto rot = blipFill->attr(QStringLiteral("rotWithShape"), QStringLiteral("1"));
+        o.pictureRotate = rot != QLatin1String("0") && rot != QLatin1String("false");
+        for (const auto &k : blip->kids) {
+            if (k.name == QLatin1String("alphaModFix")) o.pictureTransparency = qBound(0.0, 1 - k.attr(QStringLiteral("amt"), QStringLiteral("100000")).toDouble() / 100000.0, 1.0);
+            else if (k.name == QLatin1String("grayscl")) o.imageSaturation = 0;
+            else if (k.name == QLatin1String("lum")) {
+                o.imageBrightness = k.attr(QStringLiteral("bright"), QStringLiteral("0")).toDouble() / 100000.0;
+                o.imageContrast = 1 + k.attr(QStringLiteral("contrast"), QStringLiteral("0")).toDouble() / 100000.0;
+            }
+        }
+        return true;
     }
 
     void convertPicture(const Node *pic, Scope &scope, const GroupSpace &space, const QStringList &groups) {

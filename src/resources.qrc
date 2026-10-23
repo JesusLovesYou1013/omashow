@@ -45,6 +45,8 @@
         <file alias="ShapeTools.qml">ShapeTools.qml</file>
         <file alias="EffectsPanel.qml">EffectsPanel.qml</file>
         <file alias="EffectsSet.qml">EffectsSet.qml</file>
+        <file alias="FillPanel.qml">FillPanel.qml</file>
+        <file alias="GradientStops.qml">GradientStops.qml</file>
         <file alias="CombineShapesDialog.qml">CombineShapesDialog.qml</file>
         <file alias="PathTools.qml">PathTools.qml</file>
         <file alias="PictureAdjustments.qml">PictureAdjustments.qml</file>
