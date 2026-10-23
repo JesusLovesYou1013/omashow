@@ -1,6 +1,7 @@
 #include "io/keynotewriter.h"
 
 #include "anim/presentation.h"
+#include "core/fillstyle.h"
 #include "core/design.h"
 #include "core/fontswap.h"
 #include "core/imageasset.h"
@@ -978,7 +979,10 @@ struct Writer {
             if (!o.groups.isEmpty()) warnings.add(QStringLiteral("Groups were written as their separate objects"), slide);
             switch (o.type) {
             case ObjectType::Rect: writeShape(part, parent, o, drawn); break;
-            case ObjectType::Text: writeText(part, parent, o, drawn); break;
+            case ObjectType::Text:
+                // FILL-UI-1: a text box's own box goes as a shape under its words.
+                for (const auto &piece : FillStyle::split(o)) { if (piece.type == ObjectType::Rect) writeShape(part, parent, piece, drawn); else writeText(part, parent, piece, drawn); }
+                break;
             case ObjectType::Image: writePicture(part, parent, o, drawn); break;
             case ObjectType::Media: writeMedia(part, parent, o, drawn); break;
             case ObjectType::Table: writeSnapshot(part, parent, o, QStringLiteral("A table was written as a picture of itself"), drawn); break;

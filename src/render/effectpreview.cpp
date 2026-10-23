@@ -1,8 +1,11 @@
 #include "render/effectpreview.h"
 
+#include "core/design.h"
+#include "core/fillstyle.h"
 #include "core/scene.h"
 #include "render/scenerenderer.h"
 
+#include <QJsonDocument>
 #include <QUrlQuery>
 
 EffectPreviewProvider::EffectPreviewProvider() : QQuickImageProvider(QQuickImageProvider::Image) {}
@@ -28,6 +31,25 @@ QImage EffectPreviewProvider::requestImage(const QString &id, QSize *size, const
     // black shadow (the perspective ones) reads on the dark panel.
     const bool lit = number("lit", 0) != 0;
     const QColor own = colour("f", lit ? QColor(0x3a, 0x41, 0x50) : QColor(0xd8, 0xdc, 0xe2));
+    if (kind == QLatin1String("fill")) {
+        // FILL-UI-1: a fill or line sample (gallery and pattern swatches):
+        // p is the shape's fill and line keys as JSON. Unknown keys are ignored.
+        o.type = ObjectType::Rect;
+        o.rect = QRectF(6, 6, 52, 52);
+        o.fillStyle = 5;
+        o.strokeWidth = 0;
+        const auto values = QJsonDocument::fromJson(query.queryItemValue(QStringLiteral("p"), QUrl::FullyDecoded).toUtf8()).toVariant().toMap();
+        const bool line = values.contains(QStringLiteral("strokeWidth")) && !values.contains(QStringLiteral("fillStyle"));
+        if (line) o.rect = QRectF(4, 20, 56, 24);
+        for (auto it = values.cbegin(); it != values.cend(); ++it)
+            if (it.key().startsWith(QLatin1String("fill")) || it.key().startsWith(QLatin1String("gradient")) || it.key().startsWith(QLatin1String("pattern")) || it.key().startsWith(QLatin1String("stroke")))
+                Design::setProperty(o, it.key(), it.value());
+        FillStyle::syncLegacy(o);
+        const QSize px = requestedSize.isValid() && !requestedSize.isEmpty() ? requestedSize.boundedTo(QSize(512, 512)) : QSize(96, 96);
+        const QImage image = SceneRenderer::render({o}, QSizeF(tile, tile), px, QColor(Qt::transparent), 540);
+        if (size) *size = image.size();
+        return image;
+    }
     if (kind == QLatin1String("text")) {
         o.type = ObjectType::Text;
         o.text = QStringLiteral("A");

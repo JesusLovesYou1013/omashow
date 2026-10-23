@@ -515,6 +515,16 @@ public:
     // selected object of that kind has, with "count" (0: none selected).
     Q_INVOKABLE void setSelectedEffect(const QString &target, const QVariantMap &values);
     Q_INVOKABLE QVariantMap effectState(const QString &target) const;
+    // FILL-UI-1: Fill and Line for the Style tab. The targets are the selected
+    // shapes, or with none the selected text boxes' own boxes (a text box
+    // given a fill or line gets boxDrawn). Keys are the shape's property names
+    // (fillStyle, fill, gradientStops, patternPreset, strokeDash, ...); all
+    // are set in one undo step. fillState is the first target's, with "count"
+    // and "target" ("shape" or "text").
+    Q_INVOKABLE void setSelectedFill(const QVariantMap &values);
+    Q_INVOKABLE QVariantMap fillState() const;
+    Q_INVOKABLE QStringList fillPatternPresets() const;
+    Q_INVOKABLE QStringList lineDashPresets() const;
 
     Q_INVOKABLE void undo();
     Q_INVOKABLE void redo();

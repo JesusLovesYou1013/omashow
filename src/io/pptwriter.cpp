@@ -1,6 +1,7 @@
 #include "io/pptwriter.h"
 
 #include "anim/presentation.h"
+#include "core/fillstyle.h"
 #include "core/design.h"
 #include "core/fontswap.h"
 #include "core/imageasset.h"
@@ -718,7 +719,10 @@ struct Writer {
             if (canceled()) return {};
             switch (o.type) {
             case ObjectType::Rect: out += writeShape(o); break;
-            case ObjectType::Text: out += writeText(o); break;
+            case ObjectType::Text:
+                // FILL-UI-1: a text box's own box goes as a shape under its words.
+                for (const auto &part : FillStyle::split(o)) out += part.type == ObjectType::Rect ? writeShape(part) : writeText(part);
+                break;
             case ObjectType::Image: out += writePicture(o); break;
             case ObjectType::Media: out += writeMedia(o); break;
             case ObjectType::Table: out += writeSnapshot(o, QStringLiteral("A table was written as a picture of itself")); break;

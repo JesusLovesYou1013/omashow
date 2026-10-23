@@ -2,6 +2,8 @@
 #include "render/shapeeffects.h"
 #include "core/imageasset.h"
 #include "core/connector.h"
+#include "core/fillstyle.h"
+#include "render/fillpaint.h"
 #include <QLinearGradient>
 #include <QPainter>
 #include <QPainterPathStroker>
@@ -234,10 +236,16 @@ void Shape::paint(QPainter &painter, const SceneObject &o) {
   // from the shape's silhouette (render/shapeeffects.h); a plain offset shadow
   // stays the solid copy it always was.
   const bool soft = ShapeEffects::soft(o);
+  // FILL-UI-1: PowerPoint's newer fills and lines (render/fillpaint.h);
+  // anything else is drawn below exactly as before.
+  const bool modernFill = FillStyle::modernFill(o), modernLine = FillStyle::modernLine(o);
   QPainterPath outline;
   if (soft && o.strokeWidth > 0) {
-    QPainterPathStroker stroker(pen(o));
-    outline = stroker.createStroke(p);
+    if (modernLine) outline = FillPaint::lineArea(o, p);
+    else {
+      QPainterPathStroker stroker(pen(o));
+      outline = stroker.createStroke(p);
+    }
   }
   const QPainterPath area = o.fillStyle == 5 ? QPainterPath() : p;
   if (soft) ShapeEffects::paintBehind(painter, o, area, outline);
@@ -248,6 +256,24 @@ void Shape::paint(QPainter &painter, const SceneObject &o) {
     painter.setBrush(o.shadowColor);
     painter.drawPath(p);
     painter.restore();
+  }
+  if (modernFill || modernLine) {
+    if (modernFill) FillPaint::paintFill(painter, o, p);
+    else if (o.fillStyle != 5) {
+      SceneObject fillOnly = o;
+      fillOnly.strokeWidth = 0;
+      fillOnly.shadowEnabled = false;
+      fillOnly.glowRadius = 0;
+      fillOnly.connector = false;
+      paint(painter, fillOnly);
+    }
+    if (soft && o.shadowEnabled && o.shadowInner) ShapeEffects::paintInside(painter, o, p);
+    if (o.strokeWidth > 0) {
+      if (modernLine) FillPaint::paintLine(painter, o, p);
+      else { painter.setPen(pen(o)); painter.setBrush(Qt::NoBrush); painter.drawPath(p); }
+    }
+    if (o.connector) painter.fillPath(Connector::arrows(o), o.strokeColor);
+    return;
   }
   painter.setPen(o.strokeWidth > 0 ? pen(o) : QPen(Qt::NoPen));
   QBrush brush(o.fill);

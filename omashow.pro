@@ -97,6 +97,8 @@ SOURCES += src/core/shape.cpp src/backendshape.cpp
 
 HEADERS += src/core/objectstyle.h
 SOURCES += src/core/objectstyle.cpp
+HEADERS += src/core/fillstyle.h src/render/fillpaint.h
+SOURCES += src/core/fillstyle.cpp src/render/fillpaint.cpp
 
 HEADERS += src/core/connector.h
 SOURCES += src/core/connector.cpp src/backendconnector.cpp

@@ -51,4 +51,10 @@ void DeckResize::scaleObject(SceneObject &o, qreal scale, const QPointF &origin)
   o.boxShadowX *= scale;   // BOTH-EFFECTS-1
   o.boxShadowY *= scale;
   o.boxShadowBlur *= scale;
+  o.pictureTileX *= scale;   // FILL-UI-1
+  o.pictureTileY *= scale;
+  o.boxInsetL *= scale;
+  o.boxInsetT *= scale;
+  o.boxInsetR *= scale;
+  o.boxInsetB *= scale;
 }
