@@ -465,7 +465,8 @@ void DeckFeatures::split(QVector<Zip::Entry> &entries, const QByteArray &passthr
         if (error.error != QJsonParseError::NoError || !doc.isObject()) continue;
         Split split{entry.name, {}};
         const auto base = splitFile(entry.name, doc.object(), split);
-        if (split.entries.isEmpty()) continue;
+        // Fields left out at their defaults record no entry but still go.
+        if (base == doc.object()) continue;
         entry.data = QJsonDocument(base).toJson(entry.name == QLatin1String("document.json") ? QJsonDocument::Indented
                                                                                                : QJsonDocument::Indented);
         for (const auto &e : std::as_const(split.entries)) all.append(e);
