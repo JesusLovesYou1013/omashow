@@ -441,7 +441,7 @@ QByteArray Bundle::toBytes(const Document &document, const QByteArray &recoveryM
     for (const auto &slide : document.slides) collect(slide.objects);
     for (auto it=assets.cbegin();it!=assets.cend();++it)
         entries.append({"assets/"+it.key(),it.value(),false});
-    // Only what OmaShow 0.1.0 reads stays in the JSON files; the rest goes to
+    // Only what OmaShow 0.2.0 reads stays in the JSON files; the rest goes to
     // features.json, switched on by apps that know it (io/deckfeatures.h).
     DeckFeatures::split(entries, document.unknownFeatures);
     return Zip::write(entries);
