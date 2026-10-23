@@ -784,6 +784,12 @@ struct Writer {
         writeXfrm(x, o.rect, o.rotation);
         x.start("a:prstGeom").attr("prst", "rect"); x.empty("a:avLst"); x.end();
         x.empty("a:noFill");
+        // BOTH-EFFECTS-1: the text box's own glow and shadow, apart from its words'.
+        if (o.glowRadius > 0 || o.boxShadowEnabled) {
+            SceneObject box = o;
+            box.swapBoxShadow();
+            writeEffects(x, box);
+        }
         x.end();
         writeTextBody(x, "p:txBody", o, ctx, false);
         x.end();

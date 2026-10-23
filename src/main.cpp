@@ -464,7 +464,7 @@ int captureInterface(QQmlApplicationEngine &engine, Backend &backend, Presenter 
                 whole.copy(crop).save(outDir + QStringLiteral("/effects-%1.png").arg(name));
             }
             const auto text = backend.effectState(QStringLiteral("text")), shape = backend.effectState(QStringLiteral("shape"));
-            qInfo().noquote() << "ui-shot effects:" << name << "target" << panel->property("target").toString()
+            qInfo().noquote() << "ui-shot effects:" << name << "mode" << panel->property("mode").toString()
                               << "text" << text.value("count").toInt() << "glow" << text.value("glowRadius").toDouble() << "shadow" << text.value("shadowEnabled").toBool()
                               << "inner" << text.value("shadowInner").toBool() << "sy" << text.value("shadowScaleY").toDouble() << "kx" << text.value("shadowSkewX").toDouble()
                               << "| shape" << shape.value("count").toInt() << "glow" << shape.value("glowRadius").toDouble() << "shadow" << shape.value("shadowEnabled").toBool()
@@ -528,11 +528,24 @@ int captureInterface(QQmlApplicationEngine &engine, Backend &backend, Presenter 
                 panel->setProperty("chosen", QStringLiteral("shape"));
                 settle(200);
                 shoot(QStringLiteral("both-box-expanded"));
+                // BOTH-EFFECTS-1: Both, the two sets one under the other.
+                panel->setProperty("chosen", QStringLiteral("both"));
+                fold(false); shoot(QStringLiteral("both-mode-collapsed"));
+                fold(true); shoot(QStringLiteral("both-mode-expanded"));
                 panel->setProperty("chosen", QString());
             }
             // The plain text box (no fill, no line): its box glow is now the words'.
             const QString plain = firstOf(objects, [](const QVariantMap &m) { return m.value("name").toString() == QLatin1String("Text box"); }, 1);
-            if (!plain.isEmpty()) { backend.select(plain); fold(true); shoot(QStringLiteral("plain-textbox-expanded")); }
+            if (!plain.isEmpty()) {
+                backend.select(plain); fold(true); shoot(QStringLiteral("plain-textbox-expanded"));
+                // BOTH-EFFECTS-1: its Box (the hint: drawn on the words), then Both.
+                panel->setProperty("chosen", QStringLiteral("shape"));
+                fold(false); panel->setProperty("glowOpen", true); settle(200); shoot(QStringLiteral("plain-textbox-box"));
+                panel->setProperty("chosen", QStringLiteral("both"));
+                fold(false); panel->setProperty("glowOpen", true); panel->setProperty("shadowOpen", true); settle(200);
+                shoot(QStringLiteral("plain-textbox-both"));
+                panel->setProperty("chosen", QString());
+            }
         }
         qInfo().noquote() << "ui-shot effects: cases" << found << (found == 6 ? "ok" : "FAIL");
         return found == 6 ? 0 : 3;

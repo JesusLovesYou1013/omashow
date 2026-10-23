@@ -24,7 +24,10 @@ QImage EffectPreviewProvider::requestImage(const QString &id, QSize *size, const
     constexpr qreal tile = 64;
     SceneObject o;
     o.id = QStringLiteral("preview");
-    const QColor own = colour("f", QColor(0xd8, 0xdc, 0xe2));
+    // BOTH-EFFECTS-1 (lit=1): a light card behind a dark sample, so a soft
+    // black shadow (the perspective ones) reads on the dark panel.
+    const bool lit = number("lit", 0) != 0;
+    const QColor own = colour("f", lit ? QColor(0x3a, 0x41, 0x50) : QColor(0xd8, 0xdc, 0xe2));
     if (kind == QLatin1String("text")) {
         o.type = ObjectType::Text;
         o.text = QStringLiteral("A");
@@ -59,7 +62,7 @@ QImage EffectPreviewProvider::requestImage(const QString &id, QSize *size, const
     o.shadowAlign = qBound(0, int(number("sa", 0)), 8);
     const QSize px = requestedSize.isValid() && !requestedSize.isEmpty() ? requestedSize.boundedTo(QSize(512, 512)) : QSize(96, 96);
     // Slide height 540: one slide unit is a point, as the settings are.
-    const QImage image = SceneRenderer::render({o}, QSizeF(tile, tile), px, Qt::transparent, 540);
+    const QImage image = SceneRenderer::render({o}, QSizeF(tile, tile), px, lit ? QColor(0xee, 0xf1, 0xf5) : QColor(Qt::transparent), 540);
     if (size) *size = image.size();
     return image;
 }

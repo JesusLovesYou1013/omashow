@@ -1096,6 +1096,26 @@ struct Reader {
         }
     }
 
+    // BOTH-EFFECTS-1: a box with no fill and no outline keeps its own effects
+    // as the text box's (glow*, boxShadow*), apart from its words' own; they
+    // are drawn on the words where the words have none (TextLayout::paint),
+    // and written back to the box's p:spPr.
+    void boxEffectsOfWords(SceneObject &words, const Look &look) const {
+        if (look.glowRadEmu > 0 && look.glowColor.isValid()) {
+            words.glowRadius = look.glowRadEmu * u.k;
+            words.glowColor = look.glowColor;
+        }
+        if (look.shadow) {
+            SceneObject box;
+            applyLook(box, look);
+            words.boxShadowEnabled = true;
+            words.boxShadowColor = box.shadowColor; words.boxShadowX = box.shadowX; words.boxShadowY = box.shadowY;
+            words.boxShadowBlur = box.shadowBlur; words.boxShadowInner = box.shadowInner;
+            words.boxShadowScaleX = box.shadowScaleX; words.boxShadowScaleY = box.shadowScaleY;
+            words.boxShadowSkewX = box.shadowSkewX; words.boxShadowSkewY = box.shadowSkewY; words.boxShadowAlign = box.shadowAlign;
+        }
+    }
+
     void applyText(SceneObject &o, const TextOut &text, const RunLook &fallback) {
         o.type = ObjectType::Text;
         // OmaShow text has no inset of its own: the text object is separate
@@ -1310,7 +1330,7 @@ struct Reader {
             words.id = Edit::newId(QStringLiteral("text"));
             finish(words, place, own);
             applyText(words, text, fallback);
-            if (!visibleBox) boxEffectsOnWords(words, look);
+            if (!visibleBox) boxEffectsOfWords(words, look);
             else if (!(look.fillSet && look.fillStyle != 5)) boxEffectsOnWords(words, look, true);
             if (!name.isEmpty() && firstId.isEmpty()) words.altTitle = name;
             words.hidden = hidden;

@@ -4,6 +4,7 @@
 // inheritance before the deterministic animation evaluator produces a frame.
 
 #include <QColor>
+#include <utility>
 #include <QImage>
 #include <QPicture>
 #include <QRectF>
@@ -117,6 +118,25 @@ struct SceneObject {
     // a box with no fill and no outline.
     qreal glowRadius = 0;
     QColor glowColor = QColor(68, 114, 196, 102);
+    // BOTH-EFFECTS-1: a text box's own shadow (p:spPr a:effectLst), apart from
+    // its words' (shadow*, a:rPr). Only text objects use it; their box glow is
+    // glowRadius/glowColor above. With no fill and no outline PowerPoint draws
+    // box effects on the words, so they are drawn there, each kind only where
+    // the words have none of their own (TextLayout::paint). The same fields as
+    // shadow*, swapped in and out by swapBoxShadow().
+    bool boxShadowEnabled = false;
+    QColor boxShadowColor = QColor(0,0,0,100);
+    qreal boxShadowX = 8, boxShadowY = 8, boxShadowBlur = 0;
+    bool boxShadowInner = false;
+    qreal boxShadowScaleX = 100, boxShadowScaleY = 100;
+    qreal boxShadowSkewX = 0, boxShadowSkewY = 0;
+    int boxShadowAlign = 0;
+    void swapBoxShadow() {
+        std::swap(shadowEnabled, boxShadowEnabled); std::swap(shadowColor, boxShadowColor);
+        std::swap(shadowX, boxShadowX); std::swap(shadowY, boxShadowY); std::swap(shadowBlur, boxShadowBlur);
+        std::swap(shadowInner, boxShadowInner); std::swap(shadowScaleX, boxShadowScaleX); std::swap(shadowScaleY, boxShadowScaleY);
+        std::swap(shadowSkewX, boxShadowSkewX); std::swap(shadowSkewY, boxShadowSkewY); std::swap(shadowAlign, boxShadowAlign);
+    }
 
     // Embedded raster data is implicitly shared between snapshots and duplicates.
     std::shared_ptr<const SceneObject> imageOriginal;
