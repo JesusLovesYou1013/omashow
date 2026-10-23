@@ -161,8 +161,9 @@ QString featureFor(const QString &part, const QString &key) {
     if (part == QLatin1String("object") && key == QLatin1String("softEdge")) return kSoftEdge;
     if (part == QLatin1String("object") && (key == QLatin1String("reflection") || key == QLatin1String("textReflection"))) return kReflection;
     if (part == QLatin1String("object") && (key == QLatin1String("format3d") || key == QLatin1String("textFormat3d") ||
-                                            key == QLatin1String("textFlatZ"))) return kFormat3d;
-    if (part == QLatin1String("object") && (key == QLatin1String("scene3d") || key == QLatin1String("textScene3d"))) return kRotation3d;
+                                            key == QLatin1String("textFlatZ") || key == QLatin1String("textFlat"))) return kFormat3d;
+    if (part == QLatin1String("object") && (key == QLatin1String("scene3d") || key == QLatin1String("textScene3d") ||
+                                            key == QLatin1String("effects3dFollow"))) return kRotation3d;
     if ((part == QLatin1String("object") && (key == QLatin1String("textFill") || key == QLatin1String("textOutline"))) ||
         (part == QLatin1String("run") && (key == QLatin1String("fill") || key == QLatin1String("outline")))) return kTextFill;
     if (part == QLatin1String("run") && key == QLatin1String("effects")) return kRunEffects;

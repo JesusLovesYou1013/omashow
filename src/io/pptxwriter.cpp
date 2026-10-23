@@ -677,7 +677,7 @@ struct Writer {
     }
 
     // STYLE3D: a:scene3d then a:sp3d (spPr's and bodyPr's order).
-    void write3d(Xml &x, const Effects3D::Scene &s, const Effects3D::Format &f, qreal flatZ = 0, bool body = false) const {
+    void write3d(Xml &x, const Effects3D::Scene &s, const Effects3D::Format &f, qreal flatZ = 0, bool body = false, bool flat = false) const {
         if (s.on) {
             x.start("a:scene3d");
             x.start("a:camera").attr("prst", s.camera);
@@ -692,7 +692,9 @@ struct Writer {
             x.end();
             x.end();
         }
-        if (f.on) {
+        // ROT-SHADOW-1: "Keep text flat" is a:flatTx, which a:bodyPr has in
+        // place of a:sp3d (EG_Text3D): flat words' own 3-D format isn't written.
+        if (f.on && !(body && flat)) {
             x.start("a:sp3d");
             if (!qFuzzyIsNull(f.z)) x.attr("z", emu(f.z));
             if (f.depth > 0) x.attr("extrusionH", emu(f.depth));
@@ -707,7 +709,11 @@ struct Writer {
             if (f.extrusionColor.isValid()) { x.start("a:extrusionClr"); writeColor(x, f.extrusionColor); x.end(); }
             if (f.contourColor.isValid()) { x.start("a:contourClr"); writeColor(x, f.contourColor); x.end(); }
             x.end();
-        } else if (body && !qFuzzyIsNull(flatZ)) x.start("a:flatTx").attr("z", emu(flatZ)).end();
+        } else if (body && (flat || !qFuzzyIsNull(flatZ))) {
+            x.start("a:flatTx");
+            if (!qFuzzyIsNull(flatZ)) x.attr("z", emu(flatZ));
+            x.end();
+        }
     }
 
     void writeEffects(Xml &x, const SceneObject &o) const {
@@ -868,7 +874,7 @@ struct Writer {
         if (o.columns > 1) x.attr("numCol", o.columns);
         // Cut off (0) has no PowerPoint counterpart: it is written as no autofit.
         if (o.textFit == 1) x.empty("a:normAutofit"); else if (o.textFit == 3 && !inTable) x.empty("a:spAutoFit"); else x.empty("a:noAutofit");
-        if (!inTable) write3d(x, o.textScene3d, o.textFormat3d, o.textFlatZ, true);   // STYLE3D
+        if (!inTable) write3d(x, o.textScene3d, o.textFormat3d, o.textFlatZ, true, o.textFlat);   // STYLE3D
         x.end();
         x.empty("a:lstStyle");
 

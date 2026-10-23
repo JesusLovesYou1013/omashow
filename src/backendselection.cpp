@@ -449,7 +449,7 @@ QString effectKey(const QString &target, const QString &key, bool onWords) {
 const QStringList &effectKeys() {
   static const QStringList keys{"glowRadius", "glowColor", "shadowEnabled", "shadowColor", "shadowX", "shadowY", "shadowBlur",
                                 "shadowInner", "shadowScaleX", "shadowScaleY", "shadowSkewX", "shadowSkewY", "shadowAlign",
-                                "softEdge", "reflection", "format3d", "scene3d"};
+                                "softEdge", "reflection", "format3d", "scene3d", "effects3dFollow", "textFlat"};
   return keys;
 }
 // STYLE3D: the selected stretch of a text box being edited, if any.
@@ -482,6 +482,9 @@ QVariantMap Backend::effectState(const QString &target) const {
       const auto all = Design::properties(shown);
       for (const auto &key : effectKeys()) state[key] = all.value(effectKey(target, key, onWords));
       if (target == QLatin1String("text")) state.remove(QStringLiteral("softEdge"));   // PowerPoint has none for text
+      // ROT-SHADOW-1: the box's own 3-D rotation, which the words follow
+      // unless "Keep text flat".
+      if (target == QLatin1String("text")) state["boxScene3d"] = all.value(QStringLiteral("scene3d"));
     }
   }
   state["count"] = count;
