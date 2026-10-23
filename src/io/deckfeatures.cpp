@@ -17,7 +17,10 @@ namespace {
 const QString kFile = QStringLiteral("features.json");
 constexpr int kFormat = 1;
 
-// ---- What OmaShow 0.1.0 (upstream main 74ce940) reads, frozen -------------
+// ---- What OmaShow 0.2.0 (upstream da8f319) reads, frozen ------------------
+// 0.1.0 (74ce940) plus the Office font swap fields (#18); 0.1.0 refuses every
+// format 25 deck anyway, so keeping these here loses nothing there and lets
+// 0.2.0 keep them.
 
 using Keys = QSet<QString>;
 
@@ -27,13 +30,14 @@ const Keys &objectBase() {
         "connectorArrowStart", "connectorEndX", "connectorEndY", "connectorFrom", "connectorFromSide",
         "connectorRoute", "connectorStartX", "connectorStartY", "connectorTo", "connectorToSide",
         "cornerRadius", "cropH", "cropW", "cropX", "cropY", "dataSource", "direction", "fill", "fillAngle",
-        "fillSecondary", "fillStyle", "fillToken", "fontFamily", "fontSize", "fontToken", "fontWeight",
+        "fillSecondary", "fillStyle", "fillToken", "fontFamily", "fontScale", "fontSize", "fontToken", "fontWeight",
         "groups", "h", "hidden", "id", "imageBrightness", "imageContrast", "imageFocalX", "imageFocalY",
         "imageFormat", "imageId", "imageMask", "imageMode", "imageOriginal", "imageSaturation", "imageTint",
         "imageTintAmount", "italic", "language", "letterSpacing", "lineHeight", "linkKind", "linkTarget",
         "listStart", "listStyle", "locked", "mediaAudio", "mediaBytes", "mediaCodec", "mediaContainer",
         "mediaDuration", "mediaId", "mediaLoops", "mediaModified", "mediaName", "mediaOriginal", "mediaPath",
-        "mediaTrimEnd", "mediaTrimStart", "mediaVideo", "mediaVolume", "opacity", "overrides",
+        "mediaTrimEnd", "mediaTrimStart", "mediaVideo", "mediaVolume", "opacity", "origFont", "origFontSize",
+        "origWeight", "overrides",
         "paragraphSpacing", "pathData", "pathWinding", "patternStyle", "placeholderId", "rotation", "runs",
         "shadowColor", "shadowEnabled", "shadowX", "shadowY", "shapeKind", "strokeCap", "strokeColor",
         "strokeJoin", "strokeStyle", "strokeWidth", "table", "tabStop", "text", "textAlign", "textColor",
@@ -43,12 +47,14 @@ const Keys &objectBase() {
 }
 const Keys &runBase() {
     static const Keys keys{"start", "length", "weight", "italic", "underline", "strike", "baseline",
-                           "fontSize", "fontFamily", "color", "language"};
+                           "fontSize", "fontFamily", "color", "language", "origFont", "origFontSize", "fontScale",
+                           "origWeight"};
     return keys;
 }
 const Keys &cellStyleBase() {
     static const Keys keys{"fill", "textColor", "fontFamily", "fontSize", "fontWeight", "italic", "underline",
-                           "textAlign", "verticalAlign", "textFit", "padding", "borderWidth", "borderColor"};
+                           "textAlign", "verticalAlign", "textFit", "padding", "borderWidth", "borderColor",
+                           "origFont", "origFontSize", "fontScale", "origWeight"};
     return keys;
 }
 const Keys &buildBase() {
@@ -67,7 +73,7 @@ const Keys &slideBase() {
                            "transitionSeconds"};
     return keys;
 }
-const Keys &themeBase() { static const Keys keys{"colors", "fonts", "name"}; return keys; }
+const Keys &themeBase() { static const Keys keys{"colors", "fontFallbacks", "fontOrigins", "fonts", "name"}; return keys; }
 const Keys &manifestBase() {
     static const Keys keys{"height", "id", "knownWords", "language", "name", "sections", "shows", "slides",
                            "smartPunctuation", "transition", "transitionDuration", "version", "width"};
@@ -249,7 +255,7 @@ struct Split {
 };
 
 // Moves the fields of `o` that aren't in `base` (and values `allowed` refuses)
-// out, by feature; `o` keeps only what 0.1.0 reads. Recorded once `o` is final,
+// out, by feature; `o` keeps only what 0.2.0 reads. Recorded once `o` is final,
 // so the fingerprint is of the base element.
 using Rule = std::function<bool(const QString &key, const QJsonValue &value, QJsonValue *replacement)>;
 // defaults: what this build reads when a field is absent; a field left out at
@@ -274,7 +280,7 @@ void record(Split &split, const QMap<QString, QJsonObject> &moved, const QJsonAr
     for (auto it = moved.cbegin(); it != moved.cend(); ++it) split.set(it.key(), path, it.value(), base);
 }
 
-// 0.1.0 reads text fit 0 (cut off) and 1 (shrink); others become cut off there.
+// 0.2.0 (like 0.1.0) reads text fit 0 (cut off) and 1 (shrink); others become cut off there.
 bool objectValue(const QString &key, const QJsonValue &value, QJsonValue *replacement) {
     if (key != QLatin1String("textFit")) return true;
     const int fit = value.toInt(-1);
@@ -340,7 +346,7 @@ bool buildIsBase(const QJsonObject &b) {
 
 QJsonObject splitSlide(QJsonObject slide, Split &split) {
     slide.insert("objects", splitObjects(slide.value("objects").toArray(), {"objects"}, split));
-    // Builds 0.1.0 can't play are left out whole and put back at their place;
+    // Builds 0.2.0 can't play are left out whole and put back at their place;
     // the ones it can keep their extra timing apart.
     const auto builds = slide.value("builds").toArray();
     QJsonArray base, inserts;
@@ -483,7 +489,7 @@ void DeckFeatures::split(QVector<Zip::Entry> &entries, const QByteArray &passthr
     }
     const QJsonObject file{{"format", kFormat},
                            {"names", names},
-                           {"about", "Features this deck uses that OmaShow 0.1.0 doesn't read. Each entry says which "
+                           {"about", "Features this deck uses that OmaShow 0.2.0 doesn't read. Each entry says which "
                                      "feature, which file and element it belongs to, the exact values, and a "
                                      "fingerprint of that element as written; an app applies the ones it knows."},
                            {"entries", all}};
