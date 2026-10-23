@@ -96,6 +96,16 @@ SceneObject interpolate(const SceneObject &from, const SceneObject &to, qreal u)
     state.boxInsetR = lerp(from.boxInsetR, to.boxInsetR, u); state.boxInsetB = lerp(from.boxInsetB, to.boxInsetB, u);
     state.textGlowRadius = lerp(from.textGlowRadius,to.textGlowRadius,u); state.textGlowColor = lerpColor(from.textGlowColor,to.textGlowColor,u);
     state.textColor = lerpColor(from.textColor, to.textColor, u);
+    // STYLE3D: soft edges, reflection, 3-D format and rotation ease between
+    // the two looks (names and on/off switch half way).
+    state.softEdge = lerp(from.softEdge, to.softEdge, u);
+    state.reflection = Effects3D::lerp(from.reflection, to.reflection, u);
+    state.textReflection = Effects3D::lerp(from.textReflection, to.textReflection, u);
+    state.format3d = Effects3D::lerp(from.format3d, to.format3d, u);
+    state.textFormat3d = Effects3D::lerp(from.textFormat3d, to.textFormat3d, u);
+    state.scene3d = Effects3D::lerp(from.scene3d, to.scene3d, u);
+    state.textScene3d = Effects3D::lerp(from.textScene3d, to.textScene3d, u);
+    state.textFlatZ = lerp(from.textFlatZ, to.textFlatZ, u);
 
     // Identical text interpolates its metrics. Differing text would cross-fade
     // inside an interpolating box — Gate 0 keeps the incoming string and moves

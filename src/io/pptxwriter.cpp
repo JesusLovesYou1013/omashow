@@ -653,9 +653,66 @@ struct Writer {
     // the schema's order: glow, then inner shadow, then outer shadow. The blur,
     // size, slant and anchor are written as set (they were left out, and the
     // blur fixed at 3 pt, before).
+    // STYLE3D: a:reflection, every attribute that is not the schema's default
+    // (dir always), in EMU, 1000ths of a percent and 60000ths of a degree.
+    void writeReflection(Xml &x, const Effects3D::Reflection &r) const {
+        if (!r.on) return;
+        static const char *aligns[] = {"tl", "t", "tr", "l", "ctr", "r", "bl", "b", "br"};
+        x.start("a:reflection");
+        if (r.blur > 0) x.attr("blurRad", emu(r.blur));
+        if (!qFuzzyCompare(r.startAlpha, 100.0)) x.attr("stA", qRound64(r.startAlpha * 1000));
+        if (!qFuzzyIsNull(r.startPos)) x.attr("stPos", qRound64(r.startPos * 1000));
+        if (!qFuzzyIsNull(r.endAlpha)) x.attr("endA", qRound64(r.endAlpha * 1000));
+        if (!qFuzzyCompare(r.endPos, 100.0)) x.attr("endPos", qRound64(r.endPos * 1000));
+        if (r.dist > 0) x.attr("dist", emu(r.dist));
+        x.attr("dir", qRound64(r.dir * 60000) % 21600000);
+        if (!qFuzzyCompare(r.fadeDir, 90.0)) x.attr("fadeDir", qRound64(r.fadeDir * 60000) % 21600000);
+        if (!qFuzzyCompare(r.sx, 100.0)) x.attr("sx", qRound64(r.sx * 1000));
+        if (!qFuzzyCompare(r.sy, 100.0)) x.attr("sy", qRound64(r.sy * 1000));
+        if (!qFuzzyIsNull(r.kx)) x.attr("kx", qRound64(r.kx * 60000));
+        if (!qFuzzyIsNull(r.ky)) x.attr("ky", qRound64(r.ky * 60000));
+        if (r.align != 7) x.attr("algn", aligns[qBound(0, r.align, 8)]);
+        if (!r.rotate) x.attr("rotWithShape", "0");
+        x.end();
+    }
+
+    // STYLE3D: a:scene3d then a:sp3d (spPr's and bodyPr's order).
+    void write3d(Xml &x, const Effects3D::Scene &s, const Effects3D::Format &f, qreal flatZ = 0, bool body = false) const {
+        if (s.on) {
+            x.start("a:scene3d");
+            x.start("a:camera").attr("prst", s.camera);
+            if (s.fov >= 0) x.attr("fov", qRound64(s.fov * 60000));
+            if (!qFuzzyCompare(s.zoom, 100.0)) x.attr("zoom", qRound64(s.zoom * 1000));
+            if (s.rotated) x.start("a:rot").attr("lat", qRound64(s.lat * 60000) % 21600000).attr("lon", qRound64(s.lon * 60000) % 21600000)
+                               .attr("rev", qRound64(s.rev * 60000) % 21600000).end();
+            x.end();
+            x.start("a:lightRig").attr("rig", s.rig).attr("dir", s.rigDir);
+            if (s.rigRotated) x.start("a:rot").attr("lat", qRound64(s.rigLat * 60000) % 21600000).attr("lon", qRound64(s.rigLon * 60000) % 21600000)
+                                  .attr("rev", qRound64(s.rigRev * 60000) % 21600000).end();
+            x.end();
+            x.end();
+        }
+        if (f.on) {
+            x.start("a:sp3d");
+            if (!qFuzzyIsNull(f.z)) x.attr("z", emu(f.z));
+            if (f.depth > 0) x.attr("extrusionH", emu(f.depth));
+            if (f.contour > 0) x.attr("contourW", emu(f.contour));
+            if (!f.material.isEmpty()) x.attr("prstMaterial", f.material);
+            for (const auto &[tag, b] : {std::pair<const char *, const Effects3D::Bevel *>{"a:bevelT", &f.top}, {"a:bevelB", &f.bottom}}) {
+                if (!b->on()) continue;
+                x.start(tag).attr("w", emu(b->w)).attr("h", emu(b->h));
+                if (b->preset != QLatin1String("circle")) x.attr("prst", b->preset);
+                x.end();
+            }
+            if (f.extrusionColor.isValid()) { x.start("a:extrusionClr"); writeColor(x, f.extrusionColor); x.end(); }
+            if (f.contourColor.isValid()) { x.start("a:contourClr"); writeColor(x, f.contourColor); x.end(); }
+            x.end();
+        } else if (body && !qFuzzyIsNull(flatZ)) x.start("a:flatTx").attr("z", emu(flatZ)).end();
+    }
+
     void writeEffects(Xml &x, const SceneObject &o) const {
         const bool glows = o.glowRadius > 0 && o.glowColor.alpha() > 0;
-        if (!o.shadowEnabled && !glows) return;
+        if (!o.shadowEnabled && !glows && !o.reflection.on && !(o.softEdge > 0)) return;
         x.start("a:effectLst");
         if (glows) {
             x.start("a:glow").attr("rad", qMax<qint64>(1, emu(o.glowRadius)));
@@ -678,6 +735,8 @@ struct Writer {
             writeColor(x, o.shadowColor);
             x.end();
         }
+        writeReflection(x, o.reflection);   // STYLE3D
+        if (o.softEdge > 0) x.start("a:softEdge").attr("rad", qMax<qint64>(1, emu(o.softEdge))).end();
         x.end();
     }
 
@@ -729,11 +788,47 @@ struct Writer {
         if (o.uppercase) x.attr("cap", "all");
         if (!qFuzzyIsNull(o.letterSpacing)) x.attr("spc", qRound(o.letterSpacing * e / 12700.0 * 100));
         const QColor color = run && run->color.isValid() ? run->color : o.textColor;
-        writeSolidFill(x, color, o.opacity);
-        // Glow and shadow around the letters (after the fill, before the
-        // typeface; glow before outer shadow, as the schema orders them).
+        // STYLE3D: Text Outline (a:ln first), then Text Fill.
+        QVariantMap outline = run && !run->outline.isEmpty() ? run->outline : o.textOutline;
+        if (outline.value(QStringLiteral("none")).toBool()) { x.start("a:ln"); x.empty("a:noFill"); x.end(); }
+        else if (!outline.isEmpty()) {
+            SceneObject line = FillStyle::textOutlineCarrier(outline);
+            line.opacity = o.opacity;
+            if (line.strokeWidth > 0) writeLine(x, line);
+        }
+        const QVariantMap fill = run && !run->fill.isEmpty() ? run->fill : run && run->color.isValid() ? QVariantMap() : o.textFill;
+        if (fill.isEmpty()) writeSolidFill(x, color, o.opacity);
+        else {
+            const SceneObject f = FillStyle::textFillCarrier(fill, color);
+            if (f.fillStyle == 1 || f.fillStyle == 2) {
+                const qreal focus[4] = {f.gradientFocusL, f.gradientFocusT, f.gradientFocusR, f.gradientFocusB};
+                writeGradient(x, FillStyle::fillStops(f), f.fillStyle == 1 ? 0 : 1 + qBound(0, f.gradientPath, 2), f.fillAngle,
+                              f.gradientScaled, f.gradientRotate, focus, o.opacity);
+            } else if (f.fillStyle == 3) {
+                x.start("a:pattFill").attr("prst", f.patternPreset.isEmpty() ? FillStyle::presetForQtPattern(f.patternStyle) : f.patternPreset);
+                x.start("a:fgClr"); writeColor(x, f.fill, o.opacity); x.end();
+                x.start("a:bgClr"); writeColor(x, f.fillSecondary, o.opacity); x.end();
+                x.end();
+            } else if (f.fillStyle == 5) x.empty("a:noFill");
+            else writeSolidFill(x, color, o.opacity);
+        }
+        // STYLE3D: a stretch with effects of its own writes those.
+        const SceneObject fx = run && !run->effects.isEmpty() ? FillStyle::withTextEffects(o, run->effects) : o;
+        writeTextEffects(x, fx);
+        x.start("a:latin").attr("typeface", family).end();
+        if (!linkRel.isEmpty()) {
+            x.start("a:hlinkClick").attr("r:id", linkRel);
+            if (o.linkKind == 3) x.attr("action", "ppaction://hlinksldjump");
+            x.end();
+        }
+        x.end();
+    }
+
+    // Glow, shadow and reflection around the letters (after the fill, before
+    // the typeface; in the schema's order).
+    void writeTextEffects(Xml &x, const SceneObject &o) const {
         const bool glows = o.textGlowRadius > 0 && o.textGlowColor.alpha() > 0;
-        if (glows || o.shadowEnabled) {
+        if (glows || o.shadowEnabled || o.textReflection.on) {
             x.start("a:effectLst");
             if (glows) {
                 x.start("a:glow").attr("rad", qRound(o.textGlowRadius * e));
@@ -758,15 +853,9 @@ struct Writer {
                 writeColor(x, o.shadowColor, o.opacity);
                 x.end();
             }
+            writeReflection(x, o.textReflection);
             x.end();
         }
-        x.start("a:latin").attr("typeface", family).end();
-        if (!linkRel.isEmpty()) {
-            x.start("a:hlinkClick").attr("r:id", linkRel);
-            if (o.linkKind == 3) x.attr("action", "ppaction://hlinksldjump");
-            x.end();
-        }
-        x.end();
     }
 
     // The words of a text object, or of a table cell, as a txBody.
@@ -779,6 +868,7 @@ struct Writer {
         if (o.columns > 1) x.attr("numCol", o.columns);
         // Cut off (0) has no PowerPoint counterpart: it is written as no autofit.
         if (o.textFit == 1) x.empty("a:normAutofit"); else if (o.textFit == 3 && !inTable) x.empty("a:spAutoFit"); else x.empty("a:noAutofit");
+        if (!inTable) write3d(x, o.textScene3d, o.textFormat3d, o.textFlatZ, true);   // STYLE3D
         x.end();
         x.empty("a:lstStyle");
 
@@ -863,11 +953,12 @@ struct Writer {
             writeLine(x, shape);
         } else x.empty("a:noFill");
         // BOTH-EFFECTS-1: the text box's own glow and shadow, apart from its words'.
-        if (o.glowRadius > 0 || o.boxShadowEnabled) {
+        if (o.glowRadius > 0 || o.boxShadowEnabled || o.reflection.on || o.softEdge > 0) {
             SceneObject shape = o;
             shape.swapBoxShadow();
             writeEffects(x, shape);
         }
+        write3d(x, o.scene3d, o.format3d);   // STYLE3D: the box's own 3-D
         x.end();
         writeTextBody(x, "p:txBody", o, ctx, false, box);
         x.end();
@@ -894,6 +985,7 @@ struct Writer {
         writeFill(x, o, ctx);
         writeLine(x, o);
         writeEffects(x, o);
+        write3d(x, o.scene3d, o.format3d);   // STYLE3D
         x.end();
         x.end();
     }
@@ -942,6 +1034,7 @@ struct Writer {
         x.start("a:prstGeom").attr("prst", mask); x.empty("a:avLst"); x.end();
         if (o.strokeWidth > 0) writeLine(x, o);
         writeEffects(x, o);
+        write3d(x, o.scene3d, o.format3d);   // STYLE3D
         x.end();
     }
 

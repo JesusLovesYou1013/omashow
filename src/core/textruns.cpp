@@ -1,4 +1,5 @@
 #include "core/textruns.h"
+#include "core/fillstyle.h"
 #include <QSet>
 #include <algorithm>
 #include <cmath>
@@ -15,7 +16,8 @@ bool sameLook(const TextRun &a, const TextRun &b) {
 bool blank(const TextRun &run) {
     return run.weight == 0 && run.italic == 0 && run.underline == 0 && run.strike == 0 &&
            run.baseline == 0 && run.fontSize <= 0 && run.fontFamily.isEmpty() &&
-           !run.color.isValid() && run.language.isEmpty();
+           !run.color.isValid() && run.language.isEmpty() &&
+           run.fill.isEmpty() && run.outline.isEmpty() && run.effects.isEmpty();
 }
 
 } // namespace
@@ -64,8 +66,13 @@ bool TextRuns::apply(SceneObject &object, int start, int end, const QString &key
     end = qBound(0, end, length);
     if (start >= end) return false;
     static const QStringList keys{"weight", "italic", "underline", "strike",
-                                  "baseline", "fontSize", "fontFamily", "color", "language"};
+                                  "baseline", "fontSize", "fontFamily", "color", "language",
+                                  "fill", "outline", "effects"};   // STYLE3D
     if (!keys.contains(key)) return false;
+    QVariantMap styled;
+    if (key == "fill" && !FillStyle::checkTextFill(value, &styled)) return false;
+    if (key == "outline" && !FillStyle::checkTextOutline(value, &styled)) return false;
+    if (key == "effects" && !FillStyle::checkTextEffects(value, &styled)) return false;
 
     // Work per character, then put the stretches back together.
     QVector<TextRun> spread;
@@ -90,6 +97,12 @@ bool TextRuns::apply(SceneObject &object, int start, int end, const QString &key
             } else if (key == "language") {
                 if (value.toString().size() > 32) return false;
                 run.language = value.toString();
+            } else if (key == "fill") {
+                run.fill = styled;
+            } else if (key == "outline") {
+                run.outline = styled;
+            } else if (key == "effects") {
+                run.effects = styled;
             } else if (key == "color") {
                 const QColor color(value.toString());
                 if (!value.toString().isEmpty() && !color.isValid()) return false;
@@ -166,6 +179,10 @@ QVariantList TextRuns::encode(const QVector<TextRun> &runs) {
         if (run.origFontSize > 0) row.insert("origFontSize", run.origFontSize);
         if (!qFuzzyCompare(run.fontScale, 1.0)) row.insert("fontScale", run.fontScale);
         if (run.origWeight) row.insert("origWeight", run.origWeight);
+        // STYLE3D: written only when set.
+        if (!run.fill.isEmpty()) row.insert("fill", run.fill);
+        if (!run.outline.isEmpty()) row.insert("outline", run.outline);
+        if (!run.effects.isEmpty()) row.insert("effects", run.effects);
         rows.append(row);
     }
     return rows;
@@ -179,7 +196,8 @@ bool TextRuns::decode(const QVariant &value, QVector<TextRun> &runs) {
         const auto map = row.toMap();
         static const QSet<QString> known{"start", "length", "weight", "italic", "underline",
                                          "strike", "baseline", "fontSize", "fontFamily", "color",
-                                         "language", "origFont", "origFontSize", "fontScale", "origWeight"};
+                                         "language", "origFont", "origFontSize", "fontScale", "origWeight",
+                                         "fill", "outline", "effects"};
         for (auto it = map.cbegin(); it != map.cend(); ++it)
             if (!known.contains(it.key())) return false;
         TextRun run;
@@ -219,6 +237,9 @@ bool TextRuns::decode(const QVariant &value, QVector<TextRun> &runs) {
         // 1 marks a weight the stretch inherited before the swap set one.
         if (run.origWeight > 1 && (run.origWeight < 100 || run.origWeight > 900)) return false;
         if (run.origWeight < 0) return false;
+        if (!FillStyle::checkTextFill(map.value("fill"), &run.fill)) return false;
+        if (!FillStyle::checkTextOutline(map.value("outline"), &run.outline)) return false;
+        if (!FillStyle::checkTextEffects(map.value("effects"), &run.effects)) return false;
         parsed.append(run);
     }
     runs = parsed;

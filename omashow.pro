@@ -191,3 +191,7 @@ HEADERS += src/core/fontswap.h src/core/fontsandbox.h src/core/fontdownloader.h
 SOURCES += src/core/fontswap.cpp src/core/fontsandbox.cpp src/core/fontdownloader.cpp src/backendfonts.cpp
 HEADERS += src/io/deckfeatures.h
 SOURCES += src/io/deckfeatures.cpp
+
+# STYLE3D: soft edges, reflection, 3-D format and rotation, text fill and outline
+HEADERS += src/core/effects3d.h src/render/layereffects.h
+SOURCES += src/core/effects3d.cpp src/render/layereffects.cpp
