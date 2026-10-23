@@ -218,7 +218,8 @@ void paintPicture(QPainter &painter, const SceneObject &o, const QPainterPath &a
     if (o.pictureTransparency > 0) painter.setOpacity(painter.opacity() * qBound(0.0, 1 - o.pictureTransparency, 1.0));
     const bool raster = o.imageFormat != QLatin1String("svg") && !o.image.isNull();
     const bool placed = o.pictureTile || (o.imageMode == 2 && (!qFuzzyIsNull(o.pictureInsetL) || !qFuzzyIsNull(o.pictureInsetT) ||
-                                                               !qFuzzyIsNull(o.pictureInsetR) || !qFuzzyIsNull(o.pictureInsetB)));
+                                                               !qFuzzyIsNull(o.pictureInsetR) || !qFuzzyIsNull(o.pictureInsetB)))
+                        || (!o.pictureRotate && !qFuzzyIsNull(o.rotation));
     if (!raster || !placed) {
         painter.setClipPath(area, Qt::IntersectClip);
         ImageAsset::paint(painter, o);
@@ -261,18 +262,28 @@ void paintPicture(QPainter &painter, const SceneObject &o, const QPainterPath &a
         painter.setPen(Qt::NoPen);
         painter.fillPath(area, brush);
     } else {
-        // Stretched into the box less its insets (a:fillRect).
-        const QRectF dest = box.adjusted(o.pictureInsetL * box.width(), o.pictureInsetT * box.height(),
-                                         -o.pictureInsetR * box.width(), -o.pictureInsetB * box.height());
+        // Stretched into the box less its insets (a:fillRect). Rotate with
+        // shape off: into the upright box around the turned shape instead.
+        QRectF frame = box;
+        if (!o.pictureRotate && !qFuzzyIsNull(o.rotation)) {
+            const qreal r = qDegreesToRadians(o.rotation), c = std::abs(std::cos(r)), sn = std::abs(std::sin(r));
+            const QSizeF upright(box.width() * c + box.height() * sn, box.width() * sn + box.height() * c);
+            frame = QRectF(box.center() - QPointF(upright.width() / 2, upright.height() / 2), upright);
+        }
+        const QRectF dest = frame.adjusted(o.pictureInsetL * frame.width(), o.pictureInsetT * frame.height(),
+                                         -o.pictureInsetR * frame.width(), -o.pictureInsetB * frame.height());
         if (dest.width() > 0 && dest.height() > 0) {
             QBrush brush(image);
             QTransform t;
             t.translate(dest.left(), dest.top());
             t.scale(dest.width() / image.width(), dest.height() / image.height());
-            brush.setTransform(t);
+            // Rotate with shape off: the picture stays upright on the slide,
+            // about the box's centre (unverified in PowerPoint).
+            const QTransform keep = o.pictureRotate ? QTransform() : unrotate(o, box.center());
+            brush.setTransform(t * keep);
             QPainterPath clip;
             clip.addRect(dest);
-            painter.fillPath(area.intersected(clip), brush);
+            painter.fillPath(area.intersected(keep.map(clip)), brush);
         }
     }
     painter.restore();
