@@ -36,8 +36,12 @@ QString layerKey(const SceneObject &o, const char *part) {
 void paintShape(QPainter &painter, const SceneObject &o) {
     const auto look = LayerEffects::shapeLook(o);
     if (!LayerEffects::needed(look)) { Shape::paint(painter, o); return; }
+    // ROT-SHADOW-1: a turned shape's outer shadow and glow come from the
+    // turned picture; the flat drawing behind it leaves them out.
+    SceneObject flat = o;
+    if (LayerEffects::castFollows(look)) LayerEffects::dropFollowed(flat, false);
     LayerEffects::paint(painter, o.rect, look, layerKey(o, "shape"),
-                        [&](QPainter &p) { Shape::paint(p, o); }, [&](QPainter &p) { Shape::paint(p, o); });
+                        [&](QPainter &p) { Shape::paint(p, o); }, [&](QPainter &p) { Shape::paint(p, flat); });
 }
 
 // Words through their reflection and 3-D (and, with no box to carry them,
@@ -47,18 +51,23 @@ void paintWords(QPainter &painter, const SceneObject &o, qreal slideHeight, bool
     QRectF frame = o.rect;
     // A box turned in 3-D turns its words with it (PROTOTYPE: as one flat
     // picture about the box's middle; PowerPoint's "keep text flat" is kept).
-    if (!boxToo && !look.scene.on && o.scene3d.on) { look.scene = o.scene3d; frame = FillStyle::boxRect(o); }
+    // ROT-SHADOW-1: not with "Keep text flat".
+    if (!boxToo && !look.scene.on && o.scene3d.on && !o.textFlat) { look.scene = o.scene3d; frame = FillStyle::boxRect(o); }
     if (boxToo) {
         const auto box = LayerEffects::shapeLook(o);
         if (!look.reflection.on) look.reflection = box.reflection;
         if (!look.format.on) look.format = box.format;
-        if (!look.scene.on) look.scene = box.scene;
+        if (!look.scene.on && !o.textFlat) look.scene = box.scene;
         look.softEdge = box.softEdge;
     }
     if (!LayerEffects::needed(look)) { TextLayout::paint(painter, o, slideHeight); return; }
+    // ROT-SHADOW-1: turned words cast their (box-wide) shadow and glow from
+    // the turned picture; a stretch's own effects stay flat.
+    SceneObject flat = o;
+    if (LayerEffects::castFollows(look)) LayerEffects::dropFollowed(flat, true);
     LayerEffects::paint(painter, frame, look, layerKey(o, "words") + QString::number(slideHeight),
                         [&](QPainter &p) { TextLayout::paint(p, o, slideHeight); },
-                        [&](QPainter &p) { TextLayout::paint(p, o, slideHeight); });
+                        [&](QPainter &p) { TextLayout::paint(p, flat, slideHeight); });
 }
 
 void paintObject(QPainter &painter, const SceneObject &object, qreal slideHeight) {
@@ -107,13 +116,16 @@ void paintObject(QPainter &painter, const SceneObject &object, qreal slideHeight
             mask.cornerRadius = object.imageMask == 2 ? (object.cornerRadius > 0 ? object.cornerRadius : qMin(object.rect.width(), object.rect.height()) * .1) : 0;
             frame = Shape::path(mask);
         }
-        auto behind = [&](QPainter &p) { if (effects) ShapeEffects::paintBehind(p, object, frame, QPainterPath()); };
+        // ROT-SHADOW-1: a turned picture's outer shadow and glow come from the turned picture.
+        const auto look = LayerEffects::shapeLook(object);
+        SceneObject flat = object;
+        if (LayerEffects::needed(look) && LayerEffects::castFollows(look)) LayerEffects::dropFollowed(flat, false);
+        auto behind = [&](QPainter &p) { if (effects) ShapeEffects::paintBehind(p, flat, frame, QPainterPath()); };
         auto face = [&](QPainter &p) {
             ImageAsset::paint(p, object);
             if (effects) ShapeEffects::paintInside(p, object, frame);
         };
         // STYLE3D: a picture's soft edges, reflection and 3-D.
-        const auto look = LayerEffects::shapeLook(object);
         if (LayerEffects::needed(look)) LayerEffects::paint(painter, object.rect, look, layerKey(object, "picture"), face, behind);
         else { behind(painter); face(painter); }
         break;

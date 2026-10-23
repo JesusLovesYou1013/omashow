@@ -86,6 +86,38 @@ ColumnLayout {
     readonly property real rotZ: scn.rev !== undefined ? scn.rev : (camInfo.rev ?? 0)
     readonly property bool rotationOn: sceneOn && ((scn.camera ?? "orthographicFront") !== "orthographicFront" || rotX !== 0 || rotY !== 0 || rotZ !== 0)
     readonly property var defaultScene: ({ camera: "orthographicFront", rig: "threePt", rigDir: "t" })
+    // ROT-SHADOW-1: what turns these effects. The words also turn with their
+    // box's 3-D rotation unless "Keep text flat".
+    function sceneTurns(s) {
+        if (!s || Object.keys(s).length === 0) return false
+        const info = (presets3d.cameraInfo ?? ({}))[s.camera ?? "orthographicFront"] ?? ({ lat: 0, lon: 0, rev: 0, parallel: true })
+        const x = s.lon !== undefined ? s.lon : (info.lon ?? 0), y = s.lat !== undefined ? s.lat : (info.lat ?? 0), z = s.rev !== undefined ? s.rev : (info.rev ?? 0)
+        return (s.camera ?? "orthographicFront") !== "orthographicFront" || x !== 0 || y !== 0 || z !== 0
+    }
+    readonly property bool textFlat: fx.textFlat ?? false
+    readonly property bool turnsNow: onText ? (!textFlat && (rotationOn || sceneTurns(fx.boxScene3d))) : rotationOn
+    readonly property bool follows: fx.effects3dFollow ?? true
+    readonly property bool outerShadowOn: shadowOn && !(fx.shadowInner ?? false)
+    readonly property string followNote: !turnsNow ? "" : follows ? qsTr("Follows 3-D rotation") : qsTr("Flat (not tilted)")
+    // Opens a row (and its group) and brings it into view.
+    function reveal(name, item) {
+        if (opener) opener.set(target + "." + name, true)
+        revealTimer.item = item
+        revealTimer.restart()   // once the row has been laid out
+    }
+    Timer {
+        id: revealTimer
+        property Item item: null
+        interval: 60
+        onTriggered: {
+            let flick = item ? item.parent : null
+            while (flick && flick.contentY === undefined) flick = flick.parent
+            if (!flick) return
+            // The row's header sits just above its section.
+            const p = item.mapToItem(flick.contentItem, 0, 0)
+            flick.contentY = Math.max(0, Math.min(p.y - Theme.hControl - Theme.s2, flick.contentHeight - flick.height))
+        }
+    }
     // One line for the group header while it is closed.
     readonly property string summary: {
         const on = []
@@ -303,13 +335,27 @@ ColumnLayout {
                  : (root.fx.shadowInner ?? false) ? qsTr("Inside")
                  : root.perspective ? qsTr("Perspective")
                  : qsTr("%1 pt · %2°").arg(root.round1(root.shadowDistance)).arg(root.shadowAngle)
+        // ROT-SHADOW-1: the turned shape's shadow tilts with it.
+        text: (summary ? title + " · " + summary : title) + (root.outerShadowOn && root.followNote ? " · " + root.followNote : "")
         onClicked: root.toggle("shadow")
     }
     ColumnLayout {
+        id: shadowSection
         objectName: "effectsShadowSection"
         visible: root.shadowOpen
         Layout.fillWidth: true
         Layout.leftMargin: Theme.s2
+        Label {
+            objectName: "effectsShadowFollowNote"
+            visible: root.turnsNow
+            Layout.fillWidth: true
+            wrapMode: Text.Wrap
+            color: Theme.accent
+            font.pixelSize: Theme.fsLabel
+            text: root.follows ? (root.onText ? qsTr("Follows 3-D rotation: cast from the turned words, as PowerPoint draws it. An inner shadow stays on the letters.")
+                                              : qsTr("Follows 3-D rotation: cast from the turned shape, as PowerPoint draws it. An inner shadow stays on the face."))
+                               : qsTr("Flat: not following 3-D rotation (3-D Rotation section). PowerPoint always turns it.")
+        }
         spacing: Theme.s2
         Expander {
             objectName: "effectsShadowPresets"
@@ -439,15 +485,31 @@ ColumnLayout {
         objectName: "effectsReflectionExpander"
         title: qsTr("Reflection")
         open: root.reflectionOpen
-        summary: root.reflectionOn ? qsTr("%1% size · %2 pt away").arg(Math.round(root.refl.endPos ?? 100)).arg(root.round1(root.pts(root.refl.dist))) : qsTr("None")
+        // Shorter while the 3-D note follows it, so the note fits.
+        summary: !root.reflectionOn ? qsTr("None")
+                 : root.followNote ? qsTr("%1% · %2 pt").arg(Math.round(root.refl.endPos ?? 100)).arg(root.round1(root.pts(root.refl.dist)))
+                 : qsTr("%1% size · %2 pt away").arg(Math.round(root.refl.endPos ?? 100)).arg(root.round1(root.pts(root.refl.dist)))
+        text: (summary ? title + " · " + summary : title) + (root.reflectionOn && root.followNote ? " · " + root.followNote : "")
         onClicked: root.toggle("reflection")
     }
     ColumnLayout {
+        id: reflectionSection
         objectName: "effectsReflectionSection"
         visible: root.reflectionOpen
         Layout.fillWidth: true
         Layout.leftMargin: Theme.s2
         spacing: Theme.s2
+        Label {
+            objectName: "effectsReflectionFollowNote"
+            visible: root.turnsNow
+            Layout.fillWidth: true
+            wrapMode: Text.Wrap
+            color: Theme.accent
+            font.pixelSize: Theme.fsLabel
+            text: root.follows ? (root.onText ? qsTr("Follows 3-D rotation: the turned words mirrored, as PowerPoint draws it.")
+                                              : qsTr("Follows 3-D rotation: the turned shape mirrored, as PowerPoint draws it."))
+                               : qsTr("Flat: not following 3-D rotation (3-D Rotation section). PowerPoint always turns it.")
+        }
         Expander {
             objectName: "effectsReflectionPresets"
             title: qsTr("Presets")
@@ -857,6 +919,60 @@ ColumnLayout {
             color: Theme.textMuted
             font.pixelSize: Theme.fsLabel
             text: qsTr("Prototype: the turned picture is approximate. The rotation is saved to PowerPoint exactly.")
+        }
+        // ROT-SHADOW-1: the shadow and reflection are the Shadow and
+        // Reflection rows' own settings; the rotation only turns how they draw.
+        CheckBox {
+            objectName: "effects3dFollow"
+            Layout.fillWidth: true
+            text: qsTr("Shadow and reflection follow 3-D rotation")
+            checked: root.follows
+            onToggled: root.set({ effects3dFollow: checked })
+        }
+        Label {
+            objectName: "effects3dFollowNote"
+            Layout.fillWidth: true
+            wrapMode: Text.Wrap
+            color: Theme.textMuted
+            font.pixelSize: Theme.fsLabel
+            text: root.follows ? (root.onText ? qsTr("The shadow and reflection tilt with the words, as in PowerPoint.")
+                                              : qsTr("The shadow and reflection tilt with the shape, as in PowerPoint."))
+                               : qsTr("The shadow and reflection stay flat. OmaShow only: PowerPoint always tilts them.")
+        }
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: Theme.s2
+            Button {
+                objectName: "effects3dShadowButton"
+                Layout.fillWidth: true
+                text: root.shadowOn ? qsTr("Edit shadow") : qsTr("Add shadow")
+                // A shadow below that shows the tilt: PowerPoint's Perspective: Below.
+                onClicked: {
+                    if (!root.shadowOn) root.set(root.shadowValues(root.perspectivePresets[2]))
+                    root.reveal("shadow", shadowSection)
+                }
+            }
+            Button {
+                objectName: "effects3dReflectionButton"
+                Layout.fillWidth: true
+                text: root.reflectionOn ? qsTr("Edit reflection") : qsTr("Add reflection")
+                // Half Reflection: Touching.
+                onClicked: {
+                    if (!root.reflectionOn) {
+                        const all = root.presets3d.reflections ?? []
+                        if (all.length > 1) root.set({ reflection: all[1].value })
+                    }
+                    root.reveal("reflection", reflectionSection)
+                }
+            }
+        }
+        CheckBox {
+            objectName: "effects3dKeepTextFlat"
+            visible: root.onText
+            Layout.fillWidth: true
+            text: qsTr("Keep text flat")
+            checked: root.textFlat
+            onToggled: root.set({ textFlat: checked })
         }
         Expander {
             objectName: "effects3dRotationPresets"

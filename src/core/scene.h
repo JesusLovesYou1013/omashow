@@ -296,6 +296,14 @@ struct SceneObject {
     Effects3D::Format format3d, textFormat3d;
     Effects3D::Scene scene3d, textScene3d;
     qreal textFlatZ = 0;
+    // ROT-SHADOW-1: PowerPoint's "Keep text flat" (a:bodyPr/a:flatTx, with or
+    // without a z): the words stay out of the box's 3-D scene.
+    bool textFlat = false;
+    // ROT-SHADOW-1: the outer shadow, glow and reflection are worked out on the
+    // 3-D turned picture (as PowerPoint always does) rather than the flat
+    // object. OmaShow's own setting: PowerPoint has nothing to say it, so off
+    // is kept in features.json and a PowerPoint copy shows them turned.
+    bool effects3dFollow = true;
     // STYLE3D: Text Fill and Text Outline. textFill empty: the words are
     // textColor (solid, as always); else fill keys of their own (fillStyle 1-3
     // gradients, 3 pattern, 5 none, with fill, fillSecondary, gradient* and

@@ -955,6 +955,7 @@ struct TextOut {
     Effects3D::Scene scene3d;
     Effects3D::Format format3d;
     qreal flatZ = 0;
+    bool flat = false;   // ROT-SHADOW-1: a:flatTx there at all
 };
 
 static void readInsets(const Node *bodyPr, qreal inset[4]) {
@@ -1009,7 +1010,7 @@ TextOut convertText(const Node *txBody, const TextChain &chain, const TextContex
         readInsets(own, out.inset);
         out.scene3d = readScene3d(own->child(QStringLiteral("scene3d")));
         out.format3d = readFormat3d(own->child(QStringLiteral("sp3d")), *ctx.color);
-        if (const Node *flat = own->child(QStringLiteral("flatTx"))) out.flatZ = attrNumber(flat, "z", 0);
+        if (const Node *flat = own->child(QStringLiteral("flatTx"))) { out.flatZ = attrNumber(flat, "z", 0); out.flat = true; }
         if (own->child(QStringLiteral("spAutoFit"))) out.grow = true;
         if (const Node *fit = own->child(QStringLiteral("normAutofit"))) {
             out.shrink = true;
@@ -1514,6 +1515,7 @@ struct Reader {
         o.textFormat3d = text.format3d;
         Effects3D::scale(o.textFormat3d, u.k);
         o.textFlatZ = text.flatZ * u.k;
+        o.textFlat = text.flat;
         QVector<TextRun> runs = text.runs;
         for (auto &run : runs) {
             run.outline = scaledOutline(run.outline);

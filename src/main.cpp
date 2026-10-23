@@ -773,6 +773,139 @@ int captureInterface(QQmlApplicationEngine &engine, Backend &backend, Presenter 
         qInfo().noquote() << "ui-shot style3d: shots" << shots << "failures" << failures << (failures == 0 && shots == 9 ? "ok" : "FAIL");
         return failures == 0 && shots == 9 ? 0 : 3;
     }
+    // ROT-SHADOW-1 (OMASHOW_UI_SHOT_ROT=1): the 3-D Rotation section's link to
+    // the Shadow and Reflection rows, for a shape and a text box: the
+    // explanation and Add buttons, each button pressed (the row opens and comes
+    // into view), the Edit buttons, the rows' "Follows 3-D rotation" hints, and
+    // the same with following turned off. Everything is undone after.
+    if (qEnvironmentVariableIsSet("OMASHOW_UI_SHOT_ROT")) {
+        QQuickItem *tabs = findItem(window->contentItem(), QStringLiteral("inspectorTabs"));
+        QQuickItem *inspector = findItem(window->contentItem(), QStringLiteral("inspectorPanel"));
+        if (!tabs || !inspector) { qInfo().noquote() << "ui-shot rot: no inspector FAIL"; return 3; }
+        if (backend.fontGate()) { backend.skipFontGate(); settle(500); }
+        if (QObject *check = window->findChild<QObject *>(QStringLiteral("fontCheckDialog")); check && check->property("visible").toBool()) {
+            QMetaObject::invokeMethod(check, "close");
+            settle(800);
+        }
+        tabs->setProperty("currentIndex", 1);
+        settle(300);
+        QQuickItem *flick = nullptr;
+        for (QQuickItem *up = findItem(inspector, QStringLiteral("effectsPanel")); up; up = up->parentItem())
+            if (up->inherits("QQuickFlickable")) { flick = up; break; }
+        if (!flick) { qInfo().noquote() << "ui-shot rot: no scroll FAIL"; return 3; }
+        const auto scrollTo = [&](QQuickItem *item, qreal above) {
+            if (!item) return;
+            const QPointF in = item->mapToItem(flick->property("contentItem").value<QQuickItem *>(), QPointF());
+            const qreal most = qMax(0.0, flick->property("contentHeight").toReal() - flick->height());
+            flick->setProperty("contentY", qBound(0.0, in.y() - above, most));
+            settle(300);
+        };
+        int shots = 0, failures = 0;
+        const auto shoot = [&](const QString &name) {
+            settle(700);
+            const QImage whole = window->grabWindow();
+            const QRectF r = flick->mapRectToScene(QRectF(0, 0, flick->width(), flick->height()));
+            const qreal dpr = whole.devicePixelRatio();
+            const QRect crop = QRect(int((r.left() - 8) * dpr), int(r.top() * dpr), int((r.width() + 16) * dpr), int(r.height() * dpr)).intersected(whole.rect());
+            whole.copy(crop).save(outDir + QStringLiteral("/rot-%1.png").arg(name));
+            ++shots;
+            qInfo().noquote() << "ui-shot rot: shot" << name;
+        };
+        const auto expect = [&](const QString &what, bool ok) {
+            qInfo().noquote() << "ui-shot rot: check" << what << (ok ? "ok" : "FAIL");
+            if (!ok) ++failures;
+        };
+        // Is the item on screen inside the scroll's view?
+        const auto inView = [&](QQuickItem *item) {
+            if (!item || !item->isVisible()) return false;
+            const QRectF view = flick->mapRectToScene(QRectF(0, 0, flick->width(), flick->height()));
+            const QRectF at = item->mapRectToScene(QRectF(0, 0, item->width(), qMin<qreal>(item->height(), 40)));
+            return view.contains(at.topLeft()) && view.contains(at.bottomLeft());
+        };
+        const auto press = [&](QQuickItem *button) { if (button) QMetaObject::invokeMethod(button, "clicked"); settle(500); };
+        backend.setProperty("currentSlide", qMax(0, qEnvironmentVariableIntValue("OMASHOW_UI_SHOT_ROT_SLIDE")));
+        settle(300);
+        const auto objects = backend.slideObjects();
+        const auto pick = [&](bool text) {
+            for (const auto &v : objects) {
+                const auto m = v.toMap();
+                if (text ? m.value("name").toString().startsWith(QLatin1String("Text Fill")) : !m.value("text").toBool()) return m.value("id").toString();
+            }
+            return QString();
+        };
+        for (const bool text : {false, true}) {
+            const QString k = text ? QStringLiteral("textbox") : QStringLiteral("shape");
+            const QString target = text ? QStringLiteral("text") : QStringLiteral("shape");
+            const QString group = text ? QStringLiteral("styleGroupText") : QStringLiteral("effectsPanel");
+            const QString id = pick(text);
+            if (id.isEmpty()) { expect(k + QStringLiteral(" found"), false); continue; }
+            backend.select(id);
+            settle(300);
+            tabs->setProperty("currentIndex", 1);   // the Style tab (a text box opens on another)
+            settle(300);
+            const QString before = QString::fromUtf8(QJsonDocument::fromVariant(backend.slideObjects()).toJson(QJsonDocument::Compact));
+            // Turned, with no shadow or reflection yet.
+            backend.setSelectedEffect(target, {{"scene3d", QVariantMap{{"camera", "perspectiveContrastingRightFacing"}, {"rig", "threePt"}, {"rigDir", "t"}}},
+                                               {"shadowEnabled", false}, {"reflection", QVariantMap()}});
+            settle(300);
+            QQuickItem *set = findItem(inspector, group);
+            const auto item = [&](const char *name) { return set ? findItem(set, QString::fromLatin1(name)) : nullptr; };
+            const auto textOf = [&](const char *name) { QQuickItem *i = item(name); return i ? i->property("text").toString() : QString(); };
+            styleCloseAll();
+            styleOpen({text ? QStringLiteral("group.text") : QStringLiteral("group.effects"), target + QStringLiteral(".rotation")}, true);
+            settle(300);
+            scrollTo(item("effects3dRotationExpander"), 8);
+            QQuickItem *shadowButton = item("effects3dShadowButton"), *reflButton = item("effects3dReflectionButton");
+            expect(k + QStringLiteral(" Add buttons"), shadowButton && reflButton && shadowButton->property("text").toString() == QLatin1String("Add shadow") &&
+                                                      reflButton->property("text").toString() == QLatin1String("Add reflection"));
+            shoot(k + QStringLiteral("-1-rotation-add"));
+            press(shadowButton);
+            settle(300);
+            auto fx = backend.effectState(target);
+            expect(k + QStringLiteral(" Add shadow writes the Shadow settings (Perspective: Below)"),
+                   fx.value("shadowEnabled").toBool() && qAbs(fx.value("shadowScaleY").toDouble() + 19) < 0.01 && fx.value("shadowAlign").toInt() == 7);
+            expect(k + QStringLiteral(" shadow row opened and in view"), inView(item("effectsShadowSection")));
+            expect(k + QStringLiteral(" shadow follow hint"), item("effectsShadowFollowNote") && item("effectsShadowFollowNote")->isVisible() &&
+                                                             textOf("effectsShadowExpander").contains(QLatin1String("Follows 3-D rotation")));
+            shoot(k + QStringLiteral("-2-shadow-revealed"));
+            scrollTo(item("effects3dRotationExpander"), 8);
+            expect(k + QStringLiteral(" Edit shadow"), textOf("effects3dShadowButton") == QLatin1String("Edit shadow"));
+            press(reflButton);
+            settle(300);
+            fx = backend.effectState(target);
+            expect(k + QStringLiteral(" Add reflection writes the Reflection settings (Half, touching)"),
+                   qAbs(fx.value("reflection").toMap().value("endPos").toDouble() - 55) < 0.01);
+            expect(k + QStringLiteral(" reflection row opened and in view"), inView(item("effectsReflectionSection")));
+            shoot(k + QStringLiteral("-3-reflection-revealed"));
+            scrollTo(item("effects3dRotationExpander"), 8);
+            expect(k + QStringLiteral(" Edit reflection"), textOf("effects3dReflectionButton") == QLatin1String("Edit reflection"));
+            shoot(k + QStringLiteral("-4-rotation-edit"));
+            // The rows closed: their summaries carry the hint.
+            styleCloseAll();
+            styleOpen({text ? QStringLiteral("group.text") : QStringLiteral("group.effects")}, true);
+            settle(300);
+            scrollTo(item("effectsShadowExpander"), 60);
+            expect(k + QStringLiteral(" reflection summary hint"), textOf("effectsReflectionExpander").contains(QLatin1String("Follows 3-D rotation")));
+            shoot(k + QStringLiteral("-5-summaries"));
+            // Following off: OmaShow's own setting, read back.
+            QQuickItem *follow = item("effects3dFollow");
+            styleOpen({target + QStringLiteral(".rotation")}, true);
+            settle(300);
+            if (follow) { follow->setProperty("checked", false); QMetaObject::invokeMethod(follow, "toggled"); }
+            settle(400);
+            expect(k + QStringLiteral(" follow off"), !backend.effectState(target).value("effects3dFollow").toBool() &&
+                                                     textOf("effectsShadowExpander").contains(QLatin1String("Flat")));
+            scrollTo(item("effectsShadowExpander"), 60);
+            shoot(k + QStringLiteral("-6-follow-off"));
+            for (int i = 0; i < 4; ++i) { backend.undo(); settle(100); }
+            const QString after = QString::fromUtf8(QJsonDocument::fromVariant(backend.slideObjects()).toJson(QJsonDocument::Compact));
+            expect(k + QStringLiteral(" all undone"), before == after);
+        }
+        styleCloseAll();
+        const bool ok = failures == 0 && shots == 12;
+        qInfo().noquote() << "ui-shot rot: shots" << shots << "failures" << failures << (ok ? "ok" : "FAIL");
+        return ok ? 0 : 3;
+    }
     // COLOR-PICK-2 (OMASHOW_UI_SHOT_COLORS=1): every colour setting, by hand. Each swatch is
     // clicked, the chooser photographed, a colour typed in its hex box (or a grid swatch
     // clicked) and "Use colour" clicked; what the deck now holds is read back.

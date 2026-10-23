@@ -27,7 +27,7 @@ QStringList ObjectStyles::keys() {
           "boxDrawn", "boxInsetL", "boxInsetT", "boxInsetR", "boxInsetB",
           // STYLE3D: soft edges, reflection, 3-D format and rotation, text fill and outline.
           "softEdge", "reflection", "format3d", "scene3d", "textReflection", "textFormat3d", "textScene3d",
-          "textFlatZ", "textFill", "textOutline"};
+          "textFlatZ", "textFill", "textOutline", "textFlat", "effects3dFollow"};
 }
 SceneObject ObjectStyles::capture(const SceneObject &object) {
   SceneObject appearance;

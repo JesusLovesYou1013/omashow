@@ -86,7 +86,7 @@ QVariantMap Design::properties(const SceneObject &o) {
             // STYLE3D: soft edges, reflection, 3-D format and rotation; text fill and outline.
             {"softEdge", o.softEdge}, {"reflection", Effects3D::toMap(o.reflection)}, {"format3d", Effects3D::toMap(o.format3d)},
             {"scene3d", Effects3D::toMap(o.scene3d)}, {"textReflection", Effects3D::toMap(o.textReflection)},
-            {"textFormat3d", Effects3D::toMap(o.textFormat3d)}, {"textScene3d", Effects3D::toMap(o.textScene3d)}, {"textFlatZ", o.textFlatZ},
+            {"textFormat3d", Effects3D::toMap(o.textFormat3d)}, {"textScene3d", Effects3D::toMap(o.textScene3d)}, {"textFlatZ", o.textFlatZ}, {"textFlat", o.textFlat}, {"effects3dFollow", o.effects3dFollow},
             {"textFill", o.textFill}, {"textOutline", o.textOutline},
             {"placeholderId", o.placeholderId}, {"textStyleId", o.textStyleId}, {"overrides", o.overrides}, {"groups", o.groups}, {"locked", o.locked}, {"hidden", o.hidden}};
 }
@@ -109,6 +109,12 @@ bool Design::setProperty(SceneObject &o, const QString &key, const QVariant &v, 
         const qreal n = v.toDouble(&ok);
         if (!ok || !std::isfinite(n) || n < (key == QLatin1String("softEdge") ? 0 : -1e6) || n > 1e6) return false;
         (key == QLatin1String("softEdge") ? o.softEdge : o.textFlatZ) = n;
+        return true;
+    }
+    // ROT-SHADOW-1: keep text flat; effects follow the 3-D rotation.
+    if (key == QLatin1String("textFlat") || key == QLatin1String("effects3dFollow")) {
+        if (v.typeId() != QMetaType::Bool && v.typeId() != QMetaType::Int && v.typeId() != QMetaType::Double && v.typeId() != QMetaType::LongLong) return false;
+        (key == QLatin1String("textFlat") ? o.textFlat : o.effects3dFollow) = v.toBool();
         return true;
     }
     if (key == QLatin1String("reflection")) return Effects3D::fromMap(v, &o.reflection);

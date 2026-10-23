@@ -28,6 +28,16 @@
 //                PowerPoint's 159.76 mm viewing scale); oblique cameras slant
 //                the depth; legacy cameras as their modern near relations
 //
+// ROT-SHADOW-1: on a turned object (3-D rotation) PowerPoint works its outer
+// shadow, glow and reflection out on the turned picture: the shadow is the
+// turned silhouette (front, sides and all) moved, resized and slanted in the
+// slide's own directions, the reflection that picture turned over below its
+// drawn bounds. OmaShow does the same while effects3dFollow is on (the
+// default); off, they are the flat object's, as before.
+//   shadow, glow  EXACT IN KIND (same silhouette rule as a flat shape's, on
+//                 the turned picture); as approximate as the turned picture
+//   reflection    the turned picture's, as before; off: the flat face's
+//
 // Everything a deck says is kept and written back as it was, whatever of it
 // is drawn.
 
@@ -52,6 +62,17 @@ struct PassScope {
     Pass was;
 };
 
+// ROT-SHADOW-1: the outer shadow and glow worked out on the turned picture.
+struct Cast {
+    bool shadow = false;
+    QColor shadowColor;
+    qreal dx = 0, dy = 0, blur = 0, sx = 100, sy = 100, kx = 0, ky = 0;   // slide units, percent, degrees
+    int align = 0;
+    qreal glow = 0;
+    QColor glowColor;
+    bool any() const { return (shadow && shadowColor.alpha() > 0) || (glow > 0 && glowColor.alpha() > 0); }
+};
+
 struct Look {
     qreal softEdge = 0;
     Effects3D::Reflection reflection;
@@ -59,8 +80,17 @@ struct Look {
     Effects3D::Scene scene;
     QColor face = QColor(68, 114, 196);     // the depth's colour when it has none of its own
     QColor line;                            // the contour's when it has none (invalid: white)
+    Cast cast;                              // ROT-SHADOW-1
+    bool follow = true;                     // effects3dFollow
 };
 bool needed(const Look &look);
+// ROT-SHADOW-1: the look turns (3-D rotation drawn) and its effects follow.
+bool turned(const Look &look);
+// The cast is drawn from the turned picture (so the flat object's isn't).
+bool castFollows(const Look &look);
+// What an object's own drawing leaves out of its flat shadow and glow when
+// the look draws them turned: outer shadow off, glow off (`textGlow` too for words).
+void dropFollowed(SceneObject &o, bool words);
 
 // Draws an object through its look: `behind` (glow and shadow) as it is, then
 // the face (`face`, drawn in slide units in the object's frame) with the
