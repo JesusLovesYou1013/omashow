@@ -61,10 +61,6 @@ Rectangle {
     // With nothing selected the map is empty, and the panel's bindings still
     // evaluate even though it is hidden — so the colour reads go through here
     // rather than handing QColor an undefined.
-    readonly property color swatch: {
-        const value = root.isText ? root.sel.textColor : root.sel.fill
-        return value !== undefined ? value : Theme.controlBg
-    }
     readonly property string swatchText: {
         // Selected words (or the caret while typing) have a colour of their own.
         if (isText && (range.active || range.caret))
