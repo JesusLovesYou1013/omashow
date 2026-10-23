@@ -14,7 +14,10 @@ QStringList ObjectStyles::keys() {
           // EFFECTS-UI-1: glow and shadow travel with a saved appearance.
           "shadowBlur",    "shadowInner",   "shadowScaleX",     "shadowScaleY",
           "shadowSkewX",   "shadowSkewY",   "shadowAlign",      "glowRadius",
-          "glowColor",     "textGlowRadius", "textGlowColor"};
+          "glowColor",     "textGlowRadius", "textGlowColor",
+          // BOTH-EFFECTS-1: a text box's own shadow.
+          "boxShadowEnabled", "boxShadowColor", "boxShadowX", "boxShadowY", "boxShadowBlur", "boxShadowInner",
+          "boxShadowScaleX", "boxShadowScaleY", "boxShadowSkewX", "boxShadowSkewY", "boxShadowAlign"};
 }
 SceneObject ObjectStyles::capture(const SceneObject &object) {
   SceneObject appearance;

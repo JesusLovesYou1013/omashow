@@ -49,6 +49,10 @@ QVariantMap Design::properties(const SceneObject &o) {
             {"shadowEnabled",o.shadowEnabled},{"shadowColor",o.shadowColor.name(QColor::HexArgb)},{"shadowX",o.shadowX},{"shadowY",o.shadowY},{"shadowBlur",o.shadowBlur},
             {"shadowInner",o.shadowInner},{"shadowScaleX",o.shadowScaleX},{"shadowScaleY",o.shadowScaleY},{"shadowSkewX",o.shadowSkewX},{"shadowSkewY",o.shadowSkewY},{"shadowAlign",o.shadowAlign},
             {"glowRadius",o.glowRadius},{"glowColor",o.glowColor.name(QColor::HexArgb)},
+            // BOTH-EFFECTS-1: a text box's own shadow.
+            {"boxShadowEnabled",o.boxShadowEnabled},{"boxShadowColor",o.boxShadowColor.name(QColor::HexArgb)},{"boxShadowX",o.boxShadowX},{"boxShadowY",o.boxShadowY},
+            {"boxShadowBlur",o.boxShadowBlur},{"boxShadowInner",o.boxShadowInner},{"boxShadowScaleX",o.boxShadowScaleX},{"boxShadowScaleY",o.boxShadowScaleY},
+            {"boxShadowSkewX",o.boxShadowSkewX},{"boxShadowSkewY",o.boxShadowSkewY},{"boxShadowAlign",o.boxShadowAlign},
             {"imageOriginal",o.imageOriginal ? properties(*o.imageOriginal) : QVariantMap()}, {"imageFormat",o.imageFormat},{"imageId",o.imageId},{"imageMode",o.imageMode},{"imageMask",o.imageMask},{"imageFocalX",o.imageFocalX},{"imageFocalY",o.imageFocalY},
             {"imageBrightness",o.imageBrightness},{"imageContrast",o.imageContrast},{"imageSaturation",o.imageSaturation},{"imageTint",o.imageTint.name(QColor::HexArgb)},{"imageTintAmount",o.imageTintAmount},{"cropX",o.imageCrop.x()},{"cropY",o.imageCrop.y()},
             {"cropW",o.imageCrop.width()},{"cropH",o.imageCrop.height()},
@@ -68,6 +72,18 @@ QVariantMap Design::properties(const SceneObject &o) {
             {"placeholderId", o.placeholderId}, {"textStyleId", o.textStyleId}, {"overrides", o.overrides}, {"groups", o.groups}, {"locked", o.locked}, {"hidden", o.hidden}};
 }
 bool Design::setProperty(SceneObject &o, const QString &key, const QVariant &v, bool constrainForEditing) {
+    // BOTH-EFFECTS-1: boxShadow* are shadow* on the box, checked the same way.
+    if (key.startsWith(QLatin1String("boxShadow")) && key.size() > 9) {
+        SceneObject box = o;
+        box.swapBoxShadow();
+        if (!setProperty(box, QStringLiteral("shadow") + key.mid(9), v, constrainForEditing)) return false;
+        box.swapBoxShadow();
+        o.boxShadowEnabled = box.boxShadowEnabled; o.boxShadowColor = box.boxShadowColor; o.boxShadowX = box.boxShadowX;
+        o.boxShadowY = box.boxShadowY; o.boxShadowBlur = box.boxShadowBlur; o.boxShadowInner = box.boxShadowInner;
+        o.boxShadowScaleX = box.boxShadowScaleX; o.boxShadowScaleY = box.boxShadowScaleY; o.boxShadowSkewX = box.boxShadowSkewX;
+        o.boxShadowSkewY = box.boxShadowSkewY; o.boxShadowAlign = box.boxShadowAlign;
+        return true;
+    }
     const QStringList numeric = {"textKind","tabStop","columns","columnGap","direction","mediaBytes","mediaModified","mediaDuration","mediaTrimStart","mediaTrimEnd","mediaVolume","mediaLoops","x", "y", "w", "h", "rotation", "opacity", "cornerRadius",
                                  "linkKind", "connectorStartX", "connectorStartY", "connectorEndX", "connectorEndY", "connectorFromSide", "connectorToSide", "connectorRoute", "shapeKind", "fillStyle", "fillAngle", "patternStyle", "strokeWidth", "strokeStyle", "strokeJoin", "strokeCap", "shadowX", "shadowY", "shadowBlur", "shadowScaleX", "shadowScaleY", "shadowSkewX", "shadowSkewY", "shadowAlign", "glowRadius", "fontSize", "fontWeight", "origFontSize", "fontScale", "origWeight", "textGlowRadius", "letterSpacing", "textAlign", "verticalAlign", "lineHeight", "paragraphSpacing", "textIndent", "listStyle", "listStart", "textFit", "imageMask", "imageFocalX", "imageFocalY", "imageBrightness", "imageContrast", "imageSaturation", "imageTintAmount", "imageMode", "cropX", "cropY", "cropW", "cropH"};
     bool ok = false;

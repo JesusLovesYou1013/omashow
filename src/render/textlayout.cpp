@@ -795,11 +795,25 @@ void TextLayout::paint(QPainter &painter, const SceneObject &o, qreal slideHeigh
     const qreal spare = qMax(0.0, o.rect.height() - metrics.renderedHeight);
     const qreal dy = o.verticalAlign == 1 ? spare / 2 : o.verticalAlign == 2 ? spare : 0;
     const QPointF origin = o.rect.topLeft() + QPointF(overhangShift(o, metrics.effectiveSize), dy - FontSwap::verticalFix(o, metrics.effectiveSize).shift);
+    // BOTH-EFFECTS-1: a text box's own effects (no fill, no outline to carry
+    // them) are drawn on its words, as PowerPoint does: each kind only where
+    // the words have none of their own.
+    const SceneObject *fx = &o;
+    SceneObject merged;
+    const bool boxGlow = o.glowRadius > 0 && o.glowColor.alpha() > 0 && !(o.textGlowRadius > 0);
+    const bool boxShadow = o.boxShadowEnabled && !o.shadowEnabled;
+    if (boxGlow || boxShadow) {
+        merged = o;
+        if (boxGlow) { merged.textGlowRadius = o.glowRadius; merged.textGlowColor = o.glowColor; }
+        if (boxShadow) merged.swapBoxShadow();
+        fx = &merged;
+    }
+    const SceneObject &e = *fx;
     // Shadow and glow first, under the words and not cut off at the box.
-    if ((o.textGlowRadius > 0 && o.textGlowColor.alpha() > 0) || (o.shadowEnabled && !o.shadowInner && o.shadowColor.alpha() > 0))
+    if ((e.textGlowRadius > 0 && e.textGlowColor.alpha() > 0) || (e.shadowEnabled && !e.shadowInner && e.shadowColor.alpha() > 0))
         // PowerPoint sizes its effects by its own text size: before a swapped
         // Office font's size factor (FontSwap), which only matches the look.
-        paintEffects(painter, o, *doc, context, origin, QSizeF(o.rect.width() + overhang(o, metrics.effectiveSize), qMax(metrics.renderedHeight, o.rect.height())),
+        paintEffects(painter, e, *doc, context, origin, QSizeF(o.rect.width() + overhang(o, metrics.effectiveSize), qMax(metrics.renderedHeight, o.rect.height())),
                      !o.origFont.isEmpty() && o.fontScale > 0 ? metrics.effectiveSize / o.fontScale : metrics.effectiveSize, slideHeight);
     painter.save();
     if (o.textFit < 2 && !fitIsKept(o)) painter.setClipRect(o.rect, Qt::IntersectClip);   // spill and grow draw it all
@@ -807,10 +821,10 @@ void TextLayout::paint(QPainter &painter, const SceneObject &o, qreal slideHeigh
     doc->documentLayout()->draw(&painter, context);
     painter.restore();
     // TEXT-SHADOW-2: an inner shadow goes over the words, cut as they are.
-    if (o.shadowEnabled && o.shadowInner && o.shadowColor.alpha() > 0) {
+    if (e.shadowEnabled && e.shadowInner && e.shadowColor.alpha() > 0) {
         painter.save();
         if (o.textFit < 2 && !fitIsKept(o)) painter.setClipRect(o.rect, Qt::IntersectClip);
-        paintInnerShadow(painter, o, *doc, context, origin, QSizeF(o.rect.width() + overhang(o, metrics.effectiveSize), qMax(metrics.renderedHeight, o.rect.height())),
+        paintInnerShadow(painter, e, *doc, context, origin, QSizeF(o.rect.width() + overhang(o, metrics.effectiveSize), qMax(metrics.renderedHeight, o.rect.height())),
                          !o.origFont.isEmpty() && o.fontScale > 0 ? metrics.effectiveSize / o.fontScale : metrics.effectiveSize, slideHeight);
         painter.restore();
     }

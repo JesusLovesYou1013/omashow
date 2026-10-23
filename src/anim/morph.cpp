@@ -66,6 +66,10 @@ SceneObject interpolate(const SceneObject &from, const SceneObject &to, qreal u)
     state.shadowX = lerp(from.shadowX,to.shadowX,u); state.shadowY = lerp(from.shadowY,to.shadowY,u);
     state.shadowColor = lerpColor(from.shadowColor,to.shadowColor,u);
     state.shadowBlur = lerp(from.shadowBlur,to.shadowBlur,u);
+    // BOTH-EFFECTS-1: a text box's own shadow.
+    state.boxShadowX = lerp(from.boxShadowX,to.boxShadowX,u); state.boxShadowY = lerp(from.boxShadowY,to.boxShadowY,u);
+    state.boxShadowColor = lerpColor(from.boxShadowColor,to.boxShadowColor,u);
+    state.boxShadowBlur = lerp(from.boxShadowBlur,to.boxShadowBlur,u);
     state.glowRadius = lerp(from.glowRadius,to.glowRadius,u); state.glowColor = lerpColor(from.glowColor,to.glowColor,u);
     state.textGlowRadius = lerp(from.textGlowRadius,to.textGlowRadius,u); state.textGlowColor = lerpColor(from.textGlowColor,to.textGlowColor,u);
     state.textColor = lerpColor(from.textColor, to.textColor, u);
