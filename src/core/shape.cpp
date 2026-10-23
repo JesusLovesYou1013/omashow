@@ -1,4 +1,5 @@
 #include "core/shape.h"
+#include "render/layereffects.h"
 #include "render/shapeeffects.h"
 #include "core/imageasset.h"
 #include "core/connector.h"
@@ -248,7 +249,11 @@ void Shape::paint(QPainter &painter, const SceneObject &o) {
     }
   }
   const QPainterPath area = o.fillStyle == 5 ? QPainterPath() : p;
-  if (soft) ShapeEffects::paintBehind(painter, o, area, outline);
+  // STYLE3D: drawn in two goes when the face has effects of its own
+  // (render/layereffects.h): what goes behind it, then the face.
+  const auto pass = LayerEffects::pass();
+  if (pass == LayerEffects::Pass::Face) {}
+  else if (soft) ShapeEffects::paintBehind(painter, o, area, outline);
   else if (o.shadowEnabled) {
     painter.save();
     painter.translate(o.shadowX, o.shadowY);
@@ -257,6 +262,7 @@ void Shape::paint(QPainter &painter, const SceneObject &o) {
     painter.drawPath(p);
     painter.restore();
   }
+  if (pass == LayerEffects::Pass::Behind) return;
   if (modernFill || modernLine) {
     if (modernFill) FillPaint::paintFill(painter, o, p);
     else if (o.fillStyle != 5) {

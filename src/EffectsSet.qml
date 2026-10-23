@@ -6,21 +6,37 @@ import Omashow 1.0
 // BOTH-EFFECTS-1: one set of Glow and Shadow settings (EFFECTS-UI-1), for
 // one target: "text" (the words, a:rPr) or "shape" (the box: a shape or
 // picture's own p:spPr effects, or a text box's own when it has no shape;
-// backend.effectState says which). EffectsPanel shows one, or two for Both.
+// backend.effectState says which). STYLE3D: the Style tab shows the box set under
+// Effects and the text set under Text Fill and Outline (Inspector.qml).
 ColumnLayout {
     id: root
     objectName: "effectsSet"
     spacing: Theme.s2
 
     property string target: "text"
-    // A heading over the set (Both shows "Text effects" and "Box effects").
+    // A heading over the set.
     property string heading: ""
-    property bool glowOpen: false
-    property bool shadowOpen: false
-    property bool glowPresetsOpen: false
-    property bool shadowPresetsOpen: false
+    // STYLE3D: which rows are open, kept in the inspector's styleOpen per
+    // session (closed at first), apart for the text's and the box's sets.
+    property QtObject opener: null
+    function isOpen(name) { return opener ? opener.isOpen(target + "." + name) : false }
+    function toggle(name) { if (opener) opener.toggle(target + "." + name) }
+    readonly property bool glowOpen: isOpen("glow")
+    readonly property bool shadowOpen: isOpen("shadow")
+    readonly property bool glowPresetsOpen: isOpen("glowPresets")
+    readonly property bool shadowPresetsOpen: isOpen("shadowPresets")
+    readonly property bool reflectionOpen: isOpen("reflection")
+    readonly property bool reflectionPresetsOpen: isOpen("reflectionPresets")
+    readonly property bool softOpen: isOpen("soft")
+    readonly property bool softPresetsOpen: isOpen("softPresets")
+    readonly property bool formatOpen: isOpen("format")
+    readonly property bool formatPresetsOpen: isOpen("formatPresets")
+    readonly property bool rotationOpen: isOpen("rotation")
+    readonly property bool rotationPresetsOpen: isOpen("rotationPresets")
 
-    readonly property var fx: { backend.selection; return backend.effectState(target) }
+    readonly property var fx: { backend.selection; backend.textSelection; return backend.effectState(target) }
+    readonly property bool available: backend.hasSelection && (fx.count ?? 0) > 0
+    visible: available
     readonly property bool onText: target === "text"
     // The box's effects land on the words: a text box with no fill and no outline.
     readonly property bool onWords: !onText && (fx.onWords ?? false)
@@ -51,6 +67,97 @@ ColumnLayout {
                                         ((fx.shadowSkewX ?? 0) !== 0 || (fx.shadowSkewY ?? 0) !== 0 || (fx.shadowScaleX ?? 100) !== (fx.shadowScaleY ?? 100))
 
     function set(values) { backend.setSelectedEffect(root.target, values) }
+
+    // ---- STYLE3D: soft edges, reflection, 3-D format and rotation ---------------
+
+    readonly property var presets3d: { backend.ptPerUnit; return backend.style3dPresets() }
+    readonly property var refl: fx.reflection ?? ({})
+    readonly property bool reflectionOn: Object.keys(refl).length > 0
+    readonly property real softEdge: fx.softEdge ?? 0
+    readonly property bool softOn: !onText && softEdge > 0
+    readonly property var fmt: fx.format3d ?? ({})
+    readonly property bool formatOn: Object.keys(fmt).length > 0
+    readonly property var scn: fx.scene3d ?? ({})
+    readonly property bool sceneOn: Object.keys(scn).length > 0
+    readonly property var camInfo: (presets3d.cameraInfo ?? ({}))[scn.camera ?? "orthographicFront"] ?? ({ lat: 0, lon: 0, rev: 0, parallel: true })
+    // PowerPoint's X, Y and Z rotation are the camera's longitude, latitude and revolution.
+    readonly property real rotX: scn.lon !== undefined ? scn.lon : (camInfo.lon ?? 0)
+    readonly property real rotY: scn.lat !== undefined ? scn.lat : (camInfo.lat ?? 0)
+    readonly property real rotZ: scn.rev !== undefined ? scn.rev : (camInfo.rev ?? 0)
+    readonly property bool rotationOn: sceneOn && ((scn.camera ?? "orthographicFront") !== "orthographicFront" || rotX !== 0 || rotY !== 0 || rotZ !== 0)
+    readonly property var defaultScene: ({ camera: "orthographicFront", rig: "threePt", rigDir: "t" })
+    // One line for the group header while it is closed.
+    readonly property string summary: {
+        const on = []
+        if (shadowOn) on.push(qsTr("Shadow"))
+        if (reflectionOn) on.push(qsTr("Reflection"))
+        if (glowOn) on.push(qsTr("Glow"))
+        if (softOn) on.push(qsTr("Soft edges"))
+        if (formatOn) on.push(qsTr("3-D format"))
+        if (rotationOn) on.push(qsTr("3-D rotation"))
+        return on.length ? on.join(", ") : qsTr("None")
+    }
+
+    function angle(v) { return ((v % 360) + 360) % 360 }
+    function preview3d(x) { return "image://effects/" + (onText || onWords ? "text" : "shape") + "?x=" + encodeURIComponent(JSON.stringify(x)) }
+    function reflectionInPoints(v) { const r = Object.assign({}, v); r.blur = pts(v.blur); r.dist = pts(v.dist); return r }
+    function setReflection(change) {
+        const base = reflectionOn ? refl : (presets3d.reflections ?? [{ value: ({}) }])[0].value
+        set({ reflection: Object.assign({}, base, change) })
+    }
+    function withScene(values) { if (!sceneOn) values.scene3d = defaultScene; return values }
+    function setFormat(change) { set(withScene({ format3d: Object.assign({}, fmt, change) })) }
+    function setScene(change) { set({ scene3d: Object.assign({}, sceneOn ? scn : defaultScene, change) }) }
+    function setBevel(which, preset) {
+        const f = Object.assign({}, fmt)
+        if (!preset) delete f[which]
+        else { const b = fmt[which]; f[which] = { preset: preset, w: b ? b.w : units(6), h: b ? b.h : units(6) } }
+        set(withScene({ format3d: f }))
+    }
+    function setBevelSize(which, key, points) {
+        const b = Object.assign({ preset: "circle", w: units(6), h: units(6) }, fmt[which] ?? {})
+        b[key] = units(Math.max(0, Math.min(1584, points)))
+        const change = {}; change[which] = b
+        setFormat(change)
+    }
+    function setCamera(name) {
+        const s = Object.assign({}, sceneOn ? scn : defaultScene)
+        delete s.lat; delete s.lon; delete s.rev
+        s.camera = name
+        set({ scene3d: s })
+    }
+    function setRotation(x, y, z) { setScene({ lon: angle(x), lat: angle(y), rev: angle(z) }) }
+    function resetRotation() { setCamera("orthographicFront") }
+    function camerasOf(kind) {
+        const info = presets3d.cameraInfo ?? ({})
+        return (presets3d.cameras ?? []).filter(c => {
+            const i = info[c]
+            if (!i || i.legacy) return false
+            if (kind === "oblique") return i.oblique
+            if (kind === "perspective") return !i.parallel && !i.oblique
+            return i.parallel && !i.oblique
+        })
+    }
+    function words(name) {
+        const s = String(name ?? "").replace(/([a-z])([A-Z0-9])/g, "$1 $2").replace(/([0-9])([A-Z])/g, "$1 $2")
+        return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase()
+    }
+    function cameraName(c) { return c === "orthographicFront" ? qsTr("No rotation (front)") : words(c) }
+    readonly property var bevelNames: ({ circle: qsTr("Circle"), relaxedInset: qsTr("Relaxed inset"), cross: qsTr("Cross"), coolSlant: qsTr("Cool slant"),
+                                         angle: qsTr("Angle"), softRound: qsTr("Soft round"), convex: qsTr("Convex"), slope: qsTr("Slope"),
+                                         divot: qsTr("Divot"), riblet: qsTr("Riblet"), hardEdge: qsTr("Hard edge"), artDeco: qsTr("Art deco") })
+    function bevelName(b) { return bevelNames[b] ?? words(b) }
+    readonly property var materialNames: ({ matte: qsTr("Matte"), warmMatte: qsTr("Warm matte"), plastic: qsTr("Plastic"), metal: qsTr("Metal"),
+                                            dkEdge: qsTr("Dark edge"), softEdge: qsTr("Soft edge"), flat: qsTr("Flat"), legacyWireframe: qsTr("Wire frame"),
+                                            powder: qsTr("Powder"), translucentPowder: qsTr("Translucent powder"), clear: qsTr("Clear"),
+                                            softmetal: qsTr("Soft metal"), legacyMatte: qsTr("Matte (legacy)"), legacyPlastic: qsTr("Plastic (legacy)"),
+                                            legacyMetal: qsTr("Metal (legacy)") })
+    function materialName(m) { return materialNames[m] ?? words(m) }
+    readonly property var rigNames: ({ threePt: qsTr("Three point"), balanced: qsTr("Balanced"), soft: qsTr("Soft"), harsh: qsTr("Harsh"),
+                                       flood: qsTr("Flood"), contrasting: qsTr("Contrasting"), morning: qsTr("Morning"), sunrise: qsTr("Sunrise"),
+                                       sunset: qsTr("Sunset"), chilly: qsTr("Chilly"), freezing: qsTr("Freezing"), flat: qsTr("Flat"),
+                                       twoPt: qsTr("Two point"), glow: qsTr("Glow"), brightRoom: qsTr("Bright room") })
+    function rigName(r) { return rigNames[r] ?? words(r) }
     function setShadowVector(distancePt, angleDeg) {
         const d = units(Math.max(0, distancePt)), r = angleDeg * Math.PI / 180
         set({ shadowEnabled: true, shadowX: d * Math.cos(r), shadowY: d * Math.sin(r) })
@@ -186,92 +293,6 @@ ColumnLayout {
               (root.heading !== "" ? " " + qsTr("Where the text has its own glow or shadow, that one is drawn.") : "")
     }
 
-    // ---- Glow ---------------------------------------------------------------
-
-    Expander {
-        objectName: "effectsGlowExpander"
-        title: qsTr("Glow")
-        open: root.glowOpen
-        summary: root.glowOn ? qsTr("%1 pt · %2% clear").arg(root.round1(root.pts(root.fx.glowRadius))).arg(Math.round((1 - root.alphaOf(root.fx.glowColor)) * 100)) : qsTr("None")
-        onClicked: root.glowOpen = !root.glowOpen
-    }
-    ColumnLayout {
-        objectName: "effectsGlowSection"
-        visible: root.glowOpen
-        Layout.fillWidth: true
-        Layout.leftMargin: Theme.s2
-        spacing: Theme.s2
-        Expander {
-            objectName: "effectsGlowPresets"
-            title: qsTr("Presets")
-            open: root.glowPresetsOpen
-            onClicked: root.glowPresetsOpen = !root.glowPresetsOpen
-        }
-        ColumnLayout {
-            visible: root.glowPresetsOpen
-            Layout.fillWidth: true
-            spacing: Theme.s1
-            Button {
-                objectName: "effectsGlowNone"
-                Layout.fillWidth: true
-                text: qsTr("No glow")
-                icon.name: "x"
-                enabled: root.glowOn
-                onClicked: root.set({ glowRadius: 0 })
-            }
-            Label { text: qsTr("Glow variations"); color: Theme.textSecondary; font.pixelSize: Theme.fsLabel }
-            GridLayout {
-                columns: root.accents.length
-                columnSpacing: Theme.s1
-                rowSpacing: Theme.s1
-                Repeater {
-                    model: root.glowSizes.length * root.accents.length
-                    delegate: Tile {
-                        required property int index
-                        readonly property int size: root.glowSizes[Math.floor(index / root.accents.length)]
-                        readonly property string colour: root.accents[index % root.accents.length]
-                        source: root.glowPreview(size, colour)
-                        tip: qsTr("Glow: %1 pt; accent colour %2").arg(size).arg(index % root.accents.length + 1)
-                        current: root.glowOn && Math.abs(root.pts(root.fx.glowRadius) - size) < 0.15 &&
-                                 root.rgbOf(root.fx.glowColor).toLowerCase() === colour.toLowerCase()
-                        onChosen: root.set({ glowRadius: root.units(size), glowColor: root.withAlpha(colour, 0.4) })
-                    }
-                }
-            }
-        }
-        FieldRow {
-            label: qsTr("Colour")
-            ColorField {
-                value: root.rgbOf(root.fx.glowColor)
-                accessibleName: qsTr("Glow colour")
-                onPicked: v => root.set({ glowColor: root.withAlpha(v, root.alphaOf(root.fx.glowColor)),
-                                          glowRadius: root.glowOn ? root.fx.glowRadius : root.units(8) })
-            }
-        }
-        FieldRow {
-            label: qsTr("Size")
-            NumField {
-                objectName: "effectsGlowSize"
-                Layout.fillWidth: true
-                suffix: " pt"; step: 1; decimals: 1
-                value: root.round1(root.pts(root.fx.glowRadius))
-                onCommitted: v => root.set({ glowRadius: root.units(Math.max(0, Math.min(150, v))) })
-            }
-        }
-        FieldRow {
-            label: qsTr("Transparency")
-            Slider {
-                objectName: "effectsGlowTransparency"
-                Layout.fillWidth: true
-                from: 0; to: 100
-                value: Math.round((1 - root.alphaOf(root.fx.glowColor)) * 100)
-                onPressedChanged: if (!pressed) root.set({ glowColor: root.withAlpha(root.rgbOf(root.fx.glowColor), 1 - value / 100) })
-                Accessible.name: qsTr("Glow transparency")
-            }
-            Percent { value: (1 - root.alphaOf(root.fx.glowColor)) * 100 }
-        }
-    }
-
     // ---- Shadow -------------------------------------------------------------
 
     Expander {
@@ -282,7 +303,7 @@ ColumnLayout {
                  : (root.fx.shadowInner ?? false) ? qsTr("Inside")
                  : root.perspective ? qsTr("Perspective")
                  : qsTr("%1 pt · %2°").arg(root.round1(root.shadowDistance)).arg(root.shadowAngle)
-        onClicked: root.shadowOpen = !root.shadowOpen
+        onClicked: root.toggle("shadow")
     }
     ColumnLayout {
         objectName: "effectsShadowSection"
@@ -294,7 +315,7 @@ ColumnLayout {
             objectName: "effectsShadowPresets"
             title: qsTr("Presets")
             open: root.shadowPresetsOpen
-            onClicked: root.shadowPresetsOpen = !root.shadowPresetsOpen
+            onClicked: root.toggle("shadowPresets")
         }
         ColumnLayout {
             visible: root.shadowPresetsOpen
@@ -409,6 +430,525 @@ ColumnLayout {
                 value: root.round1(root.shadowDistance)
                 onCommitted: v => root.setShadowVector(Math.min(200, v), root.shadowAngle)
             }
+        }
+    }
+
+    // ---- Reflection (STYLE3D) --------------------------------------------------
+
+    Expander {
+        objectName: "effectsReflectionExpander"
+        title: qsTr("Reflection")
+        open: root.reflectionOpen
+        summary: root.reflectionOn ? qsTr("%1% size · %2 pt away").arg(Math.round(root.refl.endPos ?? 100)).arg(root.round1(root.pts(root.refl.dist))) : qsTr("None")
+        onClicked: root.toggle("reflection")
+    }
+    ColumnLayout {
+        objectName: "effectsReflectionSection"
+        visible: root.reflectionOpen
+        Layout.fillWidth: true
+        Layout.leftMargin: Theme.s2
+        spacing: Theme.s2
+        Expander {
+            objectName: "effectsReflectionPresets"
+            title: qsTr("Presets")
+            open: root.reflectionPresetsOpen
+            onClicked: root.toggle("reflectionPresets")
+        }
+        ColumnLayout {
+            visible: root.reflectionPresetsOpen
+            Layout.fillWidth: true
+            spacing: Theme.s1
+            Button {
+                objectName: "effectsReflectionNone"
+                Layout.fillWidth: true
+                text: qsTr("No reflection")
+                icon.name: "x"
+                enabled: root.reflectionOn
+                onClicked: root.set({ reflection: ({}) })
+            }
+            Label { text: qsTr("Reflection variations"); color: Theme.textSecondary; font.pixelSize: Theme.fsLabel }
+            GridLayout {
+                columns: 3
+                columnSpacing: Theme.s1
+                rowSpacing: Theme.s1
+                Repeater {
+                    model: root.presets3d.reflections ?? []
+                    delegate: Tile {
+                        required property var modelData
+                        source: root.reflectionPresetsOpen ? root.preview3d({ reflection: root.reflectionInPoints(modelData.value) }) : ""
+                        tip: modelData.name
+                        current: root.reflectionOn && Math.abs((root.refl.endPos ?? 100) - modelData.value.endPos) < 0.5 &&
+                                 Math.abs(root.pts(root.refl.dist) - root.pts(modelData.value.dist)) < 0.15
+                        onChosen: root.set({ reflection: modelData.value })
+                    }
+                }
+            }
+        }
+        FieldRow {
+            label: qsTr("Transparency")
+            Slider {
+                objectName: "effectsReflectionTransparency"
+                Layout.fillWidth: true
+                from: 0; to: 100
+                value: 100 - (root.refl.startAlpha ?? 50)
+                onPressedChanged: if (!pressed) root.setReflection({ startAlpha: 100 - Math.round(value) })
+                Accessible.name: qsTr("Reflection transparency")
+            }
+            Percent { value: root.reflectionOn ? 100 - (root.refl.startAlpha ?? 100) : 0 }
+        }
+        FieldRow {
+            label: qsTr("Size")
+            NumField {
+                objectName: "effectsReflectionSize"
+                Layout.fillWidth: true
+                suffix: " %"; step: 1
+                value: Math.round(root.reflectionOn ? (root.refl.endPos ?? 100) : 0)
+                onCommitted: v => root.setReflection({ endPos: Math.max(0, Math.min(100, v)) })
+            }
+        }
+        FieldRow {
+            label: qsTr("Distance")
+            NumField {
+                objectName: "effectsReflectionDistance"
+                Layout.fillWidth: true
+                suffix: " pt"; step: 1; decimals: 1
+                value: root.round1(root.pts(root.refl.dist))
+                onCommitted: v => root.setReflection({ dist: root.units(Math.max(0, Math.min(100, v))) })
+            }
+        }
+        FieldRow {
+            label: qsTr("Blur")
+            NumField {
+                objectName: "effectsReflectionBlur"
+                Layout.fillWidth: true
+                suffix: " pt"; step: 0.5; decimals: 1
+                value: root.round1(root.pts(root.refl.blur))
+                onCommitted: v => root.setReflection({ blur: root.units(Math.max(0, Math.min(100, v))) })
+            }
+        }
+    }
+
+    // ---- Glow ---------------------------------------------------------------
+
+    Expander {
+        objectName: "effectsGlowExpander"
+        title: qsTr("Glow")
+        open: root.glowOpen
+        summary: root.glowOn ? qsTr("%1 pt · %2% clear").arg(root.round1(root.pts(root.fx.glowRadius))).arg(Math.round((1 - root.alphaOf(root.fx.glowColor)) * 100)) : qsTr("None")
+        onClicked: root.toggle("glow")
+    }
+    ColumnLayout {
+        objectName: "effectsGlowSection"
+        visible: root.glowOpen
+        Layout.fillWidth: true
+        Layout.leftMargin: Theme.s2
+        spacing: Theme.s2
+        Expander {
+            objectName: "effectsGlowPresets"
+            title: qsTr("Presets")
+            open: root.glowPresetsOpen
+            onClicked: root.toggle("glowPresets")
+        }
+        ColumnLayout {
+            visible: root.glowPresetsOpen
+            Layout.fillWidth: true
+            spacing: Theme.s1
+            Button {
+                objectName: "effectsGlowNone"
+                Layout.fillWidth: true
+                text: qsTr("No glow")
+                icon.name: "x"
+                enabled: root.glowOn
+                onClicked: root.set({ glowRadius: 0 })
+            }
+            Label { text: qsTr("Glow variations"); color: Theme.textSecondary; font.pixelSize: Theme.fsLabel }
+            GridLayout {
+                columns: root.accents.length
+                columnSpacing: Theme.s1
+                rowSpacing: Theme.s1
+                Repeater {
+                    model: root.glowSizes.length * root.accents.length
+                    delegate: Tile {
+                        required property int index
+                        readonly property int size: root.glowSizes[Math.floor(index / root.accents.length)]
+                        readonly property string colour: root.accents[index % root.accents.length]
+                        source: root.glowPreview(size, colour)
+                        tip: qsTr("Glow: %1 pt; accent colour %2").arg(size).arg(index % root.accents.length + 1)
+                        current: root.glowOn && Math.abs(root.pts(root.fx.glowRadius) - size) < 0.15 &&
+                                 root.rgbOf(root.fx.glowColor).toLowerCase() === colour.toLowerCase()
+                        onChosen: root.set({ glowRadius: root.units(size), glowColor: root.withAlpha(colour, 0.4) })
+                    }
+                }
+            }
+        }
+        FieldRow {
+            label: qsTr("Colour")
+            ColorField {
+                value: root.rgbOf(root.fx.glowColor)
+                accessibleName: qsTr("Glow colour")
+                onPicked: v => root.set({ glowColor: root.withAlpha(v, root.alphaOf(root.fx.glowColor)),
+                                          glowRadius: root.glowOn ? root.fx.glowRadius : root.units(8) })
+            }
+        }
+        FieldRow {
+            label: qsTr("Size")
+            NumField {
+                objectName: "effectsGlowSize"
+                Layout.fillWidth: true
+                suffix: " pt"; step: 1; decimals: 1
+                value: root.round1(root.pts(root.fx.glowRadius))
+                onCommitted: v => root.set({ glowRadius: root.units(Math.max(0, Math.min(150, v))) })
+            }
+        }
+        FieldRow {
+            label: qsTr("Transparency")
+            Slider {
+                objectName: "effectsGlowTransparency"
+                Layout.fillWidth: true
+                from: 0; to: 100
+                value: Math.round((1 - root.alphaOf(root.fx.glowColor)) * 100)
+                onPressedChanged: if (!pressed) root.set({ glowColor: root.withAlpha(root.rgbOf(root.fx.glowColor), 1 - value / 100) })
+                Accessible.name: qsTr("Glow transparency")
+            }
+            Percent { value: (1 - root.alphaOf(root.fx.glowColor)) * 100 }
+        }
+    }
+
+    // ---- Soft Edges (STYLE3D; shapes and pictures: PowerPoint has none for text) ----
+
+    Expander {
+        objectName: "effectsSoftExpander"
+        visible: !root.onText
+        title: qsTr("Soft Edges")
+        open: root.softOpen
+        summary: root.softOn ? qsTr("%1 pt").arg(root.round1(root.pts(root.softEdge))) : qsTr("None")
+        onClicked: root.toggle("soft")
+    }
+    ColumnLayout {
+        objectName: "effectsSoftSection"
+        visible: root.softOpen && !root.onText
+        Layout.fillWidth: true
+        Layout.leftMargin: Theme.s2
+        spacing: Theme.s2
+        Expander {
+            objectName: "effectsSoftPresets"
+            title: qsTr("Presets")
+            open: root.softPresetsOpen
+            onClicked: root.toggle("softPresets")
+        }
+        ColumnLayout {
+            visible: root.softPresetsOpen
+            Layout.fillWidth: true
+            spacing: Theme.s1
+            Button {
+                objectName: "effectsSoftNone"
+                Layout.fillWidth: true
+                text: qsTr("No soft edges")
+                icon.name: "x"
+                enabled: root.softOn
+                onClicked: root.set({ softEdge: 0 })
+            }
+            GridLayout {
+                columns: 6
+                columnSpacing: Theme.s1
+                rowSpacing: Theme.s1
+                Repeater {
+                    model: root.presets3d.softEdges ?? []
+                    delegate: Tile {
+                        required property var modelData
+                        // The sample is 28 pt across: the size drawn to its scale.
+                        source: root.softPresetsOpen ? root.preview3d({ softEdge: Math.min(14, modelData / 3) }) : ""
+                        tip: qsTr("%1 point").arg(modelData)
+                        current: root.softOn && Math.abs(root.pts(root.softEdge) - modelData) < 0.05
+                        onChosen: root.set({ softEdge: root.units(modelData) })
+                    }
+                }
+            }
+        }
+        FieldRow {
+            label: qsTr("Size")
+            NumField {
+                objectName: "effectsSoftSize"
+                Layout.fillWidth: true
+                suffix: " pt"; step: 1; decimals: 1
+                value: root.round1(root.pts(root.softEdge))
+                onCommitted: v => root.set({ softEdge: root.units(Math.max(0, Math.min(100, v))) })
+            }
+        }
+    }
+
+    // ---- 3-D Format (STYLE3D; drawn as a shaded 2D approximation) ----------------
+
+    Expander {
+        objectName: "effects3dFormatExpander"
+        title: qsTr("3-D Format")
+        open: root.formatOpen
+        summary: !root.formatOn ? qsTr("None")
+                 : [root.fmt.top ? root.bevelName(root.fmt.top.preset) : "", (root.fmt.depth ?? 0) > 0 ? qsTr("depth %1 pt").arg(root.round1(root.pts(root.fmt.depth))) : "",
+                    root.materialName(root.fmt.material || "warmMatte")].filter(s => s !== "").join(" · ")
+        onClicked: root.toggle("format")
+    }
+    ColumnLayout {
+        objectName: "effects3dFormatSection"
+        visible: root.formatOpen
+        Layout.fillWidth: true
+        Layout.leftMargin: Theme.s2
+        spacing: Theme.s2
+        Label {
+            Layout.fillWidth: true
+            wrapMode: Text.Wrap
+            color: Theme.textMuted
+            font.pixelSize: Theme.fsLabel
+            text: qsTr("Prototype: drawn as a shaded flat picture, not true 3-D. Saved to PowerPoint exactly.")
+        }
+        Repeater {
+            model: [{ which: "top", title: qsTr("Top bevel") }, { which: "bottom", title: qsTr("Bottom bevel") }]
+            delegate: ColumnLayout {
+                id: bevelRow
+                required property var modelData
+                readonly property var bevel: root.fmt[modelData.which] ?? null
+                Layout.fillWidth: true
+                spacing: Theme.s1
+                FieldRow {
+                    label: bevelRow.modelData.title
+                    ComboBox {
+                        objectName: "effectsBevel_" + bevelRow.modelData.which
+                        Layout.fillWidth: true
+                        model: [qsTr("No bevel")].concat((root.presets3d.bevels ?? []).map(b => root.bevelName(b)))
+                        currentIndex: bevelRow.bevel ? 1 + (root.presets3d.bevels ?? []).indexOf(bevelRow.bevel.preset) : 0
+                        onActivated: root.setBevel(bevelRow.modelData.which, currentIndex === 0 ? "" : root.presets3d.bevels[currentIndex - 1])
+                    }
+                }
+                Flow {
+                    visible: bevelRow.modelData.which === "top" && root.formatPresetsOpen
+                    Layout.fillWidth: true
+                    spacing: Theme.s1
+                    Repeater {
+                        model: root.presets3d.bevels ?? []
+                        delegate: Tile {
+                            required property string modelData
+                            source: root.formatPresetsOpen ? root.preview3d({ format3d: { top: { preset: modelData, w: 6, h: 6 } }, scene3d: root.defaultScene }) : ""
+                            tip: root.bevelName(modelData)
+                            current: bevelRow.bevel !== null && bevelRow.bevel.preset === modelData
+                            onChosen: root.setBevel("top", modelData)
+                        }
+                    }
+                }
+                GridLayout {
+                    visible: bevelRow.bevel !== null
+                    columns: 2
+                    columnSpacing: Theme.s2
+                    Layout.fillWidth: true
+                    NumField {
+                        Layout.fillWidth: true
+                        label: qsTr("Width"); suffix: " pt"; step: 1; decimals: 1
+                        value: root.round1(root.pts(bevelRow.bevel ? bevelRow.bevel.w : 0))
+                        onCommitted: v => root.setBevelSize(bevelRow.modelData.which, "w", v)
+                    }
+                    NumField {
+                        Layout.fillWidth: true
+                        label: qsTr("Height"); suffix: " pt"; step: 1; decimals: 1
+                        value: root.round1(root.pts(bevelRow.bevel ? bevelRow.bevel.h : 0))
+                        onCommitted: v => root.setBevelSize(bevelRow.modelData.which, "h", v)
+                    }
+                }
+            }
+        }
+        Expander {
+            objectName: "effects3dBevelGallery"
+            title: qsTr("Bevel presets")
+            open: root.formatPresetsOpen
+            onClicked: root.toggle("formatPresets")
+        }
+        FieldRow {
+            label: qsTr("Depth colour")
+            ColorField {
+                value: root.rgbOf(root.fmt.extrusionColor || "#ff000000")
+                accessibleName: qsTr("Depth colour")
+                onPicked: v => root.setFormat({ extrusionColor: root.withAlpha(v, 1) })
+            }
+        }
+        FieldRow {
+            label: qsTr("Depth")
+            NumField {
+                objectName: "effects3dDepth"
+                Layout.fillWidth: true
+                suffix: " pt"; step: 1; decimals: 1
+                value: root.round1(root.pts(root.fmt.depth))
+                onCommitted: v => root.setFormat({ depth: root.units(Math.max(0, Math.min(1584, v))) })
+            }
+        }
+        FieldRow {
+            label: qsTr("Contour colour")
+            ColorField {
+                value: root.rgbOf(root.fmt.contourColor || "#ffffffff")
+                accessibleName: qsTr("Contour colour")
+                onPicked: v => root.setFormat({ contourColor: root.withAlpha(v, 1) })
+            }
+        }
+        FieldRow {
+            label: qsTr("Contour")
+            NumField {
+                objectName: "effects3dContour"
+                Layout.fillWidth: true
+                suffix: " pt"; step: 0.5; decimals: 1
+                value: root.round1(root.pts(root.fmt.contour))
+                onCommitted: v => root.setFormat({ contour: root.units(Math.max(0, Math.min(1584, v))) })
+            }
+        }
+        FieldRow {
+            label: qsTr("Material")
+            ComboBox {
+                objectName: "effects3dMaterial"
+                Layout.fillWidth: true
+                model: (root.presets3d.materials ?? []).map(m => root.materialName(m))
+                currentIndex: (root.presets3d.materials ?? []).indexOf(root.fmt.material || "warmMatte")
+                onActivated: root.setFormat({ material: root.presets3d.materials[currentIndex] })
+            }
+        }
+        FieldRow {
+            label: qsTr("Lighting")
+            ComboBox {
+                objectName: "effects3dLighting"
+                Layout.fillWidth: true
+                model: (root.presets3d.lightRigs ?? []).map(r => root.rigName(r))
+                currentIndex: (root.presets3d.lightRigs ?? []).indexOf(root.scn.rig ?? "threePt")
+                onActivated: root.setScene({ rig: root.presets3d.lightRigs[currentIndex] })
+            }
+        }
+        FieldRow {
+            label: qsTr("Angle")
+            NumField {
+                objectName: "effects3dLightAngle"
+                Layout.fillWidth: true
+                suffix: "°"; step: 15; decimals: 1
+                value: root.round1(root.scn.rigRev ?? 0)
+                onCommitted: v => root.setScene({ rigLat: 0, rigLon: 0, rigRev: root.angle(v) })
+            }
+        }
+        Button {
+            objectName: "effects3dFormatReset"
+            Layout.fillWidth: true
+            text: qsTr("Reset 3-D format")
+            enabled: root.formatOn
+            onClicked: root.set({ format3d: ({}) })
+        }
+    }
+
+    // ---- 3-D Rotation (STYLE3D; prototype drawing, exact round trip) -------------
+
+    Expander {
+        objectName: "effects3dRotationExpander"
+        title: qsTr("3-D Rotation")
+        open: root.rotationOpen
+        summary: !root.rotationOn ? qsTr("None")
+                 : qsTr("X %1° · Y %2° · Z %3°").arg(root.round1(root.rotX)).arg(root.round1(root.rotY)).arg(root.round1(root.rotZ))
+        onClicked: root.toggle("rotation")
+    }
+    ColumnLayout {
+        objectName: "effects3dRotationSection"
+        visible: root.rotationOpen
+        Layout.fillWidth: true
+        Layout.leftMargin: Theme.s2
+        spacing: Theme.s2
+        Label {
+            Layout.fillWidth: true
+            wrapMode: Text.Wrap
+            color: Theme.textMuted
+            font.pixelSize: Theme.fsLabel
+            text: qsTr("Prototype: the turned picture is approximate. The rotation is saved to PowerPoint exactly.")
+        }
+        Expander {
+            objectName: "effects3dRotationPresets"
+            title: qsTr("Presets")
+            open: root.rotationPresetsOpen
+            onClicked: root.toggle("rotationPresets")
+        }
+        ColumnLayout {
+            visible: root.rotationPresetsOpen
+            Layout.fillWidth: true
+            spacing: Theme.s1
+            Button {
+                objectName: "effects3dRotationNone"
+                Layout.fillWidth: true
+                text: qsTr("No rotation")
+                icon.name: "x"
+                enabled: root.rotationOn
+                onClicked: root.resetRotation()
+            }
+            Repeater {
+                model: [{ title: qsTr("Parallel"), kind: "parallel" }, { title: qsTr("Perspective"), kind: "perspective" }, { title: qsTr("Oblique"), kind: "oblique" }]
+                delegate: ColumnLayout {
+                    id: camGroup
+                    required property var modelData
+                    Layout.fillWidth: true
+                    spacing: Theme.s1
+                    Label { text: camGroup.modelData.title; color: Theme.textSecondary; font.pixelSize: Theme.fsLabel }
+                    Flow {
+                        Layout.fillWidth: true
+                        spacing: Theme.s1
+                        Repeater {
+                            model: root.camerasOf(camGroup.modelData.kind)
+                            delegate: Tile {
+                                required property string modelData
+                                source: root.rotationPresetsOpen ? root.preview3d({ scene3d: { camera: modelData, rig: "threePt", rigDir: "t" } }) : ""
+                                tip: root.cameraName(modelData)
+                                current: root.sceneOn && (root.scn.camera ?? "") === modelData && root.scn.lat === undefined
+                                onChosen: root.setCamera(modelData)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        FieldRow {
+            label: qsTr("Preset")
+            ComboBox {
+                objectName: "effects3dCamera"
+                Layout.fillWidth: true
+                model: (root.presets3d.cameras ?? []).map(c => root.cameraName(c))
+                currentIndex: (root.presets3d.cameras ?? []).indexOf(root.scn.camera ?? "orthographicFront")
+                onActivated: root.setCamera(root.presets3d.cameras[currentIndex])
+            }
+        }
+        GridLayout {
+            columns: 3
+            columnSpacing: Theme.s2
+            Layout.fillWidth: true
+            NumField { objectName: "effects3dRotX"; Layout.fillWidth: true; label: qsTr("X"); suffix: "°"; step: 10; decimals: 1
+                       value: root.round1(root.rotX); onCommitted: v => root.setRotation(v, root.rotY, root.rotZ) }
+            NumField { objectName: "effects3dRotY"; Layout.fillWidth: true; label: qsTr("Y"); suffix: "°"; step: 10; decimals: 1
+                       value: root.round1(root.rotY); onCommitted: v => root.setRotation(root.rotX, v, root.rotZ) }
+            NumField { objectName: "effects3dRotZ"; Layout.fillWidth: true; label: qsTr("Z"); suffix: "°"; step: 10; decimals: 1
+                       value: root.round1(root.rotZ); onCommitted: v => root.setRotation(root.rotX, root.rotY, v) }
+        }
+        FieldRow {
+            label: qsTr("Perspective")
+            NumField {
+                objectName: "effects3dPerspective"
+                Layout.fillWidth: true
+                enabled: !(root.camInfo.parallel ?? true)
+                suffix: "°"; step: 5; decimals: 1
+                value: root.round1((root.scn.fov ?? -1) >= 0 ? root.scn.fov : (root.camInfo.parallel ?? true) ? 0 : 45)
+                onCommitted: v => root.setScene({ fov: Math.max(0, Math.min(120, v)) })
+            }
+        }
+        FieldRow {
+            label: qsTr("Distance from ground")
+            NumField {
+                objectName: "effects3dGround"
+                Layout.fillWidth: true
+                suffix: " pt"; step: 1; decimals: 1
+                value: root.round1(root.pts(root.fmt.z))
+                onCommitted: v => root.setFormat({ z: root.units(Math.max(-4000, Math.min(4000, v))) })
+            }
+        }
+        Button {
+            objectName: "effects3dRotationReset"
+            Layout.fillWidth: true
+            text: qsTr("Reset 3-D rotation")
+            enabled: root.rotationOn
+            onClicked: root.resetRotation()
         }
     }
 }

@@ -10,6 +10,12 @@
 #include "render/shapeeffects.h"
 #include "render/fillpaint.h"
 #include "core/fillstyle.h"
+#include "core/design.h"
+#include "render/layereffects.h"
+
+#include <QCryptographicHash>
+#include <QJsonDocument>
+#include <QJsonObject>
 
 #include <QPainterPath>
 
@@ -17,6 +23,43 @@
 #include <QPainter>
 
 namespace {
+
+// STYLE3D: what names a layer picture: everything about the object.
+QString layerKey(const SceneObject &o, const char *part) {
+    QVariantMap all = Design::properties(o);
+    all.insert(QStringLiteral("mediaPosition"), o.mediaPosition);
+    const QByteArray json = QJsonDocument(QJsonObject::fromVariantMap(all)).toJson(QJsonDocument::Compact);
+    return QLatin1String(part) + QLatin1Char(':') + QString::fromLatin1(QCryptographicHash::hash(json, QCryptographicHash::Sha1).toHex());
+}
+
+// A shape (or a text box's box) through its soft edges, reflection and 3-D.
+void paintShape(QPainter &painter, const SceneObject &o) {
+    const auto look = LayerEffects::shapeLook(o);
+    if (!LayerEffects::needed(look)) { Shape::paint(painter, o); return; }
+    LayerEffects::paint(painter, o.rect, look, layerKey(o, "shape"),
+                        [&](QPainter &p) { Shape::paint(p, o); }, [&](QPainter &p) { Shape::paint(p, o); });
+}
+
+// Words through their reflection and 3-D (and, with no box to carry them,
+// the box's: PowerPoint draws those on the words then).
+void paintWords(QPainter &painter, const SceneObject &o, qreal slideHeight, bool boxToo) {
+    auto look = LayerEffects::textLook(o);
+    QRectF frame = o.rect;
+    // A box turned in 3-D turns its words with it (PROTOTYPE: as one flat
+    // picture about the box's middle; PowerPoint's "keep text flat" is kept).
+    if (!boxToo && !look.scene.on && o.scene3d.on) { look.scene = o.scene3d; frame = FillStyle::boxRect(o); }
+    if (boxToo) {
+        const auto box = LayerEffects::shapeLook(o);
+        if (!look.reflection.on) look.reflection = box.reflection;
+        if (!look.format.on) look.format = box.format;
+        if (!look.scene.on) look.scene = box.scene;
+        look.softEdge = box.softEdge;
+    }
+    if (!LayerEffects::needed(look)) { TextLayout::paint(painter, o, slideHeight); return; }
+    LayerEffects::paint(painter, frame, look, layerKey(o, "words") + QString::number(slideHeight),
+                        [&](QPainter &p) { TextLayout::paint(p, o, slideHeight); },
+                        [&](QPainter &p) { TextLayout::paint(p, o, slideHeight); });
+}
 
 void paintObject(QPainter &painter, const SceneObject &object, qreal slideHeight) {
     if (object.hidden || object.opacity <= 0.0)
@@ -43,7 +86,7 @@ void paintObject(QPainter &painter, const SceneObject &object, qreal slideHeight
     case ObjectType::Chart: Chart::paint(painter,object); break;
     case ObjectType::Table: Table::paint(painter,object); break;
     case ObjectType::Rect:
-        Shape::paint(painter,object);
+        paintShape(painter, object);
         break;
 
     case ObjectType::Media: {
@@ -63,10 +106,16 @@ void paintObject(QPainter &painter, const SceneObject &object, qreal slideHeight
             mask.shapeKind = object.imageMask == 1 ? 1 : object.imageMask == 2 ? 0 : object.imageMask == 3 ? 5 : object.imageMask == 4 ? 7 : 0;
             mask.cornerRadius = object.imageMask == 2 ? (object.cornerRadius > 0 ? object.cornerRadius : qMin(object.rect.width(), object.rect.height()) * .1) : 0;
             frame = Shape::path(mask);
-            ShapeEffects::paintBehind(painter, object, frame, QPainterPath());
         }
-        ImageAsset::paint(painter,object);
-        if (effects) ShapeEffects::paintInside(painter, object, frame);
+        auto behind = [&](QPainter &p) { if (effects) ShapeEffects::paintBehind(p, object, frame, QPainterPath()); };
+        auto face = [&](QPainter &p) {
+            ImageAsset::paint(p, object);
+            if (effects) ShapeEffects::paintInside(p, object, frame);
+        };
+        // STYLE3D: a picture's soft edges, reflection and 3-D.
+        const auto look = LayerEffects::shapeLook(object);
+        if (LayerEffects::needed(look)) LayerEffects::paint(painter, object.rect, look, layerKey(object, "picture"), face, behind);
+        else { behind(painter); face(painter); }
         break;
     }
     case ObjectType::Text: {
@@ -77,10 +126,10 @@ void paintObject(QPainter &painter, const SceneObject &object, qreal slideHeight
         // shadow from the words as well (BOX-SHADOW-2).
         if (FillStyle::boxVisible(object)) {
             const auto pieces = FillStyle::split(object);
-            Shape::paint(painter, pieces.first());
-            TextLayout::paint(painter, pieces.last(), slideHeight);
+            paintShape(painter, pieces.first());
+            paintWords(painter, pieces.last(), slideHeight, false);
         } else
-            TextLayout::paint(painter, object, slideHeight);
+            paintWords(painter, object, slideHeight, true);
         break;
     }
     }

@@ -66,7 +66,7 @@ T.Button {
             x: control.under ? (parent.width - width) / 2
              : !parent.hasText ? (parent.width - width) / 2
              : control.trailing ? label.x + label.width + control.spacing
-             : (parent.width - parent.implicitWidth) / 2
+             : Math.max(0, (parent.width - parent.implicitWidth) / 2)   // STYLE3D: a long label elides, never pushing the icon out
             y: control.under ? (parent.height - parent.implicitHeight) / 2 : (parent.height - height) / 2
         }
         Text {

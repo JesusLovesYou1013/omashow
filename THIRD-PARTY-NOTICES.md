@@ -10,6 +10,7 @@ work, each under its own licence.
 |---|---|---|
 | [Lucide](https://lucide.dev) icons (some derived from [Feather](https://feathericons.com)) | `src/ui/icons/Icons.qml`, generated from `tools/icons.txt` | ISC, with Feather's portions under MIT — full text in `src/ui/icons/LICENSE.lucide` |
 | PowerPoint's 54 preset pattern fills as 8×8 cells, from [office-open-xml-viewer](https://github.com/yukiyokotani/office-open-xml-viewer) (`packages/core/src/shape/pattern-bitmaps.ts`) | `src/core/fillstyle.cpp` (`kPatterns`) | MIT — see below |
+| PowerPoint's 3-D camera presets (rotation, oblique skew), light rigs (light directions and colours) and preset materials as numbers, from LibreOffice's [`oox/source/drawingml/scene3dhelper.cxx`](https://git.libreoffice.org/core/+/refs/heads/master/oox/source/drawingml/scene3dhelper.cxx) (the values themselves come from Microsoft's [MS-OI29500] notes on DrawingML) | `src/core/effects3d.cpp` (`kCameras`, the rig and material tables) | MPL 2.0 — data values only, no code copied; the MPL 2.0 text is at https://mozilla.org/MPL/2.0/ |
 
 ## Linked at run time (system packages, not redistributed here)
 

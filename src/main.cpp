@@ -1,5 +1,6 @@
 // OmaShow — native presentations for Omarchy.
 
+#include <tuple>
 #include "core/fonts.h"
 #include "core/fontsandbox.h"
 #include <QElapsedTimer>
@@ -413,6 +414,18 @@ int captureInterface(QQmlApplicationEngine &engine, Backend &backend, Presenter 
             if (QQuickItem *found = findItem(child, name)) return found;
         return nullptr;
     };
+    // STYLE3D: open or close Style tab groups and rows (Inspector.qml styleOpen).
+    const auto styleOpen = [&](const QStringList &keys, bool open) {
+        QQuickItem *inspector = findItem(window->contentItem(), QStringLiteral("inspectorPanel"));
+        QObject *state = inspector ? inspector->findChild<QObject *>(QStringLiteral("styleOpen")) : nullptr;
+        if (!state) state = window->findChild<QObject *>(QStringLiteral("styleOpen"));
+        if (!state) { qInfo().noquote() << "ui-shot: no styleOpen FAIL"; return; }
+        for (const auto &key : keys) QMetaObject::invokeMethod(state, "set", Q_ARG(QVariant, key), Q_ARG(QVariant, open));
+    };
+    const auto styleCloseAll = [&] {
+        QQuickItem *inspector = findItem(window->contentItem(), QStringLiteral("inspectorPanel"));
+        if (QObject *state = inspector ? inspector->findChild<QObject *>(QStringLiteral("styleOpen")) : nullptr) QMetaObject::invokeMethod(state, "closeAll");
+    };
     // Pointer events as a mouse sends them; the window's cursor is read back.
     const auto mouse = [&](QEvent::Type type, const QPointF &at, Qt::MouseButtons held) {
         QMouseEvent event(type, at, at, window->mapToGlobal(at),
@@ -436,7 +449,10 @@ int captureInterface(QQmlApplicationEngine &engine, Backend &backend, Presenter 
         QQuickItem *tabs = findItem(window->contentItem(), QStringLiteral("inspectorTabs"));
         if (!panel || !tabs) { qInfo().noquote() << "ui-shot effects: no effects panel FAIL"; return 3; }
         const auto fold = [&](bool open) {
-            for (const char *key : {"glowOpen", "glowPresetsOpen", "shadowOpen", "shadowPresetsOpen"}) panel->setProperty(key, open);
+            // STYLE3D: the groups and the Glow and Shadow rows of both sets.
+            styleOpen({QStringLiteral("group.effects"), QStringLiteral("group.text")}, true);
+            for (const char *set : {"shape.", "text."})
+                for (const char *key : {"glow", "glowPresets", "shadow", "shadowPresets"}) styleOpen({QString::fromLatin1(set) + QLatin1String(key)}, open);
             settle(200);
         };
         const auto scrollTo = [&](QQuickItem *item) {
@@ -495,8 +511,7 @@ int captureInterface(QQmlApplicationEngine &engine, Backend &backend, Presenter 
         // shadow unfolded (glow folded) so the Inner and Perspective presets show.
         const auto shadowOnly = [&] {
             fold(false);
-            panel->setProperty("shadowOpen", true);
-            panel->setProperty("shadowPresetsOpen", true);
+            styleOpen({QStringLiteral("text.shadow"), QStringLiteral("text.shadowPresets")}, true);
             settle(200);
         };
         for (const auto &[slide, name] : {std::pair{7, "text-inner-expanded"}, std::pair{8, "text-perspective-expanded"}}) {
@@ -540,9 +555,9 @@ int captureInterface(QQmlApplicationEngine &engine, Backend &backend, Presenter 
                 backend.select(plain); fold(true); shoot(QStringLiteral("plain-textbox-expanded"));
                 // BOTH-EFFECTS-1: its Box (the hint: drawn on the words), then Both.
                 panel->setProperty("chosen", QStringLiteral("shape"));
-                fold(false); panel->setProperty("glowOpen", true); settle(200); shoot(QStringLiteral("plain-textbox-box"));
+                fold(false); styleOpen({QStringLiteral("shape.glow")}, true); settle(200); shoot(QStringLiteral("plain-textbox-box"));
                 panel->setProperty("chosen", QStringLiteral("both"));
-                fold(false); panel->setProperty("glowOpen", true); panel->setProperty("shadowOpen", true); settle(200);
+                fold(false); styleOpen({QStringLiteral("shape.glow"), QStringLiteral("shape.shadow"), QStringLiteral("text.glow"), QStringLiteral("text.shadow")}, true); settle(200);
                 shoot(QStringLiteral("plain-textbox-both"));
                 panel->setProperty("chosen", QString());
             }
@@ -564,7 +579,8 @@ int captureInterface(QQmlApplicationEngine &engine, Backend &backend, Presenter 
             settle(800);
         }
         const auto fold = [&](bool fill, bool line, bool presets = false) {
-            panel->setProperty("fillOpen", fill); panel->setProperty("lineOpen", line); panel->setProperty("fillPresetsOpen", presets);
+            styleOpen({QStringLiteral("group.fill")}, true);
+            styleOpen({QStringLiteral("shape.fill")}, fill); styleOpen({QStringLiteral("shape.line")}, line); styleOpen({QStringLiteral("shape.fillPresets")}, presets);
             settle(250);
         };
         const auto shoot = [&](const QString &name) {
@@ -625,6 +641,137 @@ int captureInterface(QQmlApplicationEngine &engine, Backend &backend, Presenter 
         const int want = int(sizeof cases / sizeof cases[0]);
         qInfo().noquote() << "ui-shot fill: cases" << found << (found == want ? "ok" : "FAIL");
         return found == want ? 0 : 3;
+    }
+    // STYLE3D (OMASHOW_UI_SHOT_STYLE3D=1): the Style tab's three groups for a
+    // shape and a text box on the STYLE3D test deck (scratch STYLE3D-UI-test):
+    // all closed, then each group open with its rows, then the Effects
+    // galleries. Then the new settings through the backend, each undone.
+    if (qEnvironmentVariableIsSet("OMASHOW_UI_SHOT_STYLE3D")) {
+        QQuickItem *tabs = findItem(window->contentItem(), QStringLiteral("inspectorTabs"));
+        QQuickItem *inspector = findItem(window->contentItem(), QStringLiteral("inspectorPanel"));
+        if (!tabs || !inspector) { qInfo().noquote() << "ui-shot style3d: no inspector FAIL"; return 3; }
+        if (backend.fontGate()) { backend.skipFontGate(); settle(500); }
+        if (QObject *check = window->findChild<QObject *>(QStringLiteral("fontCheckDialog")); check && check->property("visible").toBool()) {
+            QMetaObject::invokeMethod(check, "close");
+            settle(800);
+        }
+        const QSize was = window->size();
+        window->resize(was.width(), 3200);   // tall: a whole open group in one picture
+        settle(400);
+        const auto shoot = [&](const QString &name) {
+            tabs->setProperty("currentIndex", 1);
+            settle(150);
+            QQuickItem *flick = nullptr;
+            for (QQuickItem *up = findItem(inspector, QStringLiteral("styleGroupFill")); up; up = up->parentItem())
+                if (up->inherits("QQuickFlickable")) { flick = up; break; }
+            if (flick) {
+                QQuickItem *first = nullptr;
+                for (const char *g : {"styleGroupFill", "effectsPanel", "styleGroupText"})
+                    if (QQuickItem *it = findItem(inspector, QString::fromLatin1(g)); it && it->isVisible()) { first = it; break; }
+                if (first) {
+                    const QPointF in = first->mapToItem(flick->property("contentItem").value<QQuickItem *>(), QPointF());
+                    const qreal most = qMax(0.0, flick->property("contentHeight").toReal() - flick->height());
+                    flick->setProperty("contentY", qBound(0.0, in.y() - 40, most));
+                }
+            }
+            settle(900);
+            const QImage whole = window->grabWindow();
+            if (flick) {
+                const QRectF r = flick->mapRectToScene(QRectF(0, 0, flick->width(), flick->height()));
+                const qreal dpr = whole.devicePixelRatio();
+                const QRect crop = QRect(int((r.left() - 8) * dpr), int(r.top() * dpr), int((r.width() + 16) * dpr), int(r.height() * dpr)).intersected(whole.rect());
+                whole.copy(crop).save(outDir + QStringLiteral("/style3d-%1.png").arg(name));
+            } else {
+                whole.save(outDir + QStringLiteral("/style3d-%1.png").arg(name));
+            }
+            qInfo().noquote() << "ui-shot style3d: shot" << name;
+        };
+        const auto onSlide = [&](int slide) { backend.setProperty("currentSlide", slide); settle(300); return backend.slideObjects(); };
+        // slideObjects names a text box by its words: the shape is the first
+        // without words, the text box the one reading "Text Fill".
+        const auto byName = [](const QVariantList &objects, const QString &words, const QString &type) {
+            for (const auto &v : objects) {
+                const auto m = v.toMap();
+                if (type == QLatin1String("text") ? m.value("name").toString().startsWith(words) : !m.value("text").toBool()) return m.value("id").toString();
+            }
+            return QString();
+        };
+        const QStringList effectRows{"shadow", "reflection", "glow", "soft", "format", "rotation"};
+        const QStringList galleryRows{"reflectionPresets", "softPresets", "formatPresets", "rotationPresets"};
+        const auto rows = [](const QString &prefix, const QStringList &names) {
+            QStringList out;
+            for (const auto &n : names) out << prefix + QLatin1Char('.') + n;
+            return out;
+        };
+        int shots = 0, failures = 0;
+        const auto expect = [&](const QString &what, bool ok) {
+            qInfo().noquote() << "ui-shot style3d: check" << what << (ok ? "ok" : "FAIL");
+            if (!ok) ++failures;
+        };
+        const int slide = qMax(0, qEnvironmentVariableIntValue("OMASHOW_UI_SHOT_STYLE3D_SLIDE"));
+        const auto objects = onSlide(slide);
+        for (const auto &[kind, name, type] : {std::tuple{"shape", "", "rect"}, std::tuple{"textbox", "Text Fill", "text"}}) {
+            const QString id = byName(objects, QString::fromLatin1(name), QString::fromLatin1(type));
+            if (id.isEmpty()) { qInfo().noquote() << "ui-shot style3d: no" << kind << "FAIL"; ++failures; continue; }
+            backend.select(id);
+            settle(300);
+            const QString k = QString::fromLatin1(kind);
+            styleCloseAll(); shoot(k + QStringLiteral("-collapsed")); ++shots;
+            styleOpen({QStringLiteral("group.fill"), QStringLiteral("shape.fill"), QStringLiteral("shape.line")}, true);
+            shoot(k + QStringLiteral("-fill-line")); ++shots;
+            styleCloseAll();
+            styleOpen(QStringList{QStringLiteral("group.effects")} + rows(QStringLiteral("shape"), effectRows), true);
+            shoot(k + QStringLiteral("-effects")); ++shots;
+            styleCloseAll();
+            styleOpen(QStringList{QStringLiteral("group.effects")} + rows(QStringLiteral("shape"), effectRows) + rows(QStringLiteral("shape"), galleryRows), true);
+            shoot(k + QStringLiteral("-effects-galleries")); ++shots;
+            if (k == QLatin1String("textbox")) {
+                styleCloseAll();
+                styleOpen(QStringList{QStringLiteral("group.text"), QStringLiteral("text.fill"), QStringLiteral("text.line")} + rows(QStringLiteral("text"), effectRows), true);
+                shoot(k + QStringLiteral("-text-fill-outline")); ++shots;
+            }
+            styleCloseAll();
+            const auto fx = backend.effectState(QStringLiteral("shape")), tfx = backend.effectState(QStringLiteral("text"));
+            const auto tf = backend.textFillState();
+            qInfo().noquote() << "ui-shot style3d:" << kind << "box: soft" << fx.value("softEdge").toDouble()
+                              << "reflection" << fx.value("reflection").toMap().size() << "format" << fx.value("format3d").toMap().keys()
+                              << "scene" << fx.value("scene3d").toMap().value("camera").toString()
+                              << "| text: count" << tfx.value("count").toInt() << "reflection" << tfx.value("reflection").toMap().size()
+                              << "format" << tfx.value("format3d").toMap().keys() << "fill" << tf.value("fillStyle").toInt() << "outline" << tf.value("strokeWidth").toDouble();
+            // Each new setting through the backend: set, read back, undone.
+            const auto roundTrip = [&](const QString &what, const std::function<void()> &set, const std::function<bool()> &holds) {
+                const QString before = QString::fromUtf8(QJsonDocument::fromVariant(backend.slideObjects()).toJson(QJsonDocument::Compact));
+                set(); settle(100);
+                const bool took = holds();
+                backend.undo(); settle(100);
+                const QString after = QString::fromUtf8(QJsonDocument::fromVariant(backend.slideObjects()).toJson(QJsonDocument::Compact));
+                expect(k + QLatin1Char(' ') + what, took && before == after);
+            };
+            const QString target = k == QLatin1String("shape") ? QStringLiteral("shape") : QStringLiteral("text");
+            const QVariantMap refl = backend.style3dPresets().value("reflections").toList().value(4).toMap().value("value").toMap();
+            roundTrip(QStringLiteral("reflection preset"), [&] { backend.setSelectedEffect(target, {{"reflection", refl}}); },
+                      [&] { return backend.effectState(target).value("reflection").toMap().value("endPos").toDouble() == refl.value("endPos").toDouble(); });
+            roundTrip(QStringLiteral("bevel"), [&] { backend.setSelectedEffect(target, {{"format3d", QVariantMap{{"top", QVariantMap{{"preset", "angle"}, {"w", 6}, {"h", 6}}}, {"depth", 10}, {"material", "metal"}}},
+                                                                                {"scene3d", QVariantMap{{"camera", "orthographicFront"}, {"rig", "balanced"}, {"rigDir", "t"}}}}); },
+                      [&] { return backend.effectState(target).value("format3d").toMap().value("material").toString() == QLatin1String("metal"); });
+            roundTrip(QStringLiteral("3-D rotation"), [&] { backend.setSelectedEffect(target, {{"scene3d", QVariantMap{{"camera", "perspectiveFront"}, {"lat", 20}, {"lon", 30}, {"rev", 0}, {"rig", "threePt"}, {"rigDir", "t"}}}}); },
+                      [&] { return backend.effectState(target).value("scene3d").toMap().value("lon").toDouble() == 30; });
+            if (target == QLatin1String("shape"))
+                roundTrip(QStringLiteral("soft edge"), [&] { backend.setSelectedEffect(target, {{"softEdge", 5}}); },
+                          [&] { return backend.effectState(target).value("softEdge").toDouble() == 5; });
+            else {
+                roundTrip(QStringLiteral("text gradient fill"), [&] { backend.setSelectedTextFill({{"fillStyle", 1}, {"fillAngle", 90},
+                                                                                                  {"gradientStops", QVariantList{QVariantMap{{"p", 0}, {"c", "#ffff0000"}}, QVariantMap{{"p", 1}, {"c", "#ff0000ff"}}}}}); },
+                          [&] { return backend.textFillState().value("fillStyle").toInt() == 1; });
+                roundTrip(QStringLiteral("text outline"), [&] { backend.setSelectedTextFill({{"strokeWidth", 2}, {"strokeColor", "#ff00aa00"}, {"strokeDash", "dash"}}); },
+                          [&] { return backend.textFillState().value("strokeWidth").toDouble() == 2; });
+                roundTrip(QStringLiteral("text pattern fill"), [&] { backend.setSelectedTextFill({{"fillStyle", 3}, {"patternPreset", "wave"}}); },
+                          [&] { return backend.textFillState().value("patternPreset").toString() == QLatin1String("wave"); });
+            }
+        }
+        window->resize(was);
+        qInfo().noquote() << "ui-shot style3d: shots" << shots << "failures" << failures << (failures == 0 && shots == 9 ? "ok" : "FAIL");
+        return failures == 0 && shots == 9 ? 0 : 3;
     }
     // COLOR-PICK-2 (OMASHOW_UI_SHOT_COLORS=1): every colour setting, by hand. Each swatch is
     // clicked, the chooser photographed, a colour typed in its hex box (or a grid swatch
@@ -810,7 +957,7 @@ int captureInterface(QQmlApplicationEngine &engine, Backend &backend, Presenter 
         backend.addRect();
         settle(300);
         // FILL-UI-1: a shape's colours sit in the Style tab's Fill and Line, folded away.
-        if (QQuickItem *fills = findItem(window->contentItem(), QStringLiteral("fillPanel"))) { fills->setProperty("fillOpen", true); fills->setProperty("lineOpen", true); }
+        styleOpen({QStringLiteral("group.fill"), QStringLiteral("shape.fill"), QStringLiteral("shape.line")}, true);
         settle(200);
         check(QStringLiteral("shape fill"), QStringLiteral("Fill colour"), QStringLiteral("#30a060"), QStringLiteral("hex"), [&] { return selection("fill"); });
         backend.setSelectedProperty(QStringLiteral("fillStyle"), 3);   // FILL-UI-1: a pattern's background
@@ -821,7 +968,7 @@ int captureInterface(QQmlApplicationEngine &engine, Backend &backend, Presenter 
         check(QStringLiteral("shape outline"), QStringLiteral("Stroke colour"), QStringLiteral("#602080"), QStringLiteral("hex"), [&] { return selection("strokeColor"); });
         backend.setSelectedProperty(QStringLiteral("shadowEnabled"), true);
         // EFFECTS-UI-1: the shadow's colour sits in the Style tab's Effects, folded away.
-        if (QQuickItem *effects = findItem(window->contentItem(), QStringLiteral("effectsPanel"))) effects->setProperty("shadowOpen", true);
+        styleOpen({QStringLiteral("group.effects"), QStringLiteral("shape.shadow")}, true);
         settle(200);
         check(QStringLiteral("shape shadow"), QStringLiteral("Shadow colour"), QStringLiteral("#404040"), QStringLiteral("hex"), [&] { return selection("shadowColor"); });
         const QString shapeA = backend.selectedId();
