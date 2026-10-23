@@ -1331,7 +1331,15 @@ struct Reader {
             finish(words, place, own);
             applyText(words, text, fallback);
             if (!visibleBox) boxEffectsOfWords(words, look);
-            else if (!(look.fillSet && look.fillStyle != 5)) boxEffectsOnWords(words, look, true);
+            // BOX-SHADOW-2: an outlined box with no fill casts one shadow from
+            // its outline and its words together, turned about the box (sx/sy,
+            // kx/ky, algn): the words carry it as their box's shadow (boxShadow*,
+            // drawn as the box's), not as their own.
+            else if (!(look.fillSet && look.fillStyle != 5) && look.shadow) {
+                Look shadowLook = look;
+                shadowLook.glowRadEmu = 0;
+                boxEffectsOfWords(words, shadowLook);
+            }
             if (!name.isEmpty() && firstId.isEmpty()) words.altTitle = name;
             words.hidden = hidden;
             scope.objects->append(words);

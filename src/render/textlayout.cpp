@@ -496,9 +496,14 @@ QRectF inkBox(const QVector<float> &plane, int w, int h) {
     return x1 < 0 ? QRectF() : QRectF(x0, y0, x1 - x0 + 1, y1 - y0 + 1);
 }
 
+// BOX-SHADOW-2: `box`, when not empty, is the text box (slide units) a box's
+// own shadow drawn on its words turns about, and that shadow is sized as a
+// shape's is (its distance as set, blur radius / 2.5 as the deviation, as
+// ShapeEffects), not by the measured text rule: it is the box's shadow, cast
+// by what the box holds.
 void paintEffects(QPainter &painter, const SceneObject &o, QTextDocument &doc,
                   const QAbstractTextDocumentLayout::PaintContext &context, const QPointF &origin, const QSizeF &area,
-                  qreal fontSize, qreal slideHeight) {
+                  qreal fontSize, qreal slideHeight, const QRectF &box = QRectF()) {
     // Shared by every thread that draws slides (screen, thumbnails, export).
     static QMutex lock;
     static QCache<QString, QImage> cache(48 * 1024 * 1024);   // bytes
@@ -512,9 +517,10 @@ void paintEffects(QPainter &painter, const SceneObject &o, QTextDocument &doc,
     const qreal reach = glows ? point * 0.0433 * std::pow(o.textGlowRadius / point, 0.857) * std::pow(size, 0.653) : 0;
     const qreal soft = reach * 0.343;
     const qreal set = std::hypot(o.shadowX, o.shadowY);
-    const qreal moved = shadows && set > 0 ? point * 0.0561 * std::pow(set / point, 0.929) * std::pow(size, 0.717) : 0;
+    const bool asShape = !box.isEmpty();
+    const qreal moved = !shadows || set <= 0 ? 0 : asShape ? set : point * 0.0561 * std::pow(set / point, 0.929) * std::pow(size, 0.717);
     const QPointF offset = set > 0 ? QPointF(o.shadowX, o.shadowY) * (moved / set) : QPointF();
-    const qreal sigma = shadows && o.shadowBlur > 0 ? point * 0.0133 * std::pow(o.shadowBlur / point, 1.082) * std::pow(size, 0.709) : 0;
+    const qreal sigma = !shadows || o.shadowBlur <= 0 ? 0 : asShape ? o.shadowBlur / 2.5 : point * 0.0133 * std::pow(o.shadowBlur / point, 1.082) * std::pow(size, 0.709);
     const qreal glowEdge = glows ? reach + 4 * soft : 0;
     qreal margin = glowEdge + (shadows ? moved + 3 * sigma : 0) + 1;
     if (slanted) {
@@ -543,7 +549,8 @@ void paintEffects(QPainter &painter, const SceneObject &o, QTextDocument &doc,
         QString::number(shadows), o.shadowColor.name(QColor::HexArgb), QString::number(offset.x()), QString::number(offset.y()),
         QString::number(sigma), QString::number(slanted ? o.shadowScaleX : 100), QString::number(slanted ? o.shadowScaleY : 100),
         QString::number(slanted ? o.shadowSkewX : 0), QString::number(slanted ? o.shadowSkewY : 0),
-        QString::number(slanted ? o.shadowAlign : 0)}.join(QLatin1Char('|'));
+        QString::number(slanted ? o.shadowAlign : 0), QString::number(box.x() - origin.x()), QString::number(box.y() - origin.y()),
+        QString::number(box.width()), QString::number(box.height())}.join(QLatin1Char('|'));
     QImage effects;
     {
         QMutexLocker locked(&lock);
@@ -592,7 +599,8 @@ void paintEffects(QPainter &painter, const SceneObject &o, QTextDocument &doc,
                     auto *row = reinterpret_cast<QRgb *>(shape.scanLine(y));
                     for (int x = 0; x < w; ++x) { const float v = cast(x, y); whole[y * w + x] = v; const int a = qRound(v * 255); row[x] = qRgba(a, a, a, a); }
                 }
-                const QRectF ink = inkBox(whole, w, h);
+                const QRectF ink = asShape ? QRectF((box.topLeft() - origin + QPointF(margin, margin)) * scale, box.size() * scale)
+                                           : inkBox(whole, w, h);
                 const QPointF a = ShapeEffects::anchor(ink.isEmpty() ? QRectF(0, 0, w, h) : ink, o.shadowAlign);
                 QTransform t;
                 t.translate(dx, dy);
@@ -649,7 +657,7 @@ void paintEffects(QPainter &painter, const SceneObject &o, QTextDocument &doc,
 // for inner shadows.
 void paintInnerShadow(QPainter &painter, const SceneObject &o, QTextDocument &doc,
                       const QAbstractTextDocumentLayout::PaintContext &context, const QPointF &origin, const QSizeF &area,
-                      qreal fontSize, qreal slideHeight) {
+                      qreal fontSize, qreal slideHeight, bool asShape = false) {
     static QMutex lock;
     static QCache<QString, QImage> cache(24 * 1024 * 1024);   // bytes
     const QTransform &t = painter.worldTransform();
@@ -657,9 +665,9 @@ void paintInnerShadow(QPainter &painter, const SceneObject &o, QTextDocument &do
     const qreal point = qMax<qreal>(1e-3, slideHeight) / 540;
     const qreal size = qMax<qreal>(1, fontSize) / point;
     const qreal set = std::hypot(o.shadowX, o.shadowY);
-    const qreal moved = set > 0 ? point * 0.0561 * std::pow(set / point, 0.929) * std::pow(size, 0.717) : 0;
+    const qreal moved = set <= 0 ? 0 : asShape ? set : point * 0.0561 * std::pow(set / point, 0.929) * std::pow(size, 0.717);
     const QPointF offset = set > 0 ? QPointF(o.shadowX, o.shadowY) * (moved / set) : QPointF();
-    const qreal sigma = o.shadowBlur > 0 ? point * 0.0133 * std::pow(o.shadowBlur / point, 1.082) * std::pow(size, 0.709) : 0;
+    const qreal sigma = o.shadowBlur <= 0 ? 0 : asShape ? o.shadowBlur / 2.5 : point * 0.0133 * std::pow(o.shadowBlur / point, 1.082) * std::pow(size, 0.709);
     const qreal margin = moved + 3 * sigma + 1;
     const QSizeF full(area.width() + 2 * margin, area.height() + 2 * margin);
     scale = qBound(0.05, scale, 4096.0 / qMax(1.0, qMax(full.width(), full.height())));
@@ -814,7 +822,8 @@ void TextLayout::paint(QPainter &painter, const SceneObject &o, qreal slideHeigh
         // PowerPoint sizes its effects by its own text size: before a swapped
         // Office font's size factor (FontSwap), which only matches the look.
         paintEffects(painter, e, *doc, context, origin, QSizeF(o.rect.width() + overhang(o, metrics.effectiveSize), qMax(metrics.renderedHeight, o.rect.height())),
-                     !o.origFont.isEmpty() && o.fontScale > 0 ? metrics.effectiveSize / o.fontScale : metrics.effectiveSize, slideHeight);
+                     !o.origFont.isEmpty() && o.fontScale > 0 ? metrics.effectiveSize / o.fontScale : metrics.effectiveSize, slideHeight,
+                     boxShadow ? o.rect : QRectF());
     painter.save();
     if (o.textFit < 2 && !fitIsKept(o)) painter.setClipRect(o.rect, Qt::IntersectClip);   // spill and grow draw it all
     painter.translate(origin);
@@ -825,7 +834,8 @@ void TextLayout::paint(QPainter &painter, const SceneObject &o, qreal slideHeigh
         painter.save();
         if (o.textFit < 2 && !fitIsKept(o)) painter.setClipRect(o.rect, Qt::IntersectClip);
         paintInnerShadow(painter, e, *doc, context, origin, QSizeF(o.rect.width() + overhang(o, metrics.effectiveSize), qMax(metrics.renderedHeight, o.rect.height())),
-                         !o.origFont.isEmpty() && o.fontScale > 0 ? metrics.effectiveSize / o.fontScale : metrics.effectiveSize, slideHeight);
+                         !o.origFont.isEmpty() && o.fontScale > 0 ? metrics.effectiveSize / o.fontScale : metrics.effectiveSize, slideHeight,
+                         boxShadow);
         painter.restore();
     }
 }
