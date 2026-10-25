@@ -46,7 +46,13 @@ QVariantMap Design::properties(const SceneObject &o) {
             {"shapeKind",o.shapeKind},{"pathData",o.pathData},{"pathWinding",o.pathWinding},{"fillStyle",o.fillStyle},{"fillSecondary",o.fillSecondary.name(QColor::HexArgb)},
             {"fillAngle",o.fillAngle},{"patternStyle",o.patternStyle},{"strokeColor",o.strokeColor.name(QColor::HexArgb)},
             {"strokeWidth",o.strokeWidth},{"strokeStyle",o.strokeStyle},{"strokeJoin",o.strokeJoin},{"strokeCap",o.strokeCap},
-            {"shadowEnabled",o.shadowEnabled},{"shadowColor",o.shadowColor.name(QColor::HexArgb)},{"shadowX",o.shadowX},{"shadowY",o.shadowY},
+            {"shadowEnabled",o.shadowEnabled},{"shadowColor",o.shadowColor.name(QColor::HexArgb)},{"shadowX",o.shadowX},{"shadowY",o.shadowY},{"shadowBlur",o.shadowBlur},
+            {"shadowInner",o.shadowInner},{"shadowScaleX",o.shadowScaleX},{"shadowScaleY",o.shadowScaleY},{"shadowSkewX",o.shadowSkewX},{"shadowSkewY",o.shadowSkewY},{"shadowAlign",o.shadowAlign},
+            {"glowRadius",o.glowRadius},{"glowColor",o.glowColor.name(QColor::HexArgb)},
+            // A text box's own shadow.
+            {"boxShadowEnabled",o.boxShadowEnabled},{"boxShadowColor",o.boxShadowColor.name(QColor::HexArgb)},{"boxShadowX",o.boxShadowX},{"boxShadowY",o.boxShadowY},
+            {"boxShadowBlur",o.boxShadowBlur},{"boxShadowInner",o.boxShadowInner},{"boxShadowScaleX",o.boxShadowScaleX},{"boxShadowScaleY",o.boxShadowScaleY},
+            {"boxShadowSkewX",o.boxShadowSkewX},{"boxShadowSkewY",o.boxShadowSkewY},{"boxShadowAlign",o.boxShadowAlign},
             {"imageOriginal",o.imageOriginal ? properties(*o.imageOriginal) : QVariantMap()}, {"imageFormat",o.imageFormat},{"imageId",o.imageId},{"imageMode",o.imageMode},{"imageMask",o.imageMask},{"imageFocalX",o.imageFocalX},{"imageFocalY",o.imageFocalY},
             {"imageBrightness",o.imageBrightness},{"imageContrast",o.imageContrast},{"imageSaturation",o.imageSaturation},{"imageTint",o.imageTint.name(QColor::HexArgb)},{"imageTintAmount",o.imageTintAmount},{"cropX",o.imageCrop.x()},{"cropY",o.imageCrop.y()},
             {"cropW",o.imageCrop.width()},{"cropH",o.imageCrop.height()},
@@ -60,18 +66,30 @@ QVariantMap Design::properties(const SceneObject &o) {
             {"listStyle",o.listStyle},{"listStart",o.listStart},{"textFit",o.textFit},{"textKind",o.textKind},
             {"tabStop",o.tabStop},{"columns",o.columns},{"columnGap",o.columnGap},{"direction",o.direction},
             {"language",o.language},
-            {"fontFamily", o.fontFamily}, {"origFont", o.origFont}, {"origFontSize", o.origFontSize}, {"fontScale", o.fontScale}, {"origWeight", o.origWeight}, {"uppercase", o.uppercase}, {"letterSpacing", o.letterSpacing},
+            {"fontFamily", o.fontFamily}, {"origFont", o.origFont}, {"origFontSize", o.origFontSize}, {"fontScale", o.fontScale}, {"origWeight", o.origWeight}, {"textGlowRadius", o.textGlowRadius}, {"textGlowColor", o.textGlowColor.name(QColor::HexArgb)}, {"uppercase", o.uppercase}, {"letterSpacing", o.letterSpacing},
             {"fillToken", o.fillToken}, {"textColorToken", o.textColorToken}, {"fontToken", o.fontToken},
             {"altTitle", o.altTitle}, {"altText", o.altText}, {"runs", TextRuns::encode(o.runs)},
             {"placeholderId", o.placeholderId}, {"textStyleId", o.textStyleId}, {"overrides", o.overrides}, {"groups", o.groups}, {"locked", o.locked}, {"hidden", o.hidden}};
 }
 bool Design::setProperty(SceneObject &o, const QString &key, const QVariant &v, bool constrainForEditing) {
+    // boxShadow* are shadow* on the box, checked the same way.
+    if (key.startsWith(QLatin1String("boxShadow")) && key.size() > 9) {
+        SceneObject box = o;
+        box.swapBoxShadow();
+        if (!setProperty(box, QStringLiteral("shadow") + key.mid(9), v, constrainForEditing)) return false;
+        box.swapBoxShadow();
+        o.boxShadowEnabled = box.boxShadowEnabled; o.boxShadowColor = box.boxShadowColor; o.boxShadowX = box.boxShadowX;
+        o.boxShadowY = box.boxShadowY; o.boxShadowBlur = box.boxShadowBlur; o.boxShadowInner = box.boxShadowInner;
+        o.boxShadowScaleX = box.boxShadowScaleX; o.boxShadowScaleY = box.boxShadowScaleY; o.boxShadowSkewX = box.boxShadowSkewX;
+        o.boxShadowSkewY = box.boxShadowSkewY; o.boxShadowAlign = box.boxShadowAlign;
+        return true;
+    }
     const QStringList numeric = {"textKind","tabStop","columns","columnGap","direction","mediaBytes","mediaModified","mediaDuration","mediaTrimStart","mediaTrimEnd","mediaVolume","mediaLoops","x", "y", "w", "h", "rotation", "opacity", "cornerRadius",
-                                 "linkKind", "connectorStartX", "connectorStartY", "connectorEndX", "connectorEndY", "connectorFromSide", "connectorToSide", "connectorRoute", "shapeKind", "fillStyle", "fillAngle", "patternStyle", "strokeWidth", "strokeStyle", "strokeJoin", "strokeCap", "shadowX", "shadowY", "fontSize", "fontWeight", "origFontSize", "fontScale", "origWeight", "letterSpacing", "textAlign", "verticalAlign", "lineHeight", "paragraphSpacing", "textIndent", "listStyle", "listStart", "textFit", "imageMask", "imageFocalX", "imageFocalY", "imageBrightness", "imageContrast", "imageSaturation", "imageTintAmount", "imageMode", "cropX", "cropY", "cropW", "cropH"};
+                                 "linkKind", "connectorStartX", "connectorStartY", "connectorEndX", "connectorEndY", "connectorFromSide", "connectorToSide", "connectorRoute", "shapeKind", "fillStyle", "fillAngle", "patternStyle", "strokeWidth", "strokeStyle", "strokeJoin", "strokeCap", "shadowX", "shadowY", "shadowBlur", "shadowScaleX", "shadowScaleY", "shadowSkewX", "shadowSkewY", "shadowAlign", "glowRadius", "fontSize", "fontWeight", "origFontSize", "fontScale", "origWeight", "textGlowRadius", "letterSpacing", "textAlign", "verticalAlign", "lineHeight", "paragraphSpacing", "textIndent", "listStyle", "listStart", "textFit", "imageMask", "imageFocalX", "imageFocalY", "imageBrightness", "imageContrast", "imageSaturation", "imageTintAmount", "imageMode", "cropX", "cropY", "cropW", "cropH"};
     bool ok = false;
     const qreal n = v.toDouble(&ok);
     if (numeric.contains(key) && (!ok || !std::isfinite(n))) return false;
-    if ((key == "fill" || key == "textColor" || key == "fillSecondary" || key == "strokeColor" || key == "shadowColor" || key == "imageTint") && !QColor(v.toString()).isValid()) return false;
+    if ((key == "fill" || key == "textColor" || key == "fillSecondary" || key == "strokeColor" || key == "shadowColor" || key == "glowColor" || key == "imageTint") && !QColor(v.toString()).isValid()) return false;
     if (key == "dataSource") return LinkedData::decode(v,o.dataSource);
     if (key == "chart") return Chart::decode(v,o.chart);
     if (key == "table") { TableData data; if(!Table::decode(v,data) || (o.type!=ObjectType::Table && o.type!=ObjectType::Chart && !data.cells.isEmpty())) return false; o.table=data; return true; }
@@ -119,6 +137,15 @@ bool Design::setProperty(SceneObject &o, const QString &key, const QVariant &v, 
     else if (key == "shadowColor") o.shadowColor=QColor(v.toString());
     else if (key == "shadowX") o.shadowX=n;
     else if (key == "shadowY") o.shadowY=n;
+    else if (key == "shadowBlur") { if (n < 0 || n > 1000) return false; o.shadowBlur = n; }
+    else if (key == "shadowInner") o.shadowInner = v.toBool();
+    else if (key == "shadowScaleX") { if (n < -200 || n > 200) return false; o.shadowScaleX = n; }
+    else if (key == "shadowScaleY") { if (n < -200 || n > 200) return false; o.shadowScaleY = n; }
+    else if (key == "shadowSkewX") { if (n < -89 || n > 89) return false; o.shadowSkewX = n; }
+    else if (key == "shadowSkewY") { if (n < -89 || n > 89) return false; o.shadowSkewY = n; }
+    else if (key == "shadowAlign") { if (n < 0 || n > 8 || n != int(n)) return false; o.shadowAlign = int(n); }
+    else if (key == "glowRadius") { if (n < 0 || n > 1000) return false; o.glowRadius = n; }
+    else if (key == "glowColor") o.glowColor = QColor(v.toString());
     else if (key == "fontSize") o.fontSize = qMax(constrainForEditing ? 4.0 : 0.0, n);
     else if (key == "fontWeight") o.fontWeight = qBound(100, v.toInt(), 900);
     else if (key == "letterSpacing") o.letterSpacing = n;
@@ -199,6 +226,8 @@ bool Design::setProperty(SceneObject &o, const QString &key, const QVariant &v, 
     else if (key == "text") o.text = v.toString();
     else if (key == "fontFamily") o.fontFamily = v.toString();
     else if (key == "origFont") { if (v.toString().size() > 256) return false; o.origFont = v.toString(); }
+    else if (key == "textGlowRadius") { if (n < 0 || n > 1000) return false; o.textGlowRadius = n; }
+    else if (key == "textGlowColor") { const QColor c(v.toString()); if (!c.isValid()) return false; o.textGlowColor = c; }
     else if (key == "origFontSize") { if (n < 0 || n > 4000) return false; o.origFontSize = n; }
     else if (key == "fontScale") { if (n <= 0 || n > 10) return false; o.fontScale = n; }
     else if (key == "origWeight") { if (n != 0 && (n < 100 || n > 900)) return false; o.origWeight = v.toInt(); }

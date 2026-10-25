@@ -4,6 +4,7 @@
 // inheritance before the deterministic animation evaluator produces a frame.
 
 #include <QColor>
+#include <utility>
 #include <QImage>
 #include <QPicture>
 #include <QRectF>
@@ -92,6 +93,47 @@ struct SceneObject {
     bool shadowEnabled = false;
     QColor shadowColor = QColor(0,0,0,100);
     qreal shadowX = 8, shadowY = 8;
+    // How soft the shadow's edge is (PowerPoint's blur), in slide units; 0 a
+    // hard edge. On text the shadow follows PowerPoint's own sizing (see
+    // TextLayout's paintEffects).
+    qreal shadowBlur = 0;
+    // The rest of PowerPoint's shadow (a:outerShdw / a:innerShdw).
+    // Inside the shape instead of behind it (inner); its size and slant as
+    // PowerPoint's sx/sy (percent) and kx/ky (degrees), taken about the point
+    // of the shape named by shadowAlign (0-8: tl t tr l ctr r bl b br, as
+    // a:outerShdw's algn). Shapes and pictures draw all of it; text draws the
+    // outer shadow by PowerPoint's own measured rule and keeps the rest only
+    // to write it back.
+    bool shadowInner = false;
+    qreal shadowScaleX = 100, shadowScaleY = 100;
+    qreal shadowSkewX = 0, shadowSkewY = 0;
+    int shadowAlign = 0;
+    // A glow around the shape itself (spPr a:glow): its outline
+    // and fill, or just the outline when it has no fill. How far it reaches in
+    // slide units, and its colour with its own transparency. 0: none. Text
+    // boxes glow their words instead (textGlowRadius), as PowerPoint does for
+    // a box with no fill and no outline.
+    qreal glowRadius = 0;
+    QColor glowColor = QColor(68, 114, 196, 102);
+    // A text box's own shadow (p:spPr a:effectLst), apart from
+    // its words' (shadow*, a:rPr). Only text objects use it; their box glow is
+    // glowRadius/glowColor above. With no fill and no outline PowerPoint draws
+    // box effects on the words, so they are drawn there, each kind only where
+    // the words have none of their own (TextLayout::paint). The same fields as
+    // shadow*, swapped in and out by swapBoxShadow().
+    bool boxShadowEnabled = false;
+    QColor boxShadowColor = QColor(0,0,0,100);
+    qreal boxShadowX = 8, boxShadowY = 8, boxShadowBlur = 0;
+    bool boxShadowInner = false;
+    qreal boxShadowScaleX = 100, boxShadowScaleY = 100;
+    qreal boxShadowSkewX = 0, boxShadowSkewY = 0;
+    int boxShadowAlign = 0;
+    void swapBoxShadow() {
+        std::swap(shadowEnabled, boxShadowEnabled); std::swap(shadowColor, boxShadowColor);
+        std::swap(shadowX, boxShadowX); std::swap(shadowY, boxShadowY); std::swap(shadowBlur, boxShadowBlur);
+        std::swap(shadowInner, boxShadowInner); std::swap(shadowScaleX, boxShadowScaleX); std::swap(shadowScaleY, boxShadowScaleY);
+        std::swap(shadowSkewX, boxShadowSkewX); std::swap(shadowSkewY, boxShadowSkewY); std::swap(shadowAlign, boxShadowAlign);
+    }
 
     // Embedded raster data is implicitly shared between snapshots and duplicates.
     std::shared_ptr<const SceneObject> imageOriginal;
@@ -153,6 +195,11 @@ struct SceneObject {
     QString origFont;
     qreal origFontSize = 0, fontScale = 1;
     int origWeight = 0;
+    // A soft glow around the letters (PowerPoint's text glow): how far it
+    // reaches, in slide units, and its colour with its own transparency.
+    // 0: none. Drawn behind the text and not cut off at the box.
+    qreal textGlowRadius = 0;
+    QColor textGlowColor = QColor(255, 255, 255, 191);
     QString fillToken, textColorToken, fontToken;
     // Stretches of this text that differ from the box, in authored order.
     QVector<TextRun> runs;

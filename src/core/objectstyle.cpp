@@ -10,7 +10,14 @@ QStringList ObjectStyles::keys() {
           "fontToken",     "textColor",     "textColorToken",   "uppercase",
           "letterSpacing", "italic",        "underline",        "textAlign",
           "verticalAlign", "lineHeight",    "paragraphSpacing", "textIndent",
-          "listStyle",     "listStart",     "textFit"};
+          "listStyle",     "listStart",     "textFit",
+          // Glow and shadow travel with a saved appearance.
+          "shadowBlur",    "shadowInner",   "shadowScaleX",     "shadowScaleY",
+          "shadowSkewX",   "shadowSkewY",   "shadowAlign",      "glowRadius",
+          "glowColor",     "textGlowRadius", "textGlowColor",
+          // A text box's own shadow.
+          "boxShadowEnabled", "boxShadowColor", "boxShadowX", "boxShadowY", "boxShadowBlur", "boxShadowInner",
+          "boxShadowScaleX", "boxShadowScaleY", "boxShadowSkewX", "boxShadowSkewY", "boxShadowAlign"};
 }
 SceneObject ObjectStyles::capture(const SceneObject &object) {
   SceneObject appearance;

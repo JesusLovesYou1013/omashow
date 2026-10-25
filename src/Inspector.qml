@@ -334,6 +334,10 @@ Rectangle {
                 Button { objectName: "discardOriginalPicture"; Layout.fillWidth: true; visible: root.sel.imageHasOriginal??false; text: qsTr("Discard original to reduce deck size"); onClicked: backend.discardOriginalMedia() }
             }
 
+            // Glow and shadow, on the words or the shape.
+            Divider { visible: effectsPanel.visible }
+            EffectsPanel { id: effectsPanel; Layout.fillWidth: true }
+
             Divider {}
             Button { objectName: "objectLinkButton"; Layout.fillWidth: true; icon.name: "link"; text: root.sel.linkKind?qsTr("Edit link or action…"):qsTr("Add link or action…"); onClicked: backend.editSelectedLink() }
             Label { Layout.fillWidth: true; visible: !!root.sel.linkIssue; text: root.sel.linkIssue??""; color: Theme.warning; wrapMode: Text.Wrap }

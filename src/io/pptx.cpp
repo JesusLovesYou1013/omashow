@@ -354,7 +354,23 @@ struct Look {
     bool shadow = false;
     QColor shadowColor;
     qreal shadowDistEmu = 0, shadowDir = 0;
+    // The rest of the shadow, and the shape's glow.
+    qreal shadowBlurEmu = 0;
+    bool shadowInner = false;
+    qreal shadowSx = 100, shadowSy = 100, shadowKx = 0, shadowKy = 0;
+    int shadowAlign = 0;
+    bool shadowRotates = true;   // rotWithShape (the schema's default)
+    qreal glowRadEmu = 0;
+    QColor glowColor;
 };
+
+// a:outerShdw's algn, as SceneObject::shadowAlign counts them.
+int shadowAlignOf(const QString &algn) {
+    static const QStringList names{QStringLiteral("tl"), QStringLiteral("t"), QStringLiteral("tr"), QStringLiteral("l"), QStringLiteral("ctr"),
+                                   QStringLiteral("r"), QStringLiteral("bl"), QStringLiteral("b"), QStringLiteral("br")};
+    const int i = names.indexOf(algn);
+    return i < 0 ? 7 : i;   // the schema's default is b
+}
 
 // Direct fill children of spPr, bgPr, tcPr, ln, rPr …
 bool readFill(const Node *owner, Look &look, const ColorContext &ctx) {
@@ -426,13 +442,40 @@ void readLine(const Node *ln, Look &look, const ColorContext &ctx) {
 
 void readEffects(const Node *effectLst, Look &look, const ColorContext &ctx) {
     if (!effectLst) return;
-    if (const Node *shadow = effectLst->child(QStringLiteral("outerShdw"))) {
+    // Every attribute PowerPoint writes, with the schema's own
+    // defaults (0 for distance, direction and blur, 100% size, no slant, algn
+    // b). The outer shadow wins when a shape has both (OmaShow keeps one).
+    const Node *outer = effectLst->child(QStringLiteral("outerShdw"));
+    const Node *inner = effectLst->child(QStringLiteral("innerShdw"));
+    if (const Node *shadow = outer ? outer : inner) {
         look.shadow = true;
+        look.shadowInner = !outer;
         look.shadowColor = colorIn(shadow, ctx);
         if (!look.shadowColor.isValid()) look.shadowColor = QColor(0, 0, 0, 100);
-        look.shadowDistEmu = shadow->attr(QStringLiteral("dist"), QStringLiteral("38100")).toDouble();
-        look.shadowDir = shadow->attr(QStringLiteral("dir"), QStringLiteral("5400000")).toDouble() / 60000.0;
+        look.shadowDistEmu = shadow->attr(QStringLiteral("dist"), QStringLiteral("0")).toDouble();
+        look.shadowDir = shadow->attr(QStringLiteral("dir"), QStringLiteral("0")).toDouble() / 60000.0;
+        look.shadowBlurEmu = shadow->attr(QStringLiteral("blurRad"), QStringLiteral("0")).toDouble();
+        if (outer) {
+            look.shadowSx = shadow->attr(QStringLiteral("sx"), QStringLiteral("100000")).toDouble() / 1000.0;
+            look.shadowSy = shadow->attr(QStringLiteral("sy"), QStringLiteral("100000")).toDouble() / 1000.0;
+            look.shadowKx = shadow->attr(QStringLiteral("kx"), QStringLiteral("0")).toDouble() / 60000.0;
+            look.shadowKy = shadow->attr(QStringLiteral("ky"), QStringLiteral("0")).toDouble() / 60000.0;
+            look.shadowAlign = shadowAlignOf(shadow->attr(QStringLiteral("algn"), QStringLiteral("b")));
+            const QString turns = shadow->attr(QStringLiteral("rotWithShape"), QStringLiteral("1"));
+            look.shadowRotates = turns != QLatin1String("0") && turns != QLatin1String("false");
+        }
     }
+    if (const Node *glow = effectLst->child(QStringLiteral("glow"))) {
+        const auto c = colorIn(glow, ctx);
+        if (c.isValid()) { look.glowRadEmu = glow->attr(QStringLiteral("rad"), QStringLiteral("0")).toDouble(); look.glowColor = c; }
+    }
+}
+
+// OmaShow draws a shape's shadow in the shape's turned frame; PowerPoint keeps a
+// shadow with rotWithShape="0" pointing its own way on the slide (measured on
+// turned shapes), so its direction is turned back by the shape's rotation.
+void shadowOnSlide(Look &look, qreal rotation) {
+    if (look.shadow && !look.shadowInner && !look.shadowRotates) look.shadowDir -= rotation;
 }
 
 // p:style — theme-indexed fill and line for shapes that name none of their own.
@@ -469,6 +512,18 @@ struct RunLook {
     bool caps = false;
     qreal spc = 0;         // hundredths of a point
     QString lang, link;
+    // Text glow (effectLst/glow): radius in EMU, -1 unknown, 0 none.
+    qreal glowRad = -1;
+    QColor glowColor;
+    // Outer shadow (effectLst/outerShdw): -1 unknown, 0 none, 1 one; EMU and degrees.
+    int shadow = -1;
+    QColor shadowColor;
+    qreal shadowDist = 0, shadowDir = 0, shadowBlur = 0;
+    // An inner shadow (innerShdw), or the outer one's size,
+    // slant and anchor (sx/sy %, kx/ky degrees, algn as SceneObject counts it).
+    bool shadowInner = false;
+    qreal shadowSx = 100, shadowSy = 100, shadowKx = 0, shadowKy = 0;
+    int shadowAlign = 7;
 };
 
 struct ParaLook {
@@ -510,6 +565,33 @@ void applyRPr(RunLook &run, const Node *rPr, const TextContext &ctx) {
     if (const Node *fill = rPr->child(QStringLiteral("solidFill"))) {
         const auto c = colorIn(fill, *ctx.color);
         if (c.isValid()) run.color = c;
+    }
+    // An effect list replaces the inherited one: no glow or shadow in it is none.
+    if (const Node *effects = rPr->child(QStringLiteral("effectLst"))) {
+        run.glowRad = 0;
+        if (const Node *glow = effects->child(QStringLiteral("glow"))) {
+            const auto c = colorIn(glow, *ctx.color);
+            if (c.isValid()) { run.glowRad = glow->attr(QStringLiteral("rad")).toDouble(); run.glowColor = c; }
+        }
+        run.shadow = 0;
+        // The outer shadow, else the inner one (OmaShow keeps one).
+        const Node *outer = effects->child(QStringLiteral("outerShdw"));
+        if (const Node *shadow = outer ? outer : effects->child(QStringLiteral("innerShdw"))) {
+            const auto c = colorIn(shadow, *ctx.color);
+            if (c.isValid()) {
+                run.shadow = 1;
+                run.shadowColor = c;
+                run.shadowDist = shadow->attr(QStringLiteral("dist"), QStringLiteral("0")).toDouble();
+                run.shadowDir = shadow->attr(QStringLiteral("dir"), QStringLiteral("0")).toDouble() / 60000.0;
+                run.shadowBlur = shadow->attr(QStringLiteral("blurRad"), QStringLiteral("0")).toDouble();
+                run.shadowInner = !outer;
+                run.shadowSx = outer ? shadow->attr(QStringLiteral("sx"), QStringLiteral("100000")).toDouble() / 1000.0 : 100;
+                run.shadowSy = outer ? shadow->attr(QStringLiteral("sy"), QStringLiteral("100000")).toDouble() / 1000.0 : 100;
+                run.shadowKx = outer ? shadow->attr(QStringLiteral("kx"), QStringLiteral("0")).toDouble() / 60000.0 : 0;
+                run.shadowKy = outer ? shadow->attr(QStringLiteral("ky"), QStringLiteral("0")).toDouble() / 60000.0 : 0;
+                run.shadowAlign = outer ? shadowAlignOf(shadow->attr(QStringLiteral("algn"), QStringLiteral("b"))) : 7;
+            }
+        }
     }
     if (const Node *latin = rPr->child(QStringLiteral("latin"))) {
         const auto face = mapFont(latin->attr(QStringLiteral("typeface")), ctx.color->theme);
@@ -920,6 +1002,64 @@ struct Reader {
             const qreal d = look.shadowDistEmu * u.k;
             o.shadowX = d * qCos(qDegreesToRadians(look.shadowDir));
             o.shadowY = d * qSin(qDegreesToRadians(look.shadowDir));
+            o.shadowBlur = look.shadowBlurEmu * u.k;
+            o.shadowInner = look.shadowInner;
+            o.shadowScaleX = qBound(-200.0, look.shadowSx, 200.0);
+            o.shadowScaleY = qBound(-200.0, look.shadowSy, 200.0);
+            o.shadowSkewX = qBound(-89.0, look.shadowKx, 89.0);
+            o.shadowSkewY = qBound(-89.0, look.shadowKy, 89.0);
+            o.shadowAlign = look.shadowAlign;
+        }
+        if (look.glowRadEmu > 0 && look.glowColor.isValid()) {
+            o.glowRadius = look.glowRadEmu * u.k;
+            o.glowColor = look.glowColor;
+        }
+    }
+
+    // A box with no fill and no outline has its glow and shadow
+    // drawn on its words by PowerPoint, so they become the words' own, unless
+    // the words already name theirs. The whole shadow carries over, inner and
+    // perspective too (the words draw them). A box with an outline but no fill casts its
+    // shadow from the outline and the words alike, so then only the shadow
+    // carries over (shadowOnly).
+    void boxEffectsOnWords(SceneObject &words, const Look &look, bool shadowOnly = false) const {
+        if (!shadowOnly && look.glowRadEmu > 0 && look.glowColor.isValid() && words.textGlowRadius <= 0) {
+            words.textGlowRadius = look.glowRadEmu / 12700.0 * u.pt;
+            words.textGlowColor = look.glowColor;
+        }
+        if (look.shadow && !words.shadowEnabled) {
+            words.shadowEnabled = true;
+            words.shadowColor = look.shadowColor;
+            const qreal d = look.shadowDistEmu * u.k;
+            words.shadowX = d * qCos(qDegreesToRadians(look.shadowDir));
+            words.shadowY = d * qSin(qDegreesToRadians(look.shadowDir));
+            words.shadowBlur = look.shadowBlurEmu * u.k;
+            words.shadowInner = look.shadowInner;
+            words.shadowScaleX = qBound(-200.0, look.shadowSx, 200.0);
+            words.shadowScaleY = qBound(-200.0, look.shadowSy, 200.0);
+            words.shadowSkewX = qBound(-89.0, look.shadowKx, 89.0);
+            words.shadowSkewY = qBound(-89.0, look.shadowKy, 89.0);
+            words.shadowAlign = look.shadowInner ? 0 : look.shadowAlign;
+        }
+    }
+
+    // A box with no fill and no outline keeps its own effects
+    // as the text box's (glow*, boxShadow*), apart from its words' own; they
+    // are drawn on the words where the words have none (TextLayout::paint),
+    // and written back to the box's p:spPr.
+    void boxEffectsOfWords(SceneObject &words, const Look &look) const {
+        if (look.glowRadEmu > 0 && look.glowColor.isValid()) {
+            words.glowRadius = look.glowRadEmu * u.k;
+            words.glowColor = look.glowColor;
+        }
+        if (look.shadow) {
+            SceneObject box;
+            applyLook(box, look);
+            words.boxShadowEnabled = true;
+            words.boxShadowColor = box.shadowColor; words.boxShadowX = box.shadowX; words.boxShadowY = box.shadowY;
+            words.boxShadowBlur = box.shadowBlur; words.boxShadowInner = box.shadowInner;
+            words.boxShadowScaleX = box.shadowScaleX; words.boxShadowScaleY = box.shadowScaleY;
+            words.boxShadowSkewX = box.shadowSkewX; words.boxShadowSkewY = box.shadowSkewY; words.boxShadowAlign = box.shadowAlign;
         }
     }
 
@@ -936,6 +1076,24 @@ struct Reader {
         o.fontFamily = !b.family.isEmpty() ? b.family : !fallback.family.isEmpty() ? fallback.family : QStringLiteral("Inter");
         o.uppercase = b.caps;
         o.letterSpacing = b.spc / 100.0 * u.pt;
+        if (b.glowRad > 0 && b.glowColor.isValid()) {
+            o.textGlowRadius = b.glowRad / 12700.0 * u.pt;   // EMU → points → slide units
+            o.textGlowColor = b.glowColor;
+        }
+        if (b.shadow > 0) {
+            o.shadowEnabled = true;
+            o.shadowColor = b.shadowColor;
+            const qreal d = b.shadowDist * u.k;   // EMU → slide units, as set (drawn by PowerPoint's sizing)
+            o.shadowX = d * qCos(qDegreesToRadians(b.shadowDir));
+            o.shadowY = d * qSin(qDegreesToRadians(b.shadowDir));
+            o.shadowBlur = b.shadowBlur * u.k;
+            o.shadowInner = b.shadowInner;
+            o.shadowScaleX = qBound(-200.0, b.shadowSx, 200.0);
+            o.shadowScaleY = qBound(-200.0, b.shadowSy, 200.0);
+            o.shadowSkewX = qBound(-89.0, b.shadowKx, 89.0);
+            o.shadowSkewY = qBound(-89.0, b.shadowKy, 89.0);
+            o.shadowAlign = b.shadowInner ? 0 : b.shadowAlign;
+        }
         if (!b.lang.isEmpty()) { o.language = b.lang; o.language.replace(QLatin1Char('-'), QLatin1Char('_')); }
         o.textAlign = text.para.algn < 0 ? 0 : text.para.algn;
         o.verticalAlign = text.anchor;
@@ -1021,6 +1179,7 @@ struct Reader {
             if (!look.lineSet && pr) readLine(pr->child(QStringLiteral("ln")), look, color);
         }
         applyStyleRefs(sp->child(QStringLiteral("style")), look, color);
+        shadowOnSlide(look, place.rotation);
         if (!look.blipRid.isEmpty()) warnings.add(QStringLiteral("A shape filled with a picture was given no fill"), scope.slideNumber);
 
         // Words.
@@ -1102,6 +1261,16 @@ struct Reader {
             words.id = Edit::newId(QStringLiteral("text"));
             finish(words, place, own);
             applyText(words, text, fallback);
+            if (!visibleBox) boxEffectsOfWords(words, look);
+            // An outlined box with no fill casts one shadow from
+            // its outline and its words together, turned about the box (sx/sy,
+            // kx/ky, algn): the words carry it as their box's shadow (boxShadow*,
+            // drawn as the box's), not as their own.
+            else if (!(look.fillSet && look.fillStyle != 5) && look.shadow) {
+                Look shadowLook = look;
+                shadowLook.glowRadEmu = 0;
+                boxEffectsOfWords(words, shadowLook);
+            }
             if (!name.isEmpty() && firstId.isEmpty()) words.altTitle = name;
             words.hidden = hidden;
             scope.objects->append(words);
@@ -1215,6 +1384,7 @@ struct Reader {
             Look look;
             readLine(spPr->child(QStringLiteral("ln")), look, scope.master->color);
             readEffects(spPr->child(QStringLiteral("effectLst")), look, scope.master->color);
+            shadowOnSlide(look, place.rotation);
             look.fillSet = true; look.fillStyle = 5;
             applyLook(o, look);
             o.fillStyle = 5;

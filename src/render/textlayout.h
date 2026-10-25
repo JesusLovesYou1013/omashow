@@ -8,5 +8,8 @@ struct Metrics {
 };
 QString editorHtml(const SceneObject &object);
 Metrics measure(const SceneObject &object);
-void paint(QPainter &painter, const SceneObject &object);
+// `slideHeight` (slide units) says how big a point is: PowerPoint's slides are
+// 7.5 inches tall at both 16:9 and 4:3. Only effects measured in points
+// (text glow and shadow) use it; 1080 is a 16:9 slide.
+void paint(QPainter &painter, const SceneObject &object, qreal slideHeight = 1080);
 } // namespace TextLayout

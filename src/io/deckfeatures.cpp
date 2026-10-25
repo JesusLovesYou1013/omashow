@@ -86,6 +86,11 @@ const Keys &styleBase() { static const Keys keys{"appearance", "id", "look", "na
 // ---- Named features: which left-out fields belong together -----------------
 
 const QString kEffects = QStringLiteral("animation.effects");
+const QString kTextGlow = QStringLiteral("text.glow");
+const QString kSoftShadow = QStringLiteral("shadow.soft");
+const QString kShapeGlow = QStringLiteral("shape.glow");
+const QString kShadowDetail = QStringLiteral("shadow.detail");
+const QString kBoxShadow = QStringLiteral("textbox.shadow");
 
 // What each feature is called, written into every features.json so an app that
 // doesn't know a feature can still name it (e.g. to say what a deck uses that
@@ -93,6 +98,11 @@ const QString kEffects = QStringLiteral("animation.effects");
 QString readableName(const QString &feature) {
     static const QHash<QString, QString> names{
         {kEffects, QStringLiteral("Animation steps with effects OmaShow 0.2.0 doesn't play")},
+        {kTextGlow, QStringLiteral("Glow around text")},
+        {kSoftShadow, QStringLiteral("Soft-edged shadows")},
+        {kShapeGlow, QStringLiteral("Glow around shapes")},
+        {kShadowDetail, QStringLiteral("Inner, resized and slanted (perspective) shadows")},
+        {kBoxShadow, QStringLiteral("A text box's own shadow, apart from its words'")},
     };
     if (names.contains(feature)) return names.value(feature);
     if (feature.startsWith(QLatin1String("key:"))) return QStringLiteral("The setting \"%1\"").arg(feature.section(QLatin1Char('.'), -1));
@@ -100,6 +110,12 @@ QString readableName(const QString &feature) {
 }
 
 QString featureFor(const QString &part, const QString &key) {
+    if (part == QLatin1String("object") && key.startsWith(QLatin1String("textGlow"))) return kTextGlow;
+    if (part == QLatin1String("object") && key == QLatin1String("shadowBlur")) return kSoftShadow;
+    if (part == QLatin1String("object") && key.startsWith(QLatin1String("boxShadow"))) return kBoxShadow;
+    if (part == QLatin1String("object") && (key == QLatin1String("glowRadius") || key == QLatin1String("glowColor"))) return kShapeGlow;
+    if (part == QLatin1String("object") && (key == QLatin1String("shadowInner") || key.startsWith(QLatin1String("shadowScale")) ||
+                                            key.startsWith(QLatin1String("shadowSkew")) || key == QLatin1String("shadowAlign"))) return kShadowDetail;
     return QStringLiteral("key:%1.%2").arg(part, key);
 }
 
@@ -347,7 +363,7 @@ bool splits(const QString &name) {
 // ---- What this build knows ---------------------------------------------------
 
 const QStringList &namedFeatures() {
-    static const QStringList list{kEffects};
+    static const QStringList list{kEffects, kTextGlow, kSoftShadow, kShapeGlow, kShadowDetail, kBoxShadow};
     return list;
 }
 

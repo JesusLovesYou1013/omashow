@@ -36,6 +36,7 @@ void DeckResize::scaleObject(SceneObject &o, qreal scale, const QPointF &origin)
   Table::scale(o.table, scale);
   o.fontSize *= scale;
   o.origFontSize *= scale;   // a swapped Office font's size before its size factor
+  o.textGlowRadius *= scale;
   o.letterSpacing *= scale;
   o.paragraphSpacing *= scale;
   o.textIndent *= scale;
@@ -45,4 +46,9 @@ void DeckResize::scaleObject(SceneObject &o, qreal scale, const QPointF &origin)
   o.strokeWidth *= scale;
   o.shadowX *= scale;
   o.shadowY *= scale;
+  o.shadowBlur *= scale;
+  o.glowRadius *= scale;
+  o.boxShadowX *= scale;
+  o.boxShadowY *= scale;
+  o.boxShadowBlur *= scale;
 }

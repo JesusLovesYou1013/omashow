@@ -91,11 +91,11 @@ void SlideView::paint(QPainter *painter) {
     painter->setClipRect(slideRect);
     painter->translate(slideRect.topLeft());
     painter->scale(m_scale, m_scale);
-    if (m_cropObject.isEmpty()) SceneRenderer::paint(*painter, m_states);
+    if (m_cropObject.isEmpty()) SceneRenderer::paint(*painter, m_states, m_documentSize.height());
     else for (const auto &o : m_states) {
         if (o.id == m_cropObject && o.type == ObjectType::Image)
-            SceneRenderer::paint(*painter, {ImageCrop::preview(o)});
-        SceneRenderer::paint(*painter, {o});
+            SceneRenderer::paint(*painter, {ImageCrop::preview(o)}, m_documentSize.height());
+        SceneRenderer::paint(*painter, {o}, m_documentSize.height());
     }
     painter->restore();
 }

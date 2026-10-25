@@ -17,6 +17,7 @@
 #include <QLocale>
 #include <QPainter>
 #include <QSaveFile>
+#include <QTransform>
 #include <QUrl>
 #include <QSet>
 #include <QUuid>
@@ -87,11 +88,30 @@ QString hex(const QColor &c) {
 }
 
 // <a:srgbClr val="…"><a:alpha val="…"/></a:srgbClr>
+// A colour keeps 8 bits of alpha, so a whole per cent read from a file (50 %)
+// comes back as 50.196 %; within half an 8-bit step of a whole per cent it is
+// written as that per cent (PowerPoint then still knows its own presets).
 void writeColor(Xml &x, const QColor &c, qreal opacity = 1.0) {
     x.start("a:srgbClr").attr("val", hex(c));
     const qreal alpha = c.alphaF() * opacity;
-    if (alpha < 0.999) x.start("a:alpha").attr("val", qRound(alpha * 100000)).end();
+    if (alpha < 0.999) {
+        int value = qRound(alpha * 100000);
+        const int whole = qRound(value / 1000.0) * 1000;
+        if (qAbs(value - whole) <= 196) value = whole;
+        x.start("a:alpha").attr("val", value).end();
+    }
     x.end();
+}
+
+// A shadow's dir (60000ths of a degree). One with no distance keeps no
+// direction (the offset is kept as x/y), so it is written as PowerPoint's own
+// zero-distance presets have it: from the anchor toward the middle (upper
+// left and upper right perspective: 225° and 315°), or 0 from the middle.
+qint64 shadowDir(qreal dx, qreal dy, bool still, int align) {
+    auto of = [](qreal y, qreal x) { return qRound64(std::fmod(qRadiansToDegrees(std::atan2(y, x)) + 360.0, 360.0) * 60000) % 21600000; };
+    if (!still) return of(dy, dx);
+    const int column = qBound(0, align, 8) % 3, row = qBound(0, align, 8) / 3;
+    return column == 1 && row == 1 ? 0 : of(1 - row, 1 - column);
 }
 
 void writeSolidFill(Xml &x, const QColor &c, qreal opacity = 1.0) {
@@ -340,14 +360,40 @@ struct Writer {
         x.end();
     }
 
+    // The shape's own glow and shadow (p:spPr/a:effectLst), in
+    // the schema's order: glow, then inner shadow, then outer shadow. The blur,
+    // size, slant and anchor are written as set (they were left out, and the
+    // blur fixed at 3 pt, before).
     void writeEffects(Xml &x, const SceneObject &o) const {
-        if (!o.shadowEnabled) return;
+        const bool glows = o.glowRadius > 0 && o.glowColor.alpha() > 0;
+        if (!o.shadowEnabled && !glows) return;
         x.start("a:effectLst");
-        x.start("a:outerShdw").attr("blurRad", 38100).attr("dist", emu(std::hypot(o.shadowX, o.shadowY)))
-            .attr("dir", qRound64(std::fmod(qRadiansToDegrees(std::atan2(o.shadowY, o.shadowX)) + 360.0, 360.0) * 60000))
-            .attr("algn", "tl").attr("rotWithShape", "0");
-        writeColor(x, o.shadowColor);
-        x.end();
+        if (glows) {
+            x.start("a:glow").attr("rad", qMax<qint64>(1, emu(o.glowRadius)));
+            writeColor(x, o.glowColor);
+            x.end();
+        }
+        if (o.shadowEnabled) {
+            const auto dist = emu(std::hypot(o.shadowX, o.shadowY));
+            // OmaShow draws the shadow in the shape's turned frame; it is written
+            // rotWithShape="0", so its direction on the slide is the turned one.
+            QPointF onSlide(o.shadowX, o.shadowY);
+            if (!o.shadowInner && !qFuzzyIsNull(o.rotation)) onSlide = QTransform().rotate(o.rotation).map(onSlide);
+            const qint64 dir = shadowDir(onSlide.x(), onSlide.y(), dist == 0, o.shadowInner ? 4 : o.shadowAlign);
+            if (o.shadowInner) {
+                x.start("a:innerShdw").attr("blurRad", emu(o.shadowBlur)).attr("dist", dist).attr("dir", dir);
+            } else {
+                static const char *aligns[] = {"tl", "t", "tr", "l", "ctr", "r", "bl", "b", "br"};
+                x.start("a:outerShdw").attr("blurRad", emu(o.shadowBlur)).attr("dist", dist).attr("dir", dir);
+                if (!qFuzzyCompare(o.shadowScaleX, 100.0)) x.attr("sx", qRound64(o.shadowScaleX * 1000));
+                if (!qFuzzyCompare(o.shadowScaleY, 100.0)) x.attr("sy", qRound64(o.shadowScaleY * 1000));
+                if (!qFuzzyIsNull(o.shadowSkewX)) x.attr("kx", qRound64(o.shadowSkewX * 60000));
+                if (!qFuzzyIsNull(o.shadowSkewY)) x.attr("ky", qRound64(o.shadowSkewY * 60000));
+                x.attr("algn", aligns[qBound(0, o.shadowAlign, 8)]).attr("rotWithShape", "0");
+            }
+            writeColor(x, o.shadowColor);
+            x.end();
+        }
         x.end();
     }
 
@@ -384,6 +430,36 @@ struct Writer {
         if (!qFuzzyIsNull(o.letterSpacing)) x.attr("spc", qRound(o.letterSpacing * e / 12700.0 * 100));
         const QColor color = run && run->color.isValid() ? run->color : o.textColor;
         writeSolidFill(x, color, o.opacity);
+        // Glow and shadow around the letters (after the fill, before the
+        // typeface; glow before outer shadow, as the schema orders them).
+        const bool glows = o.textGlowRadius > 0 && o.textGlowColor.alpha() > 0;
+        if (glows || o.shadowEnabled) {
+            x.start("a:effectLst");
+            if (glows) {
+                x.start("a:glow").attr("rad", qRound(o.textGlowRadius * e));
+                writeColor(x, o.textGlowColor, o.opacity);
+                x.end();
+            }
+            if (o.shadowEnabled) {
+                // Inner, or outer with its size, slant and anchor.
+                const qint64 dist = qRound64(std::hypot(o.shadowX, o.shadowY) * e);
+                const qint64 dir = shadowDir(o.shadowX, o.shadowY, dist == 0, o.shadowInner ? 4 : o.shadowAlign);
+                if (o.shadowInner) {
+                    x.start("a:innerShdw").attr("blurRad", qRound64(o.shadowBlur * e)).attr("dist", dist).attr("dir", dir);
+                } else {
+                    static const char *aligns[] = {"tl", "t", "tr", "l", "ctr", "r", "bl", "b", "br"};
+                    x.start("a:outerShdw").attr("blurRad", qRound64(o.shadowBlur * e)).attr("dist", dist).attr("dir", dir);
+                    if (!qFuzzyCompare(o.shadowScaleX, 100.0)) x.attr("sx", qRound64(o.shadowScaleX * 1000));
+                    if (!qFuzzyCompare(o.shadowScaleY, 100.0)) x.attr("sy", qRound64(o.shadowScaleY * 1000));
+                    if (!qFuzzyIsNull(o.shadowSkewX)) x.attr("kx", qRound64(o.shadowSkewX * 60000));
+                    if (!qFuzzyIsNull(o.shadowSkewY)) x.attr("ky", qRound64(o.shadowSkewY * 60000));
+                    x.attr("algn", aligns[qBound(0, o.shadowAlign, 8)]).attr("rotWithShape", "0");
+                }
+                writeColor(x, o.shadowColor, o.opacity);
+                x.end();
+            }
+            x.end();
+        }
         const QString family = run && !run->fontFamily.isEmpty() ? run->fontFamily : o.fontFamily;
         x.start("a:latin").attr("typeface", family).end();
         if (!linkRel.isEmpty()) {
@@ -477,6 +553,12 @@ struct Writer {
         writeXfrm(x, o.rect, o.rotation);
         x.start("a:prstGeom").attr("prst", "rect"); x.empty("a:avLst"); x.end();
         x.empty("a:noFill");
+        // The text box's own glow and shadow, apart from its words'.
+        if (o.glowRadius > 0 || o.boxShadowEnabled) {
+            SceneObject box = o;
+            box.swapBoxShadow();
+            writeEffects(x, box);
+        }
         x.end();
         writeTextBody(x, "p:txBody", o, ctx, false);
         x.end();

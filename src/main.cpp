@@ -23,6 +23,7 @@
 
 #include <QCommandLineOption>
 #include "cli/cli.h"
+#include "render/effectpreview.h"
 #include <QCommandLineParser>
 #include <QDebug>
 #include <QQmlEngine>
@@ -336,6 +337,7 @@ int main(int argc, char *argv[]) {
 
     QQmlApplicationEngine engine;
     engine.addImageProvider(QStringLiteral("slides"), new SlideThumbnailProvider(&backend));
+    engine.addImageProvider(QStringLiteral("effects"), new EffectPreviewProvider);
     QObject::connect(&engine, &QQmlApplicationEngine::warnings, &app,
                      [](const QList<QQmlError> &warnings) {
         for (const QQmlError &warning : warnings)

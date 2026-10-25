@@ -139,7 +139,7 @@ QImage SlideThumbnailProvider::requestImage(const QString &id, QSize *size,
         auto o=*found; o.rotation=0; o.rect.moveTopLeft(QPointF(0,0));
         const int width=requestedSize.width()>0?requestedSize.width():800;
         const QSize pixels(width,qMax(1,qRound(width*o.rect.height()/o.rect.width()))); if(size) *size=pixels;
-        return SceneRenderer::render({o},o.rect.size(),pixels,Qt::transparent);
+        return SceneRenderer::render({o},o.rect.size(),pixels,Qt::transparent,snapshot.document.size.height());
     }
     if(id.startsWith("shape/")) {
         SceneObject o; o.shapeKind=id.section('/',1,1).toInt(); o.rect=QRectF(12,12,76,66); o.fill=QColor("#57c8eb"); o.strokeWidth=2; o.strokeColor=QColor("#d5eaf2");

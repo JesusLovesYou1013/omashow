@@ -74,7 +74,8 @@ HEADERS += src/core/objectcopy.h
 SOURCES += src/core/objectcopy.cpp src/backendclipboard.cpp
 
 HEADERS += src/render/textlayout.h
-SOURCES += src/render/textlayout.cpp
+SOURCES += src/render/textlayout.cpp src/render/shapeeffects.cpp src/render/effectmodel.cpp src/render/effectpreview.cpp
+HEADERS += src/render/shapeeffects.h src/render/effectmodel.h src/render/effectpreview.h
 HEADERS += src/render/mathlayout.h
 SOURCES += src/render/mathlayout.cpp
 
