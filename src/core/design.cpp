@@ -83,6 +83,11 @@ QVariantMap Design::properties(const SceneObject &o) {
             {"fontFamily", o.fontFamily}, {"origFont", o.origFont}, {"origFontSize", o.origFontSize}, {"fontScale", o.fontScale}, {"origWeight", o.origWeight}, {"textGlowRadius", o.textGlowRadius}, {"textGlowColor", o.textGlowColor.name(QColor::HexArgb)}, {"uppercase", o.uppercase}, {"letterSpacing", o.letterSpacing},
             {"fillToken", o.fillToken}, {"textColorToken", o.textColorToken}, {"fontToken", o.fontToken},
             {"altTitle", o.altTitle}, {"altText", o.altText}, {"runs", TextRuns::encode(o.runs)},
+            // Soft edges, reflection, 3-D format and rotation; text fill and outline.
+            {"softEdge", o.softEdge}, {"reflection", Effects3D::toMap(o.reflection)}, {"format3d", Effects3D::toMap(o.format3d)},
+            {"scene3d", Effects3D::toMap(o.scene3d)}, {"textReflection", Effects3D::toMap(o.textReflection)},
+            {"textFormat3d", Effects3D::toMap(o.textFormat3d)}, {"textScene3d", Effects3D::toMap(o.textScene3d)}, {"textFlatZ", o.textFlatZ}, {"textFlat", o.textFlat}, {"effects3dFollow", o.effects3dFollow},
+            {"textFill", o.textFill}, {"textOutline", o.textOutline},
             {"placeholderId", o.placeholderId}, {"textStyleId", o.textStyleId}, {"overrides", o.overrides}, {"groups", o.groups}, {"locked", o.locked}, {"hidden", o.hidden}};
 }
 bool Design::setProperty(SceneObject &o, const QString &key, const QVariant &v, bool constrainForEditing) {
@@ -98,6 +103,28 @@ bool Design::setProperty(SceneObject &o, const QString &key, const QVariant &v, 
         o.boxShadowSkewY = box.boxShadowSkewY; o.boxShadowAlign = box.boxShadowAlign;
         return true;
     }
+    // Soft edges, reflection, 3-D format and rotation; text fill and outline.
+    if (key == QLatin1String("softEdge") || key == QLatin1String("textFlatZ")) {
+        bool ok = false;
+        const qreal n = v.toDouble(&ok);
+        if (!ok || !std::isfinite(n) || n < (key == QLatin1String("softEdge") ? 0 : -1e6) || n > 1e6) return false;
+        (key == QLatin1String("softEdge") ? o.softEdge : o.textFlatZ) = n;
+        return true;
+    }
+    // Keep text flat; effects follow the 3-D rotation.
+    if (key == QLatin1String("textFlat") || key == QLatin1String("effects3dFollow")) {
+        if (v.typeId() != QMetaType::Bool && v.typeId() != QMetaType::Int && v.typeId() != QMetaType::Double && v.typeId() != QMetaType::LongLong) return false;
+        (key == QLatin1String("textFlat") ? o.textFlat : o.effects3dFollow) = v.toBool();
+        return true;
+    }
+    if (key == QLatin1String("reflection")) return Effects3D::fromMap(v, &o.reflection);
+    if (key == QLatin1String("textReflection")) return Effects3D::fromMap(v, &o.textReflection);
+    if (key == QLatin1String("format3d")) return Effects3D::fromMap(v, &o.format3d);
+    if (key == QLatin1String("textFormat3d")) return Effects3D::fromMap(v, &o.textFormat3d);
+    if (key == QLatin1String("scene3d")) return Effects3D::fromMap(v, &o.scene3d);
+    if (key == QLatin1String("textScene3d")) return Effects3D::fromMap(v, &o.textScene3d);
+    if (key == QLatin1String("textFill")) return FillStyle::checkTextFill(v, &o.textFill);
+    if (key == QLatin1String("textOutline")) return FillStyle::checkTextOutline(v, &o.textOutline);
     // The rest of PowerPoint's fill and line, and a text box's own box.
     {
         static const QHash<QString, std::pair<qreal, qreal>> ranges{

@@ -454,13 +454,29 @@ bool effectTarget(const SceneObject &o, const QString &target, bool onWords) {
 QString effectKey(const QString &target, const QString &key, bool onWords) {
   if (target == QLatin1String("text") && key == QLatin1String("glowRadius")) return QStringLiteral("textGlowRadius");
   if (target == QLatin1String("text") && key == QLatin1String("glowColor")) return QStringLiteral("textGlowColor");
+  // The words' reflection and 3-D (a:rPr effectLst, a:bodyPr scene3d/sp3d).
+  if (target == QLatin1String("text") && key == QLatin1String("reflection")) return QStringLiteral("textReflection");
+  if (target == QLatin1String("text") && key == QLatin1String("format3d")) return QStringLiteral("textFormat3d");
+  if (target == QLatin1String("text") && key == QLatin1String("scene3d")) return QStringLiteral("textScene3d");
   if (onWords && key.startsWith(QLatin1String("shadow"))) return QStringLiteral("boxShadow") + key.mid(6);
   return key;
 }
 const QStringList &effectKeys() {
   static const QStringList keys{"glowRadius", "glowColor", "shadowEnabled", "shadowColor", "shadowX", "shadowY", "shadowBlur",
-                                "shadowInner", "shadowScaleX", "shadowScaleY", "shadowSkewX", "shadowSkewY", "shadowAlign"};
+                                "shadowInner", "shadowScaleX", "shadowScaleY", "shadowSkewX", "shadowSkewY", "shadowAlign",
+                                "softEdge", "reflection", "format3d", "scene3d", "effects3dFollow", "textFlat"};
   return keys;
+}
+// The selected stretch of a text box being edited, if any (the editor clears
+// the selection when editing ends, as textSelection() reads it).
+bool runRange(int start, int end, const QStringList &ids, const Slide &slide) {
+  if (end <= start || ids.size() != 1) return false;
+  const auto *o = slide.find(ids.first());
+  return o && o->type == ObjectType::Text;
+}
+// The run effect keys (FillStyle::textEffectKeys) a target key stands for.
+bool runEffectKey(const QString &key) {
+  return FillStyle::textEffectKeys().contains(effectKey(QStringLiteral("text"), key, false));
 }
 } // namespace
 QVariantMap Backend::effectState(const QString &target) const {
@@ -474,8 +490,17 @@ QVariantMap Backend::effectState(const QString &target) const {
     const auto *o = slide.find(id);
     if (!o || !effectTarget(*o, target, onWords)) continue;
     if (count++ == 0) {
-      const auto all = Design::properties(*o);
+      auto shown = *o;
+      // A stretch with effects of its own shows those.
+      if (target == QLatin1String("text") && runRange(m_textSelectionStart, m_textSelectionEnd, ids, slide))
+        if (const auto *run = TextRuns::at(o->runs, m_textSelectionStart); run && !run->effects.isEmpty())
+          shown = FillStyle::withTextEffects(*o, run->effects);
+      const auto all = Design::properties(shown);
       for (const auto &key : effectKeys()) state[key] = all.value(effectKey(target, key, onWords));
+      if (target == QLatin1String("text")) state.remove(QStringLiteral("softEdge"));   // PowerPoint has none for text
+      // The box's own 3-D rotation, which the words follow
+      // unless "Keep text flat".
+      if (target == QLatin1String("text")) state["boxScene3d"] = all.value(QStringLiteral("scene3d"));
     }
   }
   state["count"] = count;
@@ -491,10 +516,36 @@ QVariantMap Backend::effectState(const QString &target) const {
 void Backend::setSelectedEffect(const QString &target, const QVariantMap &values) {
   if (target != QLatin1String("text") && target != QLatin1String("shape")) return;
   for (auto it = values.cbegin(); it != values.cend(); ++it)
-    if (!effectKeys().contains(it.key())) return;
+    if (!effectKeys().contains(it.key()) || (target == QLatin1String("text") && it.key() == QLatin1String("softEdge"))) return;
   const auto ids = selectedIds();
   const auto shown = Design::resolve(m_document, m_currentSlide);
   const bool onWords = boxOnWords(ids, shown, target);
+  // Text selected while editing: glow, shadow and reflection go on
+  // the selected stretch (a:rPr effectLst); its 3-D stays the box's (a:bodyPr).
+  if (target == QLatin1String("text") && runRange(m_textSelectionStart, m_textSelectionEnd, ids, shown)) {
+    bool allRun = true;
+    for (auto it = values.cbegin(); it != values.cend(); ++it)
+      if (!runEffectKey(it.key())) allRun = false;
+    if (allRun) {
+      const auto *o = shown.find(ids.first());
+      const auto *run = TextRuns::at(o->runs, m_textSelectionStart);
+      auto look = run && !run->effects.isEmpty() ? FillStyle::withTextEffects(*o, run->effects) : *o;
+      for (auto it = values.cbegin(); it != values.cend(); ++it)
+        if (!Design::setProperty(look, effectKey(target, it.key(), false), it.value())) return;
+      SceneObject changed = *o;
+      if (!TextRuns::apply(changed, m_textSelectionStart, m_textSelectionEnd, QStringLiteral("effects"), FillStyle::textEffectsOf(look))) return;
+      if (changed.runs == o->runs) return;
+      m_history.begin(m_document, tr("Change text effects"));
+      if (auto *words = m_document.slides[m_currentSlide].find(ids.first())) {
+        words->runs = changed.runs;
+        Design::markOverride(*words, QStringLiteral("runs"));
+      }
+      m_history.commit();
+      touch();
+      emit textFormattingChanged();
+      return;
+    }
+  }
   bool changed = false;
   for (const auto &id : ids) {
     const auto *o = shown.find(id);
@@ -631,6 +682,130 @@ void Backend::setSelectedFill(const QVariantMap &values) {
     }
   m_history.commit();
   touch();
+}
+namespace {
+// A text box's words as one carrier of fill keys and one of line keys.
+SceneObject wordsFill(const SceneObject &o, const TextRun *run) {
+  const QVariantMap fill = run && !run->fill.isEmpty() ? run->fill : run && run->color.isValid() ? QVariantMap() : o.textFill;
+  const QColor colour = run && run->color.isValid() ? run->color : o.textColor;
+  return FillStyle::textFillCarrier(fill, colour);
+}
+SceneObject wordsOutline(const SceneObject &o, const TextRun *run) {
+  return FillStyle::textOutlineCarrier(run && !run->outline.isEmpty() ? run->outline : o.textOutline);
+}
+} // namespace
+QVariantMap Backend::textFillState() const {
+  QVariantMap state{{"count", 0}};
+  const auto ids = selectedIds();
+  if (ids.isEmpty()) return state;
+  const auto slide = Design::resolve(m_document, m_currentSlide);
+  const bool range = runRange(m_textSelectionStart, m_textSelectionEnd, ids, slide);
+  int count = 0;
+  for (const auto &id : ids) {
+    const auto *o = slide.find(id);
+    if (!o || o->type != ObjectType::Text) continue;
+    if (count++ == 0) {
+      // The stretch selected, else what the box starts with (its first letter).
+      const TextRun *run = TextRuns::at(o->runs, range ? m_textSelectionStart : 0);
+      const auto fill = wordsFill(*o, run), line = wordsOutline(*o, run);
+      const auto fills = Design::properties(fill), lines = Design::properties(line);
+      for (const auto &key : FillStyle::textFillKeys()) state[key] = fills.value(key);
+      for (const auto &key : FillStyle::textOutlineKeys()) state[key] = lines.value(key);
+      state["gradientStops"] = FillStyle::encodeStops(FillStyle::fillStops(fill));
+      state["strokeStops"] = FillStyle::encodeStops(FillStyle::lineStops(line));
+      if (fill.patternPreset.isEmpty()) state["patternPreset"] = FillStyle::presetForQtPattern(fill.patternStyle);
+      if (line.strokeDash.isEmpty()) state["strokeDash"] = FillStyle::presetForQtDash(line.strokeStyle);
+      state["range"] = range;
+    }
+  }
+  state["count"] = count;
+  state["target"] = QStringLiteral("words");
+  return state;
+}
+void Backend::setSelectedTextFill(const QVariantMap &values) {
+  bool fillPart = false, linePart = false;
+  for (auto it = values.cbegin(); it != values.cend(); ++it) {
+    if (FillStyle::textFillKeys().contains(it.key())) fillPart = true;
+    else if (FillStyle::textOutlineKeys().contains(it.key())) linePart = true;
+    else return;
+  }
+  if (!fillPart && !linePart) return;
+  const auto ids = selectedIds();
+  const auto shown = Design::resolve(m_document, m_currentSlide);
+  const bool range = runRange(m_textSelectionStart, m_textSelectionEnd, ids, shown);
+  // What each text box becomes, worked out on copies first (all or nothing).
+  QHash<QString, SceneObject> after;
+  for (const auto &id : ids) {
+    const auto *o = shown.find(id);
+    if (!o || o->type != ObjectType::Text) continue;
+    SceneObject copy = *o;
+    const TextRun *run = range ? TextRuns::at(o->runs, m_textSelectionStart) : nullptr;
+    if (fillPart) {
+      auto carrier = wordsFill(*o, run);
+      for (auto it = values.cbegin(); it != values.cend(); ++it)
+        if (FillStyle::textFillKeys().contains(it.key()) && !Design::setProperty(carrier, it.key(), it.value())) return;
+      if (carrier.fillStyle == 4) return;   // picture text fill: not yet
+      FillStyle::syncLegacy(carrier);
+      const QVariantMap fill = FillStyle::textFillOf(carrier);
+      // A stand-in colour for older readers: the first stop, or the pattern's foreground.
+      const QColor colour = carrier.fillStyle == 5 ? QColor(0, 0, 0, 0) : carrier.fill;
+      if (range) {
+        if (!TextRuns::apply(copy, m_textSelectionStart, m_textSelectionEnd, QStringLiteral("fill"), fill)) return;
+        if (!TextRuns::apply(copy, m_textSelectionStart, m_textSelectionEnd, QStringLiteral("color"), colour.name(QColor::HexArgb))) return;
+      } else {
+        if (!Design::setProperty(copy, QStringLiteral("textFill"), fill)) return;
+        copy.textColor = colour;
+        for (auto &r : copy.runs) { r.fill.clear(); r.color = QColor(); }
+        copy.runs = TextRuns::tidy(copy.runs, copy.text.size());
+      }
+    }
+    if (linePart) {
+      auto carrier = wordsOutline(*o, run);
+      for (auto it = values.cbegin(); it != values.cend(); ++it)
+        if (FillStyle::textOutlineKeys().contains(it.key()) && !Design::setProperty(carrier, it.key(), it.value())) return;
+      FillStyle::syncLegacy(carrier);
+      QVariantMap outline = FillStyle::textOutlineOf(carrier);
+      if (range) {
+        // No line on a stretch of a box that has one: say so (a:ln/a:noFill).
+        if (outline.isEmpty() && !o->textOutline.isEmpty()) outline.insert(QStringLiteral("none"), true);
+        if (!TextRuns::apply(copy, m_textSelectionStart, m_textSelectionEnd, QStringLiteral("outline"), outline)) return;
+      } else {
+        if (!Design::setProperty(copy, QStringLiteral("textOutline"), outline)) return;
+        for (auto &r : copy.runs) r.outline.clear();
+        copy.runs = TextRuns::tidy(copy.runs, copy.text.size());
+      }
+    }
+    if (Design::properties(copy) != Design::properties(*o)) after.insert(id, copy);
+  }
+  if (after.isEmpty()) return;
+  m_history.begin(m_document, linePart && !fillPart ? tr("Change text outline") : tr("Change text fill"));
+  for (auto it = after.cbegin(); it != after.cend(); ++it)
+    if (auto *o = m_document.slides[m_currentSlide].find(it.key())) {
+      const auto &c = it.value();
+      o->runs = c.runs; o->textFill = c.textFill; o->textOutline = c.textOutline; o->textColor = c.textColor;
+      for (const auto &key : {"runs", "textFill", "textOutline", "textColor"}) Design::markOverride(*o, key);
+    }
+  m_history.commit();
+  touch();
+  emit textFormattingChanged();
+}
+QVariantMap Backend::style3dPresets() const {
+  const qreal unitsPerPoint = 1.0 / qMax(1e-9, ptPerUnit());
+  QVariantList reflections;
+  for (int i = 0; i < Effects3D::reflectionPresets().size(); ++i)
+    reflections.append(QVariantMap{{"name", Effects3D::reflectionPresets().at(i).name},
+                                   {"value", Effects3D::toMap(Effects3D::reflectionPreset(i, unitsPerPoint))}});
+  QVariantList soft;
+  for (const qreal p : Effects3D::softEdgePresets()) soft.append(p);
+  QVariantMap cameras;
+  for (const auto &name : Effects3D::cameraPresets()) {
+    const auto c = Effects3D::camera(name);
+    cameras.insert(name, QVariantMap{{"lat", c.lat}, {"lon", c.lon}, {"rev", c.rev}, {"parallel", c.parallel},
+                                     {"oblique", c.skew != 0}, {"legacy", c.legacy}});
+  }
+  return {{"cameraInfo", cameras}, {"bevels", Effects3D::bevelPresets()}, {"materials", Effects3D::materialPresets()},
+          {"cameras", Effects3D::cameraPresets()}, {"lightRigs", Effects3D::lightRigs()},
+          {"rigDirections", Effects3D::rigDirections()}, {"reflections", reflections}, {"softEdges", soft}};
 }
 void Backend::deleteSelected() {
   const auto ids = selectedIds();

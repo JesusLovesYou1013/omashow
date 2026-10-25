@@ -72,4 +72,26 @@ bool boxVisible(const SceneObject &o);
 SceneObject boxShape(const SceneObject &o);
 QVector<SceneObject> split(const SceneObject &o);
 
+// ---- Text Fill, Text Outline and a stretch's own text effects
+
+// The keys a text fill / outline / run effect set may hold.
+const QStringList &textFillKeys();
+const QStringList &textOutlineKeys();
+const QStringList &textEffectKeys();
+// Checked and tidied (each value as Design::properties gives it back); an
+// empty map is "as the box" (fill: textColor, outline: none).
+bool checkTextFill(const QVariant &value, QVariantMap *out);
+bool checkTextOutline(const QVariant &value, QVariantMap *out);
+bool checkTextEffects(const QVariant &value, QVariantMap *out);
+// A shape carrying a text fill or outline map, to draw it and edit it with
+// the shape's own editors (solid: `color`).
+SceneObject textFillCarrier(const QVariantMap &fill, const QColor &color);
+SceneObject textOutlineCarrier(const QVariantMap &outline);
+// Back from a carrier: its fill (empty when solid) or its line.
+QVariantMap textFillOf(const SceneObject &carrier);
+QVariantMap textOutlineOf(const SceneObject &carrier);
+// The text effects a stretch draws with: the box's, or the run's own set.
+SceneObject withTextEffects(const SceneObject &box, const QVariantMap &effects);
+QVariantMap textEffectsOf(const SceneObject &o);
+
 } // namespace FillStyle

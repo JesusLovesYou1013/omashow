@@ -1,4 +1,5 @@
 #include "core/shape.h"
+#include "render/layereffects.h"
 #include "render/shapeeffects.h"
 #include "core/imageasset.h"
 #include "core/connector.h"
@@ -248,13 +249,20 @@ void Shape::paint(QPainter &painter, const SceneObject &o) {
     }
   }
   const QPainterPath area = o.fillStyle == 5 ? QPainterPath() : p;
-  if (soft) {
+  // Drawn in two goes when the face has effects of its own
+  // (render/layereffects.h): what goes behind it, then the face.
+  const auto pass = LayerEffects::pass();
+  if (pass == LayerEffects::Pass::Face) {}
+  else if (soft) {
     // The shadow is cast by the shape as drawn: its fill and outline with their
     // own transparency (render/effectmodel.h).
     SceneObject plain = o;
     plain.shadowEnabled = false;
     plain.glowRadius = 0;
-    ShapeEffects::paintBehind(painter, o, area, outline, [&plain](QPainter &q) { Shape::paint(q, plain); });
+    ShapeEffects::paintBehind(painter, o, area, outline, [&plain](QPainter &q) {
+      LayerEffects::PassScope whole(LayerEffects::Pass::All);
+      Shape::paint(q, plain);
+    });
   }
   else if (o.shadowEnabled) {
     painter.save();
@@ -264,6 +272,7 @@ void Shape::paint(QPainter &painter, const SceneObject &o) {
     painter.drawPath(p);
     painter.restore();
   }
+  if (pass == LayerEffects::Pass::Behind) return;
   if (modernFill || modernLine) {
     if (modernFill) FillPaint::paintFill(painter, o, p);
     else if (o.fillStyle != 5) {

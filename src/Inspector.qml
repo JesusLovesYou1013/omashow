@@ -61,6 +61,19 @@ Rectangle {
         target: backend
         function onSelectionChanged() { if(tabs.currentIndex === 1 && backend.selection.type !== "text") tabs.currentIndex = 0 }
     }
+    // Which inspector groups and rows are open, for this session
+    // (all closed at first). Keys: "group.fill|effects|text", then the
+    // panel's mode or target and the row ("shape.glow", "text.fill").
+    QtObject {
+        id: styleOpen
+        objectName: "styleOpen"
+        property var map: ({})
+        property int rev: 0
+        function isOpen(name) { return rev >= 0 && map[name] === true }
+        function toggle(name) { map[name] = !(map[name] === true); rev++ }
+        function set(name, open) { map[name] = !!open; rev++ }
+        function closeAll() { map = ({}); rev++ }
+    }
     component Divider: Rectangle {
         Layout.fillWidth: true
         Layout.topMargin: Theme.s1
@@ -335,13 +348,48 @@ Rectangle {
                 Button { objectName: "discardOriginalPicture"; Layout.fillWidth: true; visible: root.sel.imageHasOriginal??false; text: qsTr("Discard original to reduce deck size"); onClicked: backend.discardOriginalMedia() }
             }
 
-            // Fill and line, of the shapes or a text box's own box.
-            Divider { visible: fillPanel.visible }
-            FillPanel { id: fillPanel; Layout.fillWidth: true }
-
-            // Glow and shadow, on the words or the shape.
-            Divider { visible: effectsPanel.visible }
-            EffectsPanel { id: effectsPanel; Layout.fillWidth: true }
+            // Three groups, as PowerPoint's Format Shape: Fill and Line
+            // (the shapes', or a text box's own box), Effects (the
+            // shapes' and pictures', or a text box's box effects: Shadow,
+            // Reflection, Glow, Soft Edges, 3-D Format, 3-D Rotation) and, for
+            // text, Text Fill and Outline with the words' own effects.
+            Divider { visible: fillGroup.visible }
+            StyleGroup {
+                id: fillGroup
+                objectName: "styleGroupFill"
+                Layout.fillWidth: true
+                visible: fillPanel.available
+                title: qsTr("Fill and Line")
+                summary: fillPanel.summary
+                key: "group.fill"
+                opener: styleOpen
+                FillPanel { id: fillPanel; Layout.fillWidth: true; opener: styleOpen }
+            }
+            Divider { visible: effectsGroup.visible }
+            StyleGroup {
+                id: effectsGroup
+                objectName: "effectsPanel"
+                Layout.fillWidth: true
+                visible: boxEffects.available
+                title: qsTr("Effects")
+                summary: boxEffects.summary
+                key: "group.effects"
+                opener: styleOpen
+                EffectsSet { id: boxEffects; objectName: "effectsSetBox"; Layout.fillWidth: true; target: "shape"; opener: styleOpen }
+            }
+            Divider { visible: textGroup.visible }
+            StyleGroup {
+                id: textGroup
+                objectName: "styleGroupText"
+                Layout.fillWidth: true
+                visible: textFillPanel.available
+                title: qsTr("Text Fill and Outline")
+                summary: textFillPanel.summary + (textEffects.summary !== qsTr("None") ? "; " + textEffects.summary : "")
+                key: "group.text"
+                opener: styleOpen
+                FillPanel { id: textFillPanel; objectName: "textFillPanel"; Layout.fillWidth: true; mode: "text"; opener: styleOpen }
+                EffectsSet { id: textEffects; objectName: "effectsSetText"; Layout.fillWidth: true; target: "text"; heading: qsTr("Text effects"); opener: styleOpen }
+            }
 
             Divider {}
             Button { objectName: "objectLinkButton"; Layout.fillWidth: true; icon.name: "link"; text: root.sel.linkKind?qsTr("Edit link or action…"):qsTr("Add link or action…"); onClicked: backend.editSelectedLink() }

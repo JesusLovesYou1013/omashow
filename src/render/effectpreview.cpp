@@ -82,6 +82,22 @@ QImage EffectPreviewProvider::requestImage(const QString &id, QSize *size, const
     o.shadowSkewX = qBound<qreal>(-89, number("skx", 0), 89);
     o.shadowSkewY = qBound<qreal>(-89, number("sky", 0), 89);
     o.shadowAlign = qBound(0, int(number("sa", 0)), 8);
+    // With x: soft edge, reflection and 3-D as JSON of their keys, in
+    // points (softEdge, reflection, format3d, scene3d; the text sample takes
+    // them on its words). Unknown keys and bad values are ignored.
+    if (query.hasQueryItem(QStringLiteral("x"))) {
+        const auto values = QJsonDocument::fromJson(query.queryItemValue(QStringLiteral("x"), QUrl::FullyDecoded).toUtf8()).toVariant().toMap();
+        const bool text = o.type == ObjectType::Text;
+        for (auto it = values.cbegin(); it != values.cend(); ++it) {
+            QString key = it.key();
+            if (key != QLatin1String("softEdge") && key != QLatin1String("reflection") && key != QLatin1String("format3d") && key != QLatin1String("scene3d")) continue;
+            if (text && key == QLatin1String("softEdge")) continue;
+            if (text) key = QStringLiteral("text") + key.left(1).toUpper() + key.mid(1);
+            Design::setProperty(o, key, it.value());
+        }
+        // Room for a reflection below the sample.
+        if (values.contains(QStringLiteral("reflection"))) o.rect.translate(0, text ? -8 : -12);
+    }
     const QSize px = requestedSize.isValid() && !requestedSize.isEmpty() ? requestedSize.boundedTo(QSize(512, 512)) : QSize(96, 96);
     // Slide height 540: one slide unit is a point, as the settings are.
     const QImage image = SceneRenderer::render({o}, QSizeF(tile, tile), px, lit ? QColor(0xee, 0xf1, 0xf5) : QColor(Qt::transparent), 540);

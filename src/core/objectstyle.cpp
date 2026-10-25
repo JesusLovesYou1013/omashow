@@ -24,7 +24,10 @@ QStringList ObjectStyles::keys() {
           "pictureTileScaleX", "pictureTileScaleY", "pictureTileAlign", "pictureTileFlip", "pictureInsetL", "pictureInsetT",
           "pictureInsetR", "pictureInsetB", "pictureTransparency", "pictureRotate", "strokeDash", "strokeDashCustom",
           "strokeCompound", "strokeGradient", "strokeStops", "strokeAngle", "strokeGradientPath",
-          "boxDrawn", "boxInsetL", "boxInsetT", "boxInsetR", "boxInsetB"};
+          "boxDrawn", "boxInsetL", "boxInsetT", "boxInsetR", "boxInsetB",
+          // Soft edges, reflection, 3-D format and rotation, text fill and outline.
+          "softEdge", "reflection", "format3d", "scene3d", "textReflection", "textFormat3d", "textScene3d",
+          "textFlatZ", "textFill", "textOutline", "textFlat", "effects3dFollow"};
 }
 SceneObject ObjectStyles::capture(const SceneObject &object) {
   SceneObject appearance;

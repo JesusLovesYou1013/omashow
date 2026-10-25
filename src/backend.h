@@ -424,6 +424,16 @@ public:
     Q_INVOKABLE QVariantMap fillState() const;
     Q_INVOKABLE QStringList fillPatternPresets() const;
     Q_INVOKABLE QStringList lineDashPresets() const;
+    // The words' own Text Fill and Text Outline (PowerPoint's Format
+    // Shape > Text Options), with the Fill and Line keys (fill*, gradient*,
+    // pattern*; stroke*). With text selected while editing, the selected
+    // stretch only; otherwise the whole of each selected text box. One undo step.
+    Q_INVOKABLE QVariantMap textFillState() const;
+    Q_INVOKABLE void setSelectedTextFill(const QVariantMap &values);
+    // PowerPoint's preset names and values for the Effects editors:
+    // bevels, materials, cameras, lightRigs, rigDirections, reflections (name
+    // and value in this deck's units), softEdges (points).
+    Q_INVOKABLE QVariantMap style3dPresets() const;
 
     Q_INVOKABLE void undo();
     Q_INVOKABLE void redo();

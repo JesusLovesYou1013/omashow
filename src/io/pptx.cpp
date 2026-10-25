@@ -377,7 +377,113 @@ struct Look {
     QVector<GradientStop> lineStops;
     qreal lineAngle = 0;
     int lineGradPath = 0;
+    // Soft edges, reflection (lengths in EMU until applied), 3-D.
+    qreal softEdgeEmu = 0;
+    Effects3D::Reflection reflection;
+    Effects3D::Format format3d;
+    Effects3D::Scene scene3d;
 };
+
+// ---- a:reflection, a:sp3d and a:scene3d as written (lengths in EMU).
+
+int shadowAlignOf(const QString &algn);
+
+qreal attrNumber(const Node *n, const char *name, qreal fallback) {
+    const QString v = n->attr(QLatin1String(name));
+    bool ok = false;
+    const qreal d = v.toDouble(&ok);
+    return ok && std::isfinite(d) ? d : fallback;
+}
+bool attrTrue(const Node *n, const char *name, bool fallback) {
+    if (!n->has(QLatin1String(name))) return fallback;
+    const QString v = n->attr(QLatin1String(name));
+    return v == QLatin1String("1") || v == QLatin1String("true");
+}
+
+Effects3D::Reflection readReflection(const Node *r) {
+    Effects3D::Reflection out;
+    if (!r) return out;
+    out.on = true;
+    out.blur = qMax(0.0, attrNumber(r, "blurRad", 0));
+    out.dist = qMax(0.0, attrNumber(r, "dist", 0));
+    out.startAlpha = qBound(0.0, attrNumber(r, "stA", 100000) / 1000, 100.0);
+    out.startPos = qBound(0.0, attrNumber(r, "stPos", 0) / 1000, 100.0);
+    out.endAlpha = qBound(0.0, attrNumber(r, "endA", 0) / 1000, 100.0);
+    out.endPos = qBound(0.0, attrNumber(r, "endPos", 100000) / 1000, 100.0);
+    out.dir = qBound(0.0, attrNumber(r, "dir", 0) / 60000, 360.0);
+    out.fadeDir = qBound(0.0, attrNumber(r, "fadeDir", 5400000) / 60000, 360.0);
+    out.sx = qBound(-10000.0, attrNumber(r, "sx", 100000) / 1000, 10000.0);
+    out.sy = qBound(-10000.0, attrNumber(r, "sy", 100000) / 1000, 10000.0);
+    out.kx = qBound(-90.0, attrNumber(r, "kx", 0) / 60000, 90.0);
+    out.ky = qBound(-90.0, attrNumber(r, "ky", 0) / 60000, 90.0);
+    out.align = shadowAlignOf(r->attr(QStringLiteral("algn"), QStringLiteral("b")));
+    out.rotate = attrTrue(r, "rotWithShape", true);
+    return out;
+}
+
+Effects3D::Bevel readBevel(const Node *b) {
+    Effects3D::Bevel out;
+    if (!b) return out;
+    out.preset = b->attr(QStringLiteral("prst"), QStringLiteral("circle"));
+    if (!Effects3D::bevelPresets().contains(out.preset)) out.preset = QStringLiteral("circle");
+    out.w = qMax(0.0, attrNumber(b, "w", 76200));
+    out.h = qMax(0.0, attrNumber(b, "h", 76200));
+    return out;
+}
+
+Effects3D::Format readFormat3d(const Node *sp3d, const ColorContext &ctx) {
+    Effects3D::Format out;
+    if (!sp3d) return out;
+    out.on = true;
+    out.top = readBevel(sp3d->child(QStringLiteral("bevelT")));
+    out.bottom = readBevel(sp3d->child(QStringLiteral("bevelB")));
+    out.depth = qMax(0.0, attrNumber(sp3d, "extrusionH", 0));
+    out.contour = qMax(0.0, attrNumber(sp3d, "contourW", 0));
+    out.z = attrNumber(sp3d, "z", 0);
+    out.material = sp3d->attr(QStringLiteral("prstMaterial"));
+    if (!out.material.isEmpty() && !Effects3D::materialPresets().contains(out.material)) out.material.clear();
+    if (const Node *c = sp3d->child(QStringLiteral("extrusionClr"))) out.extrusionColor = colorIn(c, ctx);
+    if (const Node *c = sp3d->child(QStringLiteral("contourClr"))) out.contourColor = colorIn(c, ctx);
+    return out;
+}
+
+Effects3D::Scene readScene3d(const Node *scene) {
+    Effects3D::Scene out;
+    if (!scene) return out;
+    out.on = true;
+    if (const Node *camera = scene->child(QStringLiteral("camera"))) {
+        out.camera = camera->attr(QStringLiteral("prst"), QStringLiteral("orthographicFront"));
+        if (!Effects3D::cameraPresets().contains(out.camera)) out.camera = QStringLiteral("orthographicFront");
+        if (camera->has(QStringLiteral("fov"))) out.fov = qBound(0.0, attrNumber(camera, "fov", 0) / 60000, 180.0);
+        out.zoom = qBound(0.0, attrNumber(camera, "zoom", 100000) / 1000, 100000.0);
+        if (const Node *rot = camera->child(QStringLiteral("rot"))) {
+            out.rotated = true;
+            out.lat = qBound(0.0, attrNumber(rot, "lat", 0) / 60000, 360.0);
+            out.lon = qBound(0.0, attrNumber(rot, "lon", 0) / 60000, 360.0);
+            out.rev = qBound(0.0, attrNumber(rot, "rev", 0) / 60000, 360.0);
+        }
+    }
+    if (const Node *rig = scene->child(QStringLiteral("lightRig"))) {
+        out.rig = rig->attr(QStringLiteral("rig"), QStringLiteral("threePt"));
+        if (!Effects3D::lightRigs().contains(out.rig)) out.rig = QStringLiteral("threePt");
+        out.rigDir = rig->attr(QStringLiteral("dir"), QStringLiteral("t"));
+        if (!Effects3D::rigDirections().contains(out.rigDir)) out.rigDir = QStringLiteral("t");
+        if (const Node *rot = rig->child(QStringLiteral("rot"))) {
+            out.rigRotated = true;
+            out.rigLat = qBound(0.0, attrNumber(rot, "lat", 0) / 60000, 360.0);
+            out.rigLon = qBound(0.0, attrNumber(rot, "lon", 0) / 60000, 360.0);
+            out.rigRev = qBound(0.0, attrNumber(rot, "rev", 0) / 60000, 360.0);
+        }
+    }
+    return out;
+}
+
+// spPr's a:scene3d and a:sp3d.
+void read3d(const Node *spPr, Look &look, const ColorContext &ctx) {
+    if (!spPr) return;
+    look.scene3d = readScene3d(spPr->child(QStringLiteral("scene3d")));
+    look.format3d = readFormat3d(spPr->child(QStringLiteral("sp3d")), ctx);
+}
 
 // a:outerShdw's algn, as SceneObject::shadowAlign counts them.
 int shadowAlignOf(const QString &algn) {
@@ -553,6 +659,9 @@ void readEffects(const Node *effectLst, Look &look, const ColorContext &ctx) {
         const auto c = colorIn(glow, ctx);
         if (c.isValid()) { look.glowRadEmu = glow->attr(QStringLiteral("rad"), QStringLiteral("0")).toDouble(); look.glowColor = c; }
     }
+    // Reflection and soft edges.
+    look.reflection = readReflection(effectLst->child(QStringLiteral("reflection")));
+    if (const Node *soft = effectLst->child(QStringLiteral("softEdge"))) look.softEdgeEmu = qMax(0.0, attrNumber(soft, "rad", 0));
 }
 
 // OmaShow draws a shape's shadow in the shape's turned frame; PowerPoint keeps a
@@ -608,7 +717,49 @@ struct RunLook {
     bool shadowInner = false;
     qreal shadowSx = 100, shadowSy = 100, shadowKx = 0, shadowKy = 0;
     int shadowAlign = 7;
+    // Text Fill (empty: solid, as color), Text Outline (strokeWidth
+    // in EMU until applied; {"none": true} for a:noFill) and the reflection
+    // (lengths in EMU).
+    QVariantMap fill, outline;
+    Effects3D::Reflection reflection;
 };
+
+// A text fill read as a Look, as SceneObject fill keys.
+QVariantMap textFillMap(const Look &look) {
+    if (!look.fillSet || look.fillStyle == 0) return {};
+    if (look.fillStyle == 5) return {{"fillStyle", 5}};
+    if (look.fillStyle == 4) return {};   // picture text fill: not kept (drawn in its first colour)
+    QVariantMap m{{"fillStyle", look.fillStyle}, {"fill", look.fill.name(QColor::HexArgb)},
+                  {"fillSecondary", (look.fill2.isValid() ? look.fill2 : look.fill).name(QColor::HexArgb)}};
+    if (look.fillStyle == 1 || look.fillStyle == 2) {
+        m.insert("fillAngle", look.angle);
+        m.insert("gradientStops", FillStyle::encodeStops(look.stops));
+        m.insert("gradientPath", look.gradPath);
+        m.insert("gradientFocusL", look.focus[0]); m.insert("gradientFocusT", look.focus[1]);
+        m.insert("gradientFocusR", look.focus[2]); m.insert("gradientFocusB", look.focus[3]);
+        m.insert("gradientScaled", look.scaled);
+        m.insert("gradientRotate", look.rotate);
+    }
+    if (look.fillStyle == 3) { m.insert("patternPreset", look.pattern); m.insert("patternStyle", FillStyle::nearestQtPattern(look.pattern)); }
+    return m;
+}
+
+// A text outline (a:rPr/a:ln) as SceneObject stroke keys, width in EMU.
+QVariantMap textOutlineMap(const Look &look) {
+    if (!look.lineSet) return {};
+    if (!look.line) return {{"none", true}};
+    QVariantMap m{{"strokeWidth", look.lineWidthEmu}, {"strokeColor", look.lineColor.name(QColor::HexArgb)},
+                  {"strokeStyle", look.dash}, {"strokeDash", look.dashPreset}, {"strokeDashCustom", look.customDash},
+                  {"strokeCompound", look.compound}, {"strokeCap", look.cap >= 0 ? look.cap : 0},
+                  {"strokeJoin", look.join >= 0 ? look.join : 2}};
+    if (look.lineGradient && look.lineStops.size() >= 2) {
+        m.insert("strokeGradient", true);
+        m.insert("strokeStops", FillStyle::encodeStops(look.lineStops));
+        m.insert("strokeAngle", look.lineAngle);
+        m.insert("strokeGradientPath", look.lineGradPath);
+    }
+    return m;
+}
 
 struct ParaLook {
     int algn = -1;         // 0 left, 1 centre, 2 right, 3 justify
@@ -649,9 +800,27 @@ void applyRPr(RunLook &run, const Node *rPr, const TextContext &ctx) {
     if (const Node *fill = rPr->child(QStringLiteral("solidFill"))) {
         const auto c = colorIn(fill, *ctx.color);
         if (c.isValid()) run.color = c;
+        run.fill.clear();
+    }
+    // Text Fill (gradient, pattern, none) and Text Outline.
+    for (const char *kind : {"gradFill", "pattFill", "noFill", "blipFill"}) {
+        if (!rPr->child(QLatin1String(kind))) continue;
+        Look look;
+        readFill(rPr, look, *ctx.color);
+        run.fill = textFillMap(look);
+        // What older builds (and the letters' glow) see: its first colour.
+        if (look.fillStyle == 5) run.color = QColor(Qt::transparent);
+        else if (look.fill.isValid()) run.color = look.fill;
+        break;
+    }
+    if (const Node *ln = rPr->child(QStringLiteral("ln"))) {
+        Look look;
+        readLine(ln, look, *ctx.color);
+        run.outline = textOutlineMap(look);
     }
     // An effect list replaces the inherited one: no glow or shadow in it is none.
     if (const Node *effects = rPr->child(QStringLiteral("effectLst"))) {
+        run.reflection = readReflection(effects->child(QStringLiteral("reflection")));
         run.glowRad = 0;
         if (const Node *glow = effects->child(QStringLiteral("glow"))) {
             const auto c = colorIn(glow, *ctx.color);
@@ -741,6 +910,11 @@ struct TextOut {
     qreal inset[4] = {91440, 45720, 91440, 45720};
     QString link;
     bool empty = true;
+    // The text's own 3-D (a:bodyPr: scene3d, sp3d in EMU, flatTx z).
+    Effects3D::Scene scene3d;
+    Effects3D::Format format3d;
+    qreal flatZ = 0;
+    bool flat = false;   // A:flatTx there at all
 };
 
 static void readInsets(const Node *bodyPr, qreal inset[4]) {
@@ -748,6 +922,29 @@ static void readInsets(const Node *bodyPr, qreal inset[4]) {
     for (int i = 0; i < 4; ++i)
         if (bodyPr->has(QLatin1String(names[i])))
             inset[i] = qMax(0.0, bodyPr->attr(QLatin1String(names[i])).toDouble());
+}
+
+// A run's whole set of text effects as SceneObject keys, lengths in
+// EMU (TextRun::effects once scaled).
+QVariantMap runEffectsEmu(const RunLook &l) {
+    const bool glow = l.glowRad > 0 && l.glowColor.isValid();
+    const bool shadow = l.shadow > 0;
+    QVariantMap m{{"textGlowRadius", glow ? l.glowRad : 0.0}, {"shadowEnabled", shadow}};
+    if (glow) m.insert("textGlowColor", l.glowColor.name(QColor::HexArgb));
+    if (shadow) {
+        m.insert("shadowColor", l.shadowColor.name(QColor::HexArgb));
+        m.insert("shadowX", l.shadowDist * qCos(qDegreesToRadians(l.shadowDir)));
+        m.insert("shadowY", l.shadowDist * qSin(qDegreesToRadians(l.shadowDir)));
+        m.insert("shadowBlur", l.shadowBlur);
+        m.insert("shadowInner", l.shadowInner);
+        m.insert("shadowScaleX", qBound(-200.0, l.shadowSx, 200.0));
+        m.insert("shadowScaleY", qBound(-200.0, l.shadowSy, 200.0));
+        m.insert("shadowSkewX", qBound(-89.0, l.shadowKx, 89.0));
+        m.insert("shadowSkewY", qBound(-89.0, l.shadowKy, 89.0));
+        m.insert("shadowAlign", l.shadowInner ? 0 : l.shadowAlign);
+    }
+    m.insert("textReflection", Effects3D::toMap(l.reflection));
+    return m;
 }
 
 // Reads a txBody (or a table cell's) into words, a box look and the runs
@@ -770,6 +967,9 @@ TextOut convertText(const Node *txBody, const TextChain &chain, const TextContex
         else if (anchor == QLatin1String("ctr")) out.anchor = 1;
         else if (anchor == QLatin1String("b")) out.anchor = 2;
         readInsets(own, out.inset);
+        out.scene3d = readScene3d(own->child(QStringLiteral("scene3d")));
+        out.format3d = readFormat3d(own->child(QStringLiteral("sp3d")), *ctx.color);
+        if (const Node *flat = own->child(QStringLiteral("flatTx"))) { out.flatZ = attrNumber(flat, "z", 0); out.flat = true; }
         if (const Node *fit = own->child(QStringLiteral("normAutofit"))) {
             out.shrink = true;
             if (fit->has(QStringLiteral("fontScale")))
@@ -840,6 +1040,11 @@ TextOut convertText(const Node *txBody, const TextChain &chain, const TextContex
         if (l.family != b.family && !l.family.isEmpty()) { run.fontFamily = l.family; differs = true; }
         if (l.color.isValid() && l.color != b.color) { run.color = l.color; differs = true; }
         if (l.lang != b.lang && !l.lang.isEmpty()) { run.language = l.lang; differs = true; }
+        // A fill, outline or effects of the stretch's own (lengths in
+        // EMU here, slide units once applied).
+        if (l.fill != b.fill) { run.fill = l.fill; if (l.fill.isEmpty() && l.color.isValid()) run.color = l.color; differs = true; }
+        if (l.outline != b.outline) { run.outline = l.outline.isEmpty() ? QVariantMap{{"none", true}} : l.outline; differs = true; }
+        if (runEffectsEmu(l) != runEffectsEmu(b)) { run.effects = runEffectsEmu(l); differs = true; }
         if (differs) out.runs.append(run);
     }
     return out;
@@ -1133,6 +1338,17 @@ struct Reader {
             o.glowRadius = look.glowRadEmu * u.k;
             o.glowColor = look.glowColor;
         }
+        apply3d(o, look);
+    }
+
+    // Soft edges, reflection and 3-D, EMU to slide units.
+    void apply3d(SceneObject &o, const Look &look) const {
+        o.softEdge = look.softEdgeEmu * u.k;
+        o.reflection = look.reflection;
+        Effects3D::scale(o.reflection, u.k);
+        o.format3d = look.format3d;
+        Effects3D::scale(o.format3d, u.k);
+        o.scene3d = look.scene3d;
     }
 
     // A box with no fill and no outline has its glow and shadow
@@ -1167,6 +1383,7 @@ struct Reader {
     // are drawn on the words where the words have none (TextLayout::paint),
     // and written back to the box's p:spPr.
     void boxEffectsOfWords(SceneObject &words, const Look &look) const {
+        apply3d(words, look);   // The box's own, kept on the text box
         if (look.glowRadEmu > 0 && look.glowColor.isValid()) {
             words.glowRadius = look.glowRadEmu * u.k;
             words.glowColor = look.glowColor;
@@ -1180,6 +1397,12 @@ struct Reader {
             words.boxShadowScaleX = box.shadowScaleX; words.boxShadowScaleY = box.shadowScaleY;
             words.boxShadowSkewX = box.shadowSkewX; words.boxShadowSkewY = box.shadowSkewY; words.boxShadowAlign = box.shadowAlign;
         }
+    }
+
+    QVariantMap scaledOutline(QVariantMap m) const {
+        if (m.contains("strokeWidth")) m.insert("strokeWidth", qMax(0.25, m.value("strokeWidth").toDouble() * u.k));
+        QVariantMap checked;
+        return FillStyle::checkTextOutline(m, &checked) ? checked : QVariantMap();
     }
 
     void applyText(SceneObject &o, const TextOut &text, const RunLook &fallback) {
@@ -1233,8 +1456,30 @@ struct Reader {
         o.fillStyle = 5;
         o.strokeWidth = 0;
         o.fillToken.clear(); o.textColorToken.clear(); o.fontToken.clear();
+        // The words' Text Fill and Outline, reflection and 3-D.
+        FillStyle::checkTextFill(b.fill, &o.textFill);
+        o.textOutline = scaledOutline(b.outline);
+        o.textReflection = b.reflection;
+        Effects3D::scale(o.textReflection, u.k);
+        o.textScene3d = text.scene3d;
+        o.textFormat3d = text.format3d;
+        Effects3D::scale(o.textFormat3d, u.k);
+        o.textFlatZ = text.flatZ * u.k;
+        o.textFlat = text.flat;
         QVector<TextRun> runs = text.runs;
         for (auto &run : runs) {
+            run.outline = scaledOutline(run.outline);
+            if (!run.effects.isEmpty()) {
+                QVariantMap fx = run.effects;
+                for (const char *key : {"textGlowRadius", "shadowX", "shadowY", "shadowBlur"})
+                    if (fx.contains(QLatin1String(key))) fx.insert(QLatin1String(key), fx.value(QLatin1String(key)).toDouble() * u.k);
+                Effects3D::Reflection r;
+                if (Effects3D::fromMap(fx.value("textReflection"), &r)) { Effects3D::scale(r, u.k); fx.insert("textReflection", Effects3D::toMap(r)); }
+                QVariantMap checked;
+                run.effects = FillStyle::checkTextEffects(fx, &checked) ? checked : QVariantMap();
+            }
+            QVariantMap checked;
+            run.fill = FillStyle::checkTextFill(run.fill, &checked) ? checked : QVariantMap();
             if (run.fontSize > 0) run.fontSize = run.fontSize / 100.0 * text.fontScale * u.pt;
             if (!run.language.isEmpty()) run.language.replace(QLatin1Char('-'), QLatin1Char('_'));
         }
@@ -1300,6 +1545,7 @@ struct Reader {
         readFill(spPr, look, color);
         if (spPr) readLine(spPr->child(QStringLiteral("ln")), look, color);
         if (spPr) readEffects(spPr->child(QStringLiteral("effectLst")), look, color);
+        read3d(spPr, look, color);
         for (const auto *from : {layoutSp, masterSp}) {
             if (!from) continue;
             const Node *pr = from->child(QStringLiteral("spPr"));
@@ -1589,6 +1835,7 @@ struct Reader {
             readLine(spPr->child(QStringLiteral("ln")), look, scope.master->color);
             readEffects(spPr->child(QStringLiteral("effectLst")), look, scope.master->color);
             shadowOnSlide(look, place.rotation);
+            read3d(spPr, look, scope.master->color);
             look.fillSet = true; look.fillStyle = 5;
             applyLook(o, look);
             o.fillStyle = 5;

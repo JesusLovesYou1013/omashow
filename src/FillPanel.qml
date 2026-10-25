@@ -19,21 +19,35 @@ import Omashow 1.0
 // A text box takes a fill and a line of its own (boxDrawn: one p:sp in
 // PowerPoint); the first one starts its box. Every change is one undo step
 // (backend.setSelectedFill).
+//
+// Mode "text" is the same editors for the words' own Text Fill and
+// Text Outline (PowerPoint's Text Options; backend.setSelectedTextFill): the
+// selected stretch while editing text, else the whole box. Picture text fill
+// is not there yet. Which rows are open is kept in the inspector's styleOpen
+// (opener), per session; the inspector's group header replaces the caption.
 ColumnLayout {
     id: root
     objectName: "fillPanel"
     spacing: Theme.s2
 
-    property bool fillOpen: false
-    property bool lineOpen: false
-    property bool fillPresetsOpen: false
-    property bool patternsOpen: true
+    property string mode: "shape"
+    property QtObject opener: null
+    readonly property bool textMode: mode === "text"
+    function isOpen(name) { return opener ? opener.isOpen(mode + "." + name) : false }
+    function toggle(name) { if (opener) opener.toggle(mode + "." + name) }
+    readonly property bool fillOpen: isOpen("fill")
+    readonly property bool lineOpen: isOpen("line")
+    readonly property bool fillPresetsOpen: isOpen("fillPresets")
+    property bool pictureAsked: false
 
-    readonly property var st: { backend.selection; return backend.fillState() }
+    readonly property var st: { backend.selection; backend.textSelection; return textMode ? backend.textFillState() : backend.fillState() }
     readonly property bool onText: st.target === "text"
     readonly property bool connector: st.connector ?? false
     readonly property real unitsPerPt: backend.ptPerUnit > 0 ? 1 / backend.ptPerUnit : 1
-    visible: backend.hasSelection && (st.count ?? 0) > 0
+    readonly property bool available: backend.hasSelection && (st.count ?? 0) > 0
+    visible: available
+    // One line for the group header while it is closed.
+    readonly property string summary: typeNames[fillType] + ", " + (lineOn ? qsTr("%1 pt line").arg(round1(pts(st.strokeWidth))) : lineNames[0].toLowerCase())
 
     function alphaOf(c) { const s = String(c ?? ""); return s.length === 9 ? parseInt(s.substr(1, 2), 16) / 255 : 1 }
     function rgbOf(c) { const s = String(c ?? ""); return s.length === 9 ? "#" + s.substr(3) : s }
@@ -45,7 +59,7 @@ ColumnLayout {
     function pts(units) { return (units ?? 0) / unitsPerPt }
     function units(points) { return (points ?? 0) * unitsPerPt }
     function round1(v) { return Math.round(v * 10) / 10 }
-    function set(values) { backend.setSelectedFill(values) }
+    function set(values) { if (textMode) backend.setSelectedTextFill(values); else backend.setSelectedFill(values) }
     function preview(values) { return "image://effects/fill?p=" + encodeURIComponent(JSON.stringify(values)) }
 
     // ---- what is set ----------------------------------------------------------
@@ -189,17 +203,24 @@ ColumnLayout {
         Percent { value: (1 - root.alphaOf(tr.colour)) * 100 }
     }
 
-    SectionLabel { text: root.onText ? qsTr("BOX FILL AND LINE") : qsTr("FILL AND LINE") }
+    Label {
+        visible: root.onText && !root.textMode
+        Layout.fillWidth: true
+        wrapMode: Text.Wrap
+        color: Theme.textMuted
+        font.pixelSize: Theme.fsLabel
+        text: qsTr("The text box's own box.")
+    }
 
     // ---- Fill -------------------------------------------------------------------
     Expander {
-        objectName: "fillExpander"
+        objectName: root.textMode ? "textFillExpander" : "fillExpander"
         visible: !root.connector
-        title: qsTr("Fill")
+        title: root.textMode ? qsTr("Text Fill") : qsTr("Fill")
         open: root.fillOpen
         summary: root.typeNames[root.fillType] + (root.fillType === 2 ? " · " + root.gradientNames[root.gradientType] + " · " + qsTr("%1 stops").arg(root.stopsNow.length)
                                                  : root.fillType === 4 ? " · " + (root.patternNames[root.st.patternPreset] ?? root.st.patternPreset) : "")
-        onClicked: root.fillOpen = !root.fillOpen
+        onClicked: root.toggle("fill")
     }
     ColumnLayout {
         objectName: "fillSection"
@@ -212,7 +233,7 @@ ColumnLayout {
             objectName: "fillPresets"
             title: qsTr("Presets")
             open: root.fillPresetsOpen
-            onClicked: root.fillPresetsOpen = !root.fillPresetsOpen
+            onClicked: root.toggle("fillPresets")
         }
         GridLayout {
             visible: root.fillPresetsOpen
@@ -238,6 +259,8 @@ ColumnLayout {
                 model: root.typeNames
                 currentIndex: root.fillType
                 onActivated: {
+                    root.pictureAsked = root.textMode && currentIndex === 3
+                    if (root.pictureAsked) { currentIndex = Qt.binding(() => root.fillType); return }
                     if (currentIndex === 0) root.set({ fillStyle: 5 })
                     else if (currentIndex === 1) root.set({ fillStyle: 0, fill: root.fillStyle === 5 ? "#ff156082" : root.st.fill })
                     else if (currentIndex === 2) root.set({ fillStyle: 1, gradientStops: root.stopsNow.length >= 2 ? root.stopsNow : root.accentStops(root.accents[0], 0), fillAngle: root.st.fillAngle ?? 90 })
@@ -247,6 +270,14 @@ ColumnLayout {
             }
         }
 
+        Label {
+            visible: root.pictureAsked
+            Layout.fillWidth: true
+            wrapMode: Text.Wrap
+            color: Theme.textMuted
+            font.pixelSize: Theme.fsLabel
+            text: qsTr("Picture fill for text is not available yet.")
+        }
         // Solid
         FieldRow {
             visible: root.fillType === 1
@@ -254,7 +285,7 @@ ColumnLayout {
             ColorField {
                 objectName: "fillColour"
                 value: root.rgbOf(root.st.fill)
-                accessibleName: qsTr("Fill colour")
+                accessibleName: root.textMode ? qsTr("Text fill colour") : qsTr("Fill colour")
                 onPicked: v => root.set({ fill: root.withAlpha(v, root.alphaOf(root.st.fill)) })
             }
         }
@@ -262,7 +293,7 @@ ColumnLayout {
             objectName: "fillTransparency"
             visible: root.fillType === 1
             colour: root.st.fill ?? "#ff000000"
-            name: qsTr("Fill transparency")
+            name: root.textMode ? qsTr("Text fill transparency") : qsTr("Fill transparency")
             onPicked: a => root.set({ fill: root.withAlpha(root.rgbOf(root.st.fill), a) })
         }
 
@@ -448,7 +479,7 @@ ColumnLayout {
             label: qsTr("Foreground")
             ColorField {
                 value: root.rgbOf(root.st.fill)
-                accessibleName: qsTr("Pattern foreground colour")
+                accessibleName: root.textMode ? qsTr("Text pattern foreground colour") : qsTr("Pattern foreground colour")
                 onPicked: v => root.set({ fill: root.withAlpha(v, root.alphaOf(root.st.fill)) })
             }
         }
@@ -457,7 +488,7 @@ ColumnLayout {
             label: qsTr("Background")
             ColorField {
                 value: root.rgbOf(root.st.fillSecondary)
-                accessibleName: qsTr("Second fill colour")
+                accessibleName: root.textMode ? qsTr("Text second fill colour") : qsTr("Second fill colour")
                 onPicked: v => root.set({ fillSecondary: root.withAlpha(v, root.alphaOf(root.st.fillSecondary)) })
             }
         }
@@ -465,11 +496,11 @@ ColumnLayout {
 
     // ---- Line -------------------------------------------------------------------
     Expander {
-        objectName: "lineExpander"
-        title: qsTr("Line")
+        objectName: root.textMode ? "textOutlineExpander" : "lineExpander"
+        title: root.textMode ? qsTr("Text Outline") : qsTr("Line")
         open: root.lineOpen
         summary: root.lineNames[root.lineType] + (root.lineOn ? " · " + qsTr("%1 pt").arg(root.round1(root.pts(root.st.strokeWidth))) + " · " + (root.dashNames[root.st.strokeDash] ?? root.st.strokeDash) : "")
-        onClicked: root.lineOpen = !root.lineOpen
+        onClicked: root.toggle("line")
     }
     ColumnLayout {
         objectName: "lineSection"
@@ -499,14 +530,14 @@ ColumnLayout {
             ColorField {
                 objectName: "lineColour"
                 value: root.rgbOf(root.st.strokeColor)
-                accessibleName: qsTr("Stroke colour")
+                accessibleName: root.textMode ? qsTr("Text outline colour") : qsTr("Stroke colour")
                 onPicked: v => root.set({ strokeColor: root.withAlpha(v, root.alphaOf(root.st.strokeColor)), strokeWidth: root.lineOn ? root.st.strokeWidth : root.units(0.75) })
             }
         }
         Transparency {
             visible: root.lineType === 1
             colour: root.st.strokeColor ?? "#ff000000"
-            name: qsTr("Line transparency")
+            name: root.textMode ? qsTr("Text outline transparency") : qsTr("Line transparency")
             onPicked: a => root.set({ strokeColor: root.withAlpha(root.rgbOf(root.st.strokeColor), a) })
         }
         FieldRow {

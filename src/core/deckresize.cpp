@@ -57,4 +57,28 @@ void DeckResize::scaleObject(SceneObject &o, qreal scale, const QPointF &origin)
   o.boxInsetT *= scale;
   o.boxInsetR *= scale;
   o.boxInsetB *= scale;
+  // Soft edges, reflections, bevels and depth; text outlines and a
+  // stretch's own effects.
+  o.softEdge *= scale;
+  Effects3D::scale(o.reflection, scale);
+  Effects3D::scale(o.textReflection, scale);
+  Effects3D::scale(o.format3d, scale);
+  Effects3D::scale(o.textFormat3d, scale);
+  o.textFlatZ *= scale;
+  auto scaleKeys = [scale](QVariantMap &m, std::initializer_list<const char *> keys) {
+    for (const char *key : keys)
+      if (m.contains(QLatin1String(key))) m.insert(QLatin1String(key), m.value(QLatin1String(key)).toDouble() * scale);
+  };
+  scaleKeys(o.textOutline, {"strokeWidth"});
+  for (auto &run : o.runs) {
+    scaleKeys(run.outline, {"strokeWidth"});
+    scaleKeys(run.effects, {"textGlowRadius", "shadowX", "shadowY", "shadowBlur"});
+    if (run.effects.contains(QStringLiteral("textReflection"))) {
+      Effects3D::Reflection r;
+      if (Effects3D::fromMap(run.effects.value(QStringLiteral("textReflection")), &r)) {
+        Effects3D::scale(r, scale);
+        run.effects.insert(QStringLiteral("textReflection"), Effects3D::toMap(r));
+      }
+    }
+  }
 }

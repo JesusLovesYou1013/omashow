@@ -4,6 +4,7 @@
 // inheritance before the deterministic animation evaluator produces a frame.
 
 #include <QColor>
+#include "core/effects3d.h"
 #include <utility>
 #include <QImage>
 #include <QPicture>
@@ -54,6 +55,12 @@ struct TextRun {
     QString origFont;
     qreal origFontSize = 0, fontScale = 1;
     int origWeight = 0;
+    // This stretch's own Text Fill and Text Outline (a:rPr fills and
+    // a:ln; keys as SceneObject::textFill/textOutline, empty inherits), and
+    // its own effects (a:rPr/a:effectLst) as a full set of the box's text
+    // effect keys (textGlowRadius, textGlowColor, shadow*, textReflection);
+    // empty inherits the box's.
+    QVariantMap fill, outline, effects;
     bool operator==(const TextRun &other) const {
         return start == other.start && length == other.length && weight == other.weight &&
                italic == other.italic && underline == other.underline &&
@@ -62,7 +69,8 @@ struct TextRun {
                fontFamily == other.fontFamily && color == other.color &&
                language == other.language && origFont == other.origFont &&
                qFuzzyCompare(origFontSize + 1, other.origFontSize + 1) &&
-               qFuzzyCompare(fontScale, other.fontScale) && origWeight == other.origWeight;
+               qFuzzyCompare(fontScale, other.fontScale) && origWeight == other.origWeight &&
+               fill == other.fill && outline == other.outline && effects == other.effects;
     }
 };
 
@@ -264,6 +272,33 @@ struct SceneObject {
     // 0: none. Drawn behind the text and not cut off at the box.
     qreal textGlowRadius = 0;
     QColor textGlowColor = QColor(255, 255, 255, 191);
+    // (core/effects3d.h). On a shape, picture or a text box's own box
+    // (p:spPr): soft edges (how far in the edge fades, slide units; 0 none),
+    // reflection, 3-D format (a:sp3d) and 3-D rotation (a:scene3d). On a text
+    // box's words: their reflection (a:rPr/a:effectLst, as the box's text
+    // effects) and the text's own 3-D format and rotation (a:bodyPr; PowerPoint
+    // keeps one for the whole text body, with a:flatTx's z).
+    qreal softEdge = 0;
+    Effects3D::Reflection reflection, textReflection;
+    Effects3D::Format format3d, textFormat3d;
+    Effects3D::Scene scene3d, textScene3d;
+    qreal textFlatZ = 0;
+    // PowerPoint's "Keep text flat" (a:bodyPr/a:flatTx, with or
+    // without a z): the words stay out of the box's 3-D scene.
+    bool textFlat = false;
+    // The outer shadow, glow and reflection are worked out on the
+    // 3-D turned picture (as PowerPoint always does) rather than the flat
+    // object. OmaShow's own setting: PowerPoint has nothing to say it, so off
+    // is kept in features.json and a PowerPoint copy shows them turned.
+    bool effects3dFollow = true;
+    // Text Fill and Text Outline. textFill empty: the words are
+    // textColor (solid, as always); else fill keys of their own (fillStyle 1-3
+    // gradients, 3 pattern, 5 none, with fill, fillSecondary, gradient* and
+    // patternPreset as on a shape). textOutline empty: no outline; else
+    // stroke keys (strokeWidth, strokeColor, strokeDash, strokeCompound,
+    // strokeJoin, strokeCap, strokeGradient, strokeStops, strokeAngle), or
+    // {"none": true} for an outline PowerPoint wrote as a:noFill.
+    QVariantMap textFill, textOutline;
     QString fillToken, textColorToken, fontToken;
     // Stretches of this text that differ from the box, in authored order.
     QVector<TextRun> runs;

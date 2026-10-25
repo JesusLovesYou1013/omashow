@@ -19,6 +19,11 @@
 #include "core/shape.h"
 #include "render/effectmodel.h"
 #include "render/shapeeffects.h"
+#include "render/layereffects.h"
+#include "render/fillpaint.h"
+#include <QGlyphRun>
+#include <QRawFont>
+#include <QTextFragment>
 #include <QDataStream>
 #include <cmath>
 #include <memory>
@@ -160,7 +165,41 @@ qreal columnWidth(const SceneObject &o, qreal size) {
     const qreal gaps = columnGap(o, size) * (columns - 1);
     return qMax(1.0, (o.rect.width() - gaps) / columns);
 }
-std::shared_ptr<QTextDocument> layout(const SceneObject &o, qreal size) {
+// The char format properties that say which stretch a fragment is
+// (0 the box, else run index + 1) and which effect set it draws with (0 the
+// box's, else 1 + its place among the runs' own sets).
+constexpr int kRunProperty = QTextFormat::UserProperty + 1;
+constexpr int kEffectProperty = QTextFormat::UserProperty + 2;
+
+// The runs' own effect sets, each once, in order.
+QVector<QVariantMap> effectSets(const SceneObject &o) {
+    QVector<QVariantMap> sets;
+    for (const auto &run : o.runs)
+        if (!run.effects.isEmpty() && !sets.contains(run.effects)) sets.append(run.effects);
+    return sets;
+}
+
+// The colour a text fill stands for where only one colour will do (what the
+// letters cast their glow and shadow from): its first colour, or its outline's
+// when it has none.
+QColor fillStandIn(const QVariantMap &fill, const QVariantMap &outline, const QColor &solid) {
+    if (fill.isEmpty()) return solid;
+    const SceneObject carrier = FillStyle::textFillCarrier(fill, solid);
+    if (carrier.fillStyle != 5) return carrier.fillStyle == 3 ? carrier.fill : FillStyle::fillStops(carrier).value(0).color;
+    const SceneObject line = FillStyle::textOutlineCarrier(outline);
+    return line.strokeWidth > 0 ? line.strokeColor : QColor(Qt::transparent);
+}
+
+bool fillsOrOutlines(const SceneObject &o) {
+    if (!o.textFill.isEmpty() || !o.textOutline.isEmpty()) return true;
+    for (const auto &run : o.runs) if (!run.fill.isEmpty() || !run.outline.isEmpty()) return true;
+    return false;
+}
+
+// `hideFilled`: letters with a fill of their own drawn clear (the fill goes
+// on after, from their outlines). `onlyEffects` >= 0: only the letters drawing
+// with that effect set are seen.
+std::shared_ptr<QTextDocument> layout(const SceneObject &o, qreal size, bool hideFilled = false, int onlyEffects = -1) {
     // QTextDocument belongs to its creating thread. Cache per thread, with a
     // memory budget, and exclude position/opacity so animation reuses layout.
     static thread_local QCache<QByteArray, std::shared_ptr<QTextDocument>> cache(16*1024);
@@ -170,10 +209,12 @@ std::shared_ptr<QTextDocument> layout(const SceneObject &o, qreal size) {
            << o.tabStop << o.columns << o.columnGap << o.direction << o.fontWeight
            << o.italic << o.underline << o.letterSpacing << o.uppercase
            << o.textAlign << o.lineHeight << o.origFont << o.fontScale << o.paragraphSpacing << o.textIndent
-           << o.listStyle << o.listStart << o.textColor;
+           << o.listStyle << o.listStart << o.textColor << hideFilled << onlyEffects << o.textFill << o.textOutline;
     for (const auto &run : o.runs)
         stream << run.start << run.length << run.weight << run.italic << run.underline
-               << run.strike << run.baseline << run.fontSize << run.fontFamily << run.color;
+               << run.strike << run.baseline << run.fontSize << run.fontFamily << run.color
+               << run.fill << run.outline << run.effects;
+    const QVector<QVariantMap> sets = onlyEffects >= 0 ? effectSets(o) : QVector<QVariantMap>();
     if (auto *cached = cache.object(key)) return *cached;
     auto doc = std::make_shared<QTextDocument>();
     doc->setUndoRedoEnabled(false);
@@ -193,6 +234,7 @@ std::shared_ptr<QTextDocument> layout(const SceneObject &o, qreal size) {
     // Columns are pages: the text flows down one and into the next.
     if (o.columns > 1)
         doc->setPageSize(QSizeF(columnWidth(o, size), qMax(1.0, o.rect.height())));
+    const QColor boxInk = fillStandIn(o.textFill, o.textOutline, o.textColor);
     QTextCursor cursor(doc.get());
     const auto paragraphs = o.text.split('\n');
     const auto vertical = FontSwap::verticalFix(o, size);
@@ -224,7 +266,9 @@ std::shared_ptr<QTextDocument> layout(const SceneObject &o, qreal size) {
         cursor.setBlockFormat(block);
         QTextCharFormat chars;
         chars.setFont(fontFor(o, size));
-        chars.setForeground(o.textColor);
+        chars.setForeground(onlyEffects > 0 || (hideFilled && !o.textFill.isEmpty()) ? QColor(Qt::transparent) : boxInk);
+        chars.setProperty(kRunProperty, 0);
+        chars.setProperty(kEffectProperty, 0);
         cursor.setCharFormat(chars);
         authoredStart.append(authored);
         documentStart.append(cursor.position());
@@ -254,7 +298,9 @@ std::shared_ptr<QTextDocument> layout(const SceneObject &o, qreal size) {
         }
     }
     // Stretches that look different: mapped back onto the built document.
-    for (const auto &run : o.runs) {
+    for (int runIndex = 0; runIndex < o.runs.size(); ++runIndex) {
+        const auto &run = o.runs.at(runIndex);
+        const int effectSet = run.effects.isEmpty() ? 0 : int(effectSets(o).indexOf(run.effects)) + 1;
         for (int i = 0; i < paragraphs.size(); ++i) {
             const int bodyStart = authoredStart.at(i) + strippedTabs.at(i);
             const int bodyEnd = authoredStart.at(i) + paragraphs.at(i).size();
@@ -273,6 +319,17 @@ std::shared_ptr<QTextDocument> layout(const SceneObject &o, qreal size) {
             format.setFont(font);
             if (run.strike != 0) format.setFontStrikeOut(run.strike == 1);
             if (run.color.isValid()) format.setForeground(run.color);
+            // The stretch's own text fill, and which letters are seen.
+            format.setProperty(kRunProperty, runIndex + 1);
+            format.setProperty(kEffectProperty, effectSet);
+            const bool ownFill = !run.fill.isEmpty();
+            const bool filled = ownFill || (!run.color.isValid() && !o.textFill.isEmpty());
+            QColor ink = ownFill ? fillStandIn(run.fill, run.outline.isEmpty() ? o.textOutline : run.outline, run.color.isValid() ? run.color : o.textColor)
+                       : run.color.isValid() ? run.color : fillStandIn(o.textFill, run.outline.isEmpty() ? o.textOutline : run.outline, o.textColor);
+            if (hideFilled && filled) ink = Qt::transparent;
+            if (onlyEffects >= 0 && effectSet != onlyEffects) ink = Qt::transparent;
+            if (ownFill || run.color.isValid() || ink != boxInk || onlyEffects >= 0 || hideFilled) format.setForeground(ink);
+            Q_UNUSED(sets);
             if (run.baseline == 1) format.setVerticalAlignment(QTextCharFormat::AlignSuperScript);
             if (run.baseline == 2) format.setVerticalAlignment(QTextCharFormat::AlignSubScript);
             scope.mergeCharFormat(format);
@@ -650,7 +707,112 @@ void paintInnerShadow(QPainter &painter, const SceneObject &o, QTextDocument &do
 }
 } // namespace
 
+// Text Fill and Text Outline. The letters with a fill of their own
+// were drawn clear; their outlines are filled here as a shape's fill is
+// (gradients across the text box), and every outline drawn over, as
+// PowerPoint draws a:rPr's a:ln. `box` is the text box in the painter's frame.
+static void paintFillsAndOutlines(QPainter &painter, const SceneObject &o, QTextDocument &doc, const QRectF &box) {
+    struct Group { QVariantMap fill, outline; QColor solid; QPainterPath path; };
+    QVector<Group> groups;
+    for (QTextBlock block = doc.begin(); block.isValid(); block = block.next()) {
+        const QTextLayout *laid = block.layout();
+        if (!laid) continue;
+        const QPointF at = laid->position();
+        for (auto it = block.begin(); !it.atEnd(); ++it) {
+            const QTextFragment fragment = it.fragment();
+            if (!fragment.isValid()) continue;
+            const int index = fragment.charFormat().intProperty(kRunProperty);
+            const TextRun *run = index > 0 && index <= o.runs.size() ? &o.runs.at(index - 1) : nullptr;
+            QVariantMap fill = run && !run->fill.isEmpty() ? run->fill : run && run->color.isValid() ? QVariantMap() : o.textFill;
+            QVariantMap outline = run && !run->outline.isEmpty() ? run->outline : o.textOutline;
+            if (outline.value(QStringLiteral("none")).toBool()) outline.clear();
+            if (fill.isEmpty() && outline.isEmpty()) continue;
+            const QColor solid = run && run->color.isValid() ? run->color : o.textColor;
+            QPainterPath path;
+            path.setFillRule(Qt::WindingFill);
+            for (const QGlyphRun &glyphs : fragment.glyphRuns()) {
+                const QRawFont raw = glyphs.rawFont();
+                const auto indexes = glyphs.glyphIndexes();
+                const auto positions = glyphs.positions();
+                for (int i = 0; i < indexes.size() && i < positions.size(); ++i) {
+                    QPainterPath glyph = raw.pathForGlyph(indexes.at(i));
+                    glyph.translate(positions.at(i) + at);
+                    path.addPath(glyph);
+                }
+            }
+            if (path.isEmpty()) continue;
+            int g = 0;
+            while (g < groups.size() && !(groups[g].fill == fill && groups[g].outline == outline && groups[g].solid == solid)) ++g;
+            if (g == groups.size()) groups.append({fill, outline, solid, QPainterPath()});
+            groups[g].path.setFillRule(Qt::WindingFill);
+            groups[g].path.addPath(path);
+        }
+    }
+    for (const auto &g : groups) {
+        if (g.fill.isEmpty()) continue;
+        SceneObject carrier = FillStyle::textFillCarrier(g.fill, g.solid);
+        carrier.rect = box;
+        carrier.rotation = o.rotation;
+        if (carrier.fillStyle != 5) FillPaint::paintFill(painter, carrier, g.path);
+    }
+    for (const auto &g : groups) {
+        if (g.outline.isEmpty()) continue;
+        SceneObject carrier = FillStyle::textOutlineCarrier(g.outline);
+        if (carrier.strokeWidth <= 0) continue;
+        carrier.rect = box;
+        carrier.rotation = o.rotation;
+        if (!FillStyle::modernLine(carrier)) {
+            // A plain outline: stroked straight (quick enough for every frame).
+            painter.save();
+            QPen pen(carrier.strokeColor, carrier.strokeWidth, Qt::PenStyle(Qt::SolidLine + qBound(0, carrier.strokeStyle, 4)),
+                     carrier.strokeCap == 0 ? Qt::FlatCap : carrier.strokeCap == 2 ? Qt::SquareCap : Qt::RoundCap,
+                     carrier.strokeJoin == 0 ? Qt::MiterJoin : carrier.strokeJoin == 2 ? Qt::BevelJoin : Qt::RoundJoin);
+            painter.strokePath(g.path, pen);
+            painter.restore();
+        } else
+            FillPaint::paintLine(painter, carrier, g.path);
+    }
+}
+
+namespace {
+thread_local int tLetters = -1;
+
+// A box with no fill and no outline: PowerPoint draws only a plain outer
+// shadow of it (no resize or slant), cast by its words. Its glow, inner
+// shadow and perspective shadow draw nothing (measured); they are kept and
+// written back all the same.
+bool boxShadowOnWords(const SceneObject &o) {
+    return o.boxShadowEnabled && !o.shadowEnabled && !o.boxShadowInner && qFuzzyCompare(o.boxShadowScaleX, 100.0) &&
+           qFuzzyCompare(o.boxShadowScaleY, 100.0) && qFuzzyIsNull(o.boxShadowSkewX) && qFuzzyIsNull(o.boxShadowSkewY);
+}
+// What the words without effects of their own draw: the box's own effects
+// (with a no-fill box's shadow on them).
+SceneObject effectsCarrier(const SceneObject &o) {
+    SceneObject merged = o;
+    if (boxShadowOnWords(o)) merged.swapBoxShadow();
+    return merged;
+}
+} // namespace
+
+QVector<SceneObject> TextLayout::effectLooks(const SceneObject &o) {
+    QVector<SceneObject> looks{effectsCarrier(o)};
+    for (const auto &set : effectSets(o)) looks.append(FillStyle::withTextEffects(o, set));
+    return looks;
+}
+
+void TextLayout::paintLetters(QPainter &painter, const SceneObject &o, int index, qreal slideHeight) {
+    const int was = tLetters;
+    tLetters = qMax(0, index);
+    {
+        LayerEffects::PassScope face(LayerEffects::Pass::Face);
+        paint(painter, o, slideHeight);
+    }
+    tLetters = was;
+}
+
 void TextLayout::paint(QPainter &painter, const SceneObject &o, qreal slideHeight) {
+    // Only words laid out in a box have anything drawn behind them.
+    if (LayerEffects::pass() == LayerEffects::Pass::Behind && (onPath(o) || maths(o) || legacy(o) || o.columns > 1)) return;
     if (onPath(o)) {
         const auto metrics = measure(o);
         const auto laid = alongPath(o, metrics.effectiveSize);
@@ -728,42 +890,73 @@ void TextLayout::paint(QPainter &painter, const SceneObject &o, qreal slideHeigh
     // A text box's own effects (no fill, no outline to carry
     // them) are drawn on its words, as PowerPoint does: each kind only where
     // the words have none of their own.
-    const SceneObject *fx = &o;
-    SceneObject merged;
-    // A box with no fill and no outline: PowerPoint draws only a plain outer
-    // shadow of it (no resize or slant), cast by its words. Its glow, inner
-    // shadow and perspective shadow draw nothing (measured); they are kept and
-    // written back all the same.
-    const bool boxShadow = o.boxShadowEnabled && !o.shadowEnabled && !o.boxShadowInner &&
-                           qFuzzyCompare(o.boxShadowScaleX, 100.0) && qFuzzyCompare(o.boxShadowScaleY, 100.0) &&
-                           qFuzzyIsNull(o.boxShadowSkewX) && qFuzzyIsNull(o.boxShadowSkewY);
-    if (boxShadow) {
-        merged = o;
-        merged.swapBoxShadow();
-        fx = &merged;
+    const bool boxShadow = boxShadowOnWords(o);
+    const SceneObject merged = boxShadow ? effectsCarrier(o) : SceneObject();
+    const SceneObject *fx = boxShadow ? &merged : &o;
+    // Stretches with effects of their own draw them from their own
+    // letters (the rest of the words draw the box's).
+    const QVector<QVariantMap> sets = effectSets(o);
+    struct Cast { SceneObject look; std::shared_ptr<QTextDocument> letters; };
+    QVector<Cast> casts;
+    if (sets.isEmpty()) casts.append({*fx, doc});
+    else {
+        casts.append({*fx, layout(o, metrics.effectiveSize, false, 0)});
+        for (int i = 0; i < sets.size(); ++i)
+            casts.append({FillStyle::withTextEffects(o, sets.at(i)), layout(o, metrics.effectiveSize, false, i + 1)});
     }
-    const SceneObject &e = *fx;
+    // Only one stretch's letters, for its effects cast from the turned words
+    // (paintLetters).
+    if (tLetters >= 0) {
+        if (tLetters < casts.size()) {
+            painter.save();
+            painter.translate(origin);
+            casts.at(tLetters).letters->documentLayout()->draw(&painter, context);
+            painter.restore();
+        }
+        return;
+    }
+    const QSizeF area(o.rect.width(), qMax(metrics.renderedHeight, o.rect.height()));
+    const qreal effectSize = !o.origFont.isEmpty() && o.fontScale > 0 ? metrics.effectiveSize / o.fontScale : metrics.effectiveSize;
+    const auto pass = LayerEffects::pass();
     // Shadow and glow first, under the words and not cut off at the box.
-    if ((e.textGlowRadius > 0 && e.textGlowColor.alpha() > 0) || (e.shadowEnabled && !e.shadowInner && e.shadowColor.alpha() > 0))
-        // PowerPoint sizes its effects by its own text size: before a swapped
-        // Office font's size factor (FontSwap), which only matches the look.
-        paintEffects(painter, e, *doc, context, origin, QSizeF(o.rect.width(), qMax(metrics.renderedHeight, o.rect.height())),
-                     !o.origFont.isEmpty() && o.fontScale > 0 ? metrics.effectiveSize / o.fontScale : metrics.effectiveSize, slideHeight,
-                     boxShadow ? FillStyle::boxRect(o) : QRectF());
+    if (pass != LayerEffects::Pass::Face)
+        for (const auto &cast : casts) {
+            const SceneObject &e = cast.look;
+            if ((e.textGlowRadius > 0 && e.textGlowColor.alpha() > 0) || (e.shadowEnabled && !e.shadowInner && e.shadowColor.alpha() > 0))
+                // PowerPoint sizes its effects by its own text size: before a swapped
+                // Office font's size factor (FontSwap), which only matches the look.
+                paintEffects(painter, e, *cast.letters, context, origin, area, effectSize, slideHeight,
+                             boxShadow && &cast == &casts.first() ? FillStyle::boxRect(o) : QRectF());
+        }
+    if (pass == LayerEffects::Pass::Behind) return;
     painter.save();
     painter.setClipRect(o.rect, Qt::IntersectClip);
     painter.translate(origin);
-    doc->documentLayout()->draw(&painter, context);
+    if (fillsOrOutlines(o)) {
+        layout(o, metrics.effectiveSize, true)->documentLayout()->draw(&painter, context);
+        paintFillsAndOutlines(painter, o, *doc, QRectF(o.rect.topLeft() - origin, o.rect.size()));
+    } else
+        doc->documentLayout()->draw(&painter, context);
     painter.restore();
     // An inner shadow goes over the words, cut as they are.
-    if (e.shadowEnabled && e.shadowInner && e.shadowColor.alpha() > 0) {
+    for (const auto &cast : casts) {
+        const SceneObject &e = cast.look;
+        if (!(e.shadowEnabled && e.shadowInner && e.shadowColor.alpha() > 0)) continue;
         painter.save();
         painter.setClipRect(o.rect, Qt::IntersectClip);
-        paintInnerShadow(painter, e, *doc, context, origin, QSizeF(o.rect.width(), qMax(metrics.renderedHeight, o.rect.height())),
-                         !o.origFont.isEmpty() && o.fontScale > 0 ? metrics.effectiveSize / o.fontScale : metrics.effectiveSize, slideHeight,
-                         boxShadow);
+        paintInnerShadow(painter, e, *cast.letters, context, origin, area, effectSize, slideHeight,
+                         boxShadow && &cast == &casts.first());
         painter.restore();
     }
+}
+
+QRectF TextLayout::linesRect(const SceneObject &o) {
+    if (onPath(o) || maths(o) || legacy(o) || o.columns > 1) return o.rect;
+    const auto metrics = measure(o);
+    const qreal height = qMin(o.rect.height(), metrics.renderedHeight);
+    const qreal spare = qMax(0.0, o.rect.height() - metrics.renderedHeight);
+    const qreal dy = o.verticalAlign == 1 ? spare / 2 : o.verticalAlign == 2 ? spare : 0;
+    return QRectF(o.rect.left(), o.rect.top() + dy, o.rect.width(), qMax<qreal>(1e-3, height));
 }
 
 QString TextLayout::editorHtml(const SceneObject &object) {

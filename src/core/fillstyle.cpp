@@ -1,4 +1,5 @@
 #include "core/fillstyle.h"
+#include "core/design.h"
 
 #include <QHash>
 #include <QVariantMap>
@@ -285,6 +286,12 @@ SceneObject FillStyle::boxShape(const SceneObject &o) {
     box.swapBoxShadow();
     box.boxShadowEnabled = false;
     box.boxDrawn = false;
+    // The words' own effects stay with the words.
+    box.textReflection = Effects3D::Reflection();
+    box.textFormat3d = Effects3D::Format();
+    box.textScene3d = Effects3D::Scene();
+    box.textFill.clear();
+    box.textOutline.clear();
     return box;
 }
 
@@ -297,6 +304,10 @@ QVector<SceneObject> FillStyle::split(const SceneObject &o) {
     words.glowRadius = 0;
     // An outlined box with no fill casts its shadow from its words too.
     if (o.fillStyle != 5) words.boxShadowEnabled = false;
+    // The box's soft edges, reflection and 3-D format are the box's.
+    words.softEdge = 0;
+    words.reflection = Effects3D::Reflection();
+    words.format3d = Effects3D::Format();
     return {boxShape(o), words};
 }
 
@@ -329,3 +340,137 @@ void FillStyle::copyPicture(SceneObject &to, const SceneObject &from) {
     to.imageTint = from.imageTint; to.imageTintAmount = from.imageTintAmount;
     
 }
+
+// ---- Text Fill, Text Outline and a stretch's own text effects
+
+namespace FillStyle {
+
+const QStringList &textFillKeys() {
+    static const QStringList keys{"fillStyle", "fill", "fillSecondary", "fillAngle", "patternStyle", "gradientStops",
+                                  "gradientPath", "gradientFocusL", "gradientFocusT", "gradientFocusR", "gradientFocusB",
+                                  "gradientScaled", "gradientRotate", "patternPreset"};
+    return keys;
+}
+const QStringList &textOutlineKeys() {
+    static const QStringList keys{"strokeWidth", "strokeColor", "strokeStyle", "strokeJoin", "strokeCap", "strokeDash",
+                                  "strokeDashCustom", "strokeCompound", "strokeGradient", "strokeStops", "strokeAngle",
+                                  "strokeGradientPath"};
+    return keys;
+}
+const QStringList &textEffectKeys() {
+    static const QStringList keys{"textGlowRadius", "textGlowColor", "shadowEnabled", "shadowColor", "shadowX", "shadowY",
+                                  "shadowBlur", "shadowInner", "shadowScaleX", "shadowScaleY", "shadowSkewX", "shadowSkewY",
+                                  "shadowAlign", "textReflection"};
+    return keys;
+}
+
+namespace {
+bool checkKeys(const QVariant &value, const QStringList &keys, const QString &extra, QVariantMap *out) {
+    if (!value.isValid() || value.isNull()) { out->clear(); return true; }
+    if (value.metaType().id() != QMetaType::QVariantMap) return false;
+    const QVariantMap in = value.toMap();
+    SceneObject carrier;
+    QVariantMap tidy;
+    for (auto it = in.cbegin(); it != in.cend(); ++it) {
+        if (!extra.isEmpty() && it.key() == extra) { tidy.insert(extra, it.value().toBool()); continue; }
+        if (!keys.contains(it.key())) return false;
+        if (!Design::setProperty(carrier, it.key(), it.value(), false)) return false;
+    }
+    const QVariantMap all = Design::properties(carrier);
+    for (auto it = in.cbegin(); it != in.cend(); ++it)
+        if (keys.contains(it.key())) tidy.insert(it.key(), all.value(it.key()));
+    *out = tidy;
+    return true;
+}
+} // namespace
+
+// Only what the fill's type uses, so a fill read back from PowerPoint equals
+// the one set in the editor (a linear gradient has no focus, and so on).
+void pruneTextFill(QVariantMap &m) {
+    const int style = m.value(QStringLiteral("fillStyle"), 0).toInt();
+    static const QStringList focus{"gradientPath", "gradientFocusL", "gradientFocusT", "gradientFocusR", "gradientFocusB"};
+    static const QStringList gradient{"gradientStops", "gradientPath", "gradientFocusL", "gradientFocusT", "gradientFocusR",
+                                      "gradientFocusB", "gradientScaled", "gradientRotate", "fillAngle"};
+    static const QStringList pattern{"patternStyle", "patternPreset", "fillSecondary"};
+    if (style == 5) { m = QVariantMap{{QStringLiteral("fillStyle"), 5}}; return; }
+    if (style == 1) for (const auto &k : focus) m.remove(k);
+    if (style == 2) { m.remove(QStringLiteral("fillAngle")); m.remove(QStringLiteral("gradientScaled")); }
+    if (style == 1 || style == 2) for (const auto &k : pattern) m.remove(k);
+    if (style == 3) for (const auto &k : gradient) m.remove(k);
+    if (style == 1 || style == 2) m.remove(QStringLiteral("fill"));   // the stops say it
+}
+
+bool checkTextFill(const QVariant &value, QVariantMap *out) {
+    QVariantMap tidy;
+    if (!checkKeys(value, textFillKeys(), QString(), &tidy)) return false;
+    // Solid text is textColor (and a run's color): never a fill of its own.
+    if (!tidy.isEmpty() && tidy.value("fillStyle", 0).toInt() == 0) tidy.clear();
+    if (tidy.value("fillStyle").toInt() == 4) return false;   // picture text fill: not yet
+    if (!tidy.isEmpty()) pruneTextFill(tidy);
+    *out = tidy;
+    return true;
+}
+// As pruneTextFill, for a line: no gradient keys on a solid line, no custom dashes unless custom.
+void pruneTextOutline(QVariantMap &m) {
+    if (!m.value(QStringLiteral("strokeGradient")).toBool())
+        for (const auto &k : {"strokeGradient", "strokeStops", "strokeAngle", "strokeGradientPath"}) m.remove(QLatin1String(k));
+    if (m.value(QStringLiteral("strokeDash")).toString() != QLatin1String("custom")) m.remove(QStringLiteral("strokeDashCustom"));
+}
+bool checkTextOutline(const QVariant &value, QVariantMap *out) {
+    if (!checkKeys(value, textOutlineKeys(), QStringLiteral("none"), out)) return false;
+    pruneTextOutline(*out);
+    return true;
+}
+bool checkTextEffects(const QVariant &value, QVariantMap *out) { return checkKeys(value, textEffectKeys(), QString(), out); }
+
+SceneObject textFillCarrier(const QVariantMap &fill, const QColor &color) {
+    SceneObject c;
+    c.fill = color;
+    c.fillStyle = 0;
+    c.strokeWidth = 0;
+    for (auto it = fill.cbegin(); it != fill.cend(); ++it) Design::setProperty(c, it.key(), it.value(), false);
+    return c;
+}
+SceneObject textOutlineCarrier(const QVariantMap &outline) {
+    SceneObject c;
+    c.fillStyle = 5;
+    c.strokeWidth = 0;
+    if (outline.value("none").toBool()) return c;
+    for (auto it = outline.cbegin(); it != outline.cend(); ++it)
+        if (it.key() != QLatin1String("none")) Design::setProperty(c, it.key(), it.value(), false);
+    return c;
+}
+QVariantMap textFillOf(const SceneObject &carrier) {
+    if (carrier.fillStyle == 0) return {};
+    const QVariantMap all = Design::properties(carrier);
+    QVariantMap m;
+    for (const auto &key : textFillKeys()) m.insert(key, all.value(key));
+    pruneTextFill(m);
+    return m;
+}
+QVariantMap textOutlineOf(const SceneObject &carrier) {
+    if (carrier.strokeWidth <= 0) return {};
+    const QVariantMap all = Design::properties(carrier);
+    QVariantMap m;
+    for (const auto &key : textOutlineKeys()) m.insert(key, all.value(key));
+    pruneTextOutline(m);
+    return m;
+}
+SceneObject withTextEffects(const SceneObject &box, const QVariantMap &effects) {
+    SceneObject o = box;
+    if (effects.isEmpty()) return o;
+    // A full set: what it leaves out is off.
+    o.textGlowRadius = 0;
+    o.shadowEnabled = false;
+    o.textReflection = Effects3D::Reflection();
+    for (auto it = effects.cbegin(); it != effects.cend(); ++it) Design::setProperty(o, it.key(), it.value(), false);
+    return o;
+}
+QVariantMap textEffectsOf(const SceneObject &o) {
+    const QVariantMap all = Design::properties(o);
+    QVariantMap m;
+    for (const auto &key : textEffectKeys()) m.insert(key, all.value(key));
+    return m;
+}
+
+} // namespace FillStyle
