@@ -17,7 +17,14 @@ QStringList ObjectStyles::keys() {
           "glowColor",     "textGlowRadius", "textGlowColor",
           // A text box's own shadow.
           "boxShadowEnabled", "boxShadowColor", "boxShadowX", "boxShadowY", "boxShadowBlur", "boxShadowInner",
-          "boxShadowScaleX", "boxShadowScaleY", "boxShadowSkewX", "boxShadowSkewY", "boxShadowAlign"};
+          "boxShadowScaleX", "boxShadowScaleY", "boxShadowSkewX", "boxShadowSkewY", "boxShadowAlign",
+          // The rest of PowerPoint's fill and line, and a text box's own box.
+          "gradientStops", "gradientPath", "gradientFocusL", "gradientFocusT", "gradientFocusR", "gradientFocusB",
+          "gradientScaled", "gradientRotate", "patternPreset", "pictureTile", "pictureTileX", "pictureTileY",
+          "pictureTileScaleX", "pictureTileScaleY", "pictureTileAlign", "pictureTileFlip", "pictureInsetL", "pictureInsetT",
+          "pictureInsetR", "pictureInsetB", "pictureTransparency", "pictureRotate", "strokeDash", "strokeDashCustom",
+          "strokeCompound", "strokeGradient", "strokeStops", "strokeAngle", "strokeGradientPath",
+          "boxDrawn", "boxInsetL", "boxInsetT", "boxInsetR", "boxInsetB"};
 }
 SceneObject ObjectStyles::capture(const SceneObject &object) {
   SceneObject appearance;
@@ -37,7 +44,7 @@ void ObjectStyles::apply(SceneObject &object, const SceneObject &appearance) {
     Design::setProperty(object, key, properties.value(key), false);
     Design::markOverride(object, key);
   }
-  if (appearance.fillStyle == 4 && object.type == ObjectType::Rect) {
+  if (appearance.fillStyle == 4 && (object.type == ObjectType::Rect || object.type == ObjectType::Text)) {
     ImageAsset::copyData(object, appearance);
     object.imageMode = appearance.imageMode;
     object.imageCrop = appearance.imageCrop;

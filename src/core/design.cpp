@@ -6,7 +6,9 @@
 #include "core/shape.h"
 #include "core/textruns.h"
 #include "core/connector.h"
+#include "core/fillstyle.h"
 #include <QSet>
+#include <QHash>
 #include <cmath>
 
 const SlideLayout *Design::layout(const Document &d, const QString &id) {
@@ -49,6 +51,18 @@ QVariantMap Design::properties(const SceneObject &o) {
             {"shadowEnabled",o.shadowEnabled},{"shadowColor",o.shadowColor.name(QColor::HexArgb)},{"shadowX",o.shadowX},{"shadowY",o.shadowY},{"shadowBlur",o.shadowBlur},
             {"shadowInner",o.shadowInner},{"shadowScaleX",o.shadowScaleX},{"shadowScaleY",o.shadowScaleY},{"shadowSkewX",o.shadowSkewX},{"shadowSkewY",o.shadowSkewY},{"shadowAlign",o.shadowAlign},
             {"glowRadius",o.glowRadius},{"glowColor",o.glowColor.name(QColor::HexArgb)},
+            // The rest of PowerPoint's fill and line, and a text box's own box.
+            {"gradientStops",FillStyle::encodeStops(o.gradientStops)},{"gradientPath",o.gradientPath},
+            {"gradientFocusL",o.gradientFocusL},{"gradientFocusT",o.gradientFocusT},{"gradientFocusR",o.gradientFocusR},{"gradientFocusB",o.gradientFocusB},
+            {"gradientScaled",o.gradientScaled},{"gradientRotate",o.gradientRotate},{"patternPreset",o.patternPreset},
+            {"pictureTile",o.pictureTile},{"pictureTileX",o.pictureTileX},{"pictureTileY",o.pictureTileY},{"pictureTileScaleX",o.pictureTileScaleX},
+            {"pictureTileScaleY",o.pictureTileScaleY},{"pictureTileAlign",o.pictureTileAlign},{"pictureTileFlip",o.pictureTileFlip},
+            {"pictureInsetL",o.pictureInsetL},{"pictureInsetT",o.pictureInsetT},{"pictureInsetR",o.pictureInsetR},{"pictureInsetB",o.pictureInsetB},
+            {"pictureTransparency",o.pictureTransparency},{"pictureRotate",o.pictureRotate},
+            {"strokeDash",o.strokeDash},{"strokeDashCustom",o.strokeDashCustom},{"strokeCompound",o.strokeCompound},
+            {"strokeGradient",o.strokeGradient},{"strokeStops",FillStyle::encodeStops(o.strokeStops)},{"strokeAngle",o.strokeAngle},
+            {"strokeGradientPath",o.strokeGradientPath},
+            {"boxDrawn",o.boxDrawn},{"boxInsetL",o.boxInsetL},{"boxInsetT",o.boxInsetT},{"boxInsetR",o.boxInsetR},{"boxInsetB",o.boxInsetB},
             // A text box's own shadow.
             {"boxShadowEnabled",o.boxShadowEnabled},{"boxShadowColor",o.boxShadowColor.name(QColor::HexArgb)},{"boxShadowX",o.boxShadowX},{"boxShadowY",o.boxShadowY},
             {"boxShadowBlur",o.boxShadowBlur},{"boxShadowInner",o.boxShadowInner},{"boxShadowScaleX",o.boxShadowScaleX},{"boxShadowScaleY",o.boxShadowScaleY},
@@ -83,6 +97,69 @@ bool Design::setProperty(SceneObject &o, const QString &key, const QVariant &v, 
         o.boxShadowScaleX = box.boxShadowScaleX; o.boxShadowScaleY = box.boxShadowScaleY; o.boxShadowSkewX = box.boxShadowSkewX;
         o.boxShadowSkewY = box.boxShadowSkewY; o.boxShadowAlign = box.boxShadowAlign;
         return true;
+    }
+    // The rest of PowerPoint's fill and line, and a text box's own box.
+    {
+        static const QHash<QString, std::pair<qreal, qreal>> ranges{
+            {"gradientPath", {0, 2}}, {"gradientFocusL", {-1, 2}}, {"gradientFocusT", {-1, 2}}, {"gradientFocusR", {-1, 2}},
+            {"gradientFocusB", {-1, 2}}, {"pictureTileX", {-1e6, 1e6}}, {"pictureTileY", {-1e6, 1e6}},
+            {"pictureTileScaleX", {1, 1000}}, {"pictureTileScaleY", {1, 1000}}, {"pictureTileAlign", {0, 8}}, {"pictureTileFlip", {0, 3}},
+            {"pictureInsetL", {-10, 10}}, {"pictureInsetT", {-10, 10}}, {"pictureInsetR", {-10, 10}}, {"pictureInsetB", {-10, 10}},
+            {"pictureTransparency", {0, 1}}, {"strokeCompound", {0, 4}}, {"strokeAngle", {-1e6, 1e6}}, {"strokeGradientPath", {0, 3}},
+            {"boxInsetL", {0, 1e5}}, {"boxInsetT", {0, 1e5}}, {"boxInsetR", {0, 1e5}}, {"boxInsetB", {0, 1e5}}};
+        static const QSet<QString> whole{"gradientPath", "pictureTileAlign", "pictureTileFlip", "strokeCompound", "strokeGradientPath"};
+        static const QHash<QString, bool SceneObject::*> flags{
+            {"gradientScaled", &SceneObject::gradientScaled}, {"gradientRotate", &SceneObject::gradientRotate},
+            {"pictureTile", &SceneObject::pictureTile}, {"pictureRotate", &SceneObject::pictureRotate},
+            {"strokeGradient", &SceneObject::strokeGradient}, {"boxDrawn", &SceneObject::boxDrawn}};
+        if (flags.contains(key)) { o.*flags.value(key) = v.toBool(); return true; }
+        if (ranges.contains(key)) {
+            bool ok = false;
+            const qreal n = v.toDouble(&ok);
+            const auto [lo, hi] = ranges.value(key);
+            if (!ok || !std::isfinite(n) || n < lo || n > hi || (whole.contains(key) && n != int(n))) return false;
+            static const QHash<QString, qreal SceneObject::*> reals{
+                {"gradientFocusL", &SceneObject::gradientFocusL}, {"gradientFocusT", &SceneObject::gradientFocusT},
+                {"gradientFocusR", &SceneObject::gradientFocusR}, {"gradientFocusB", &SceneObject::gradientFocusB},
+                {"pictureTileX", &SceneObject::pictureTileX}, {"pictureTileY", &SceneObject::pictureTileY},
+                {"pictureTileScaleX", &SceneObject::pictureTileScaleX}, {"pictureTileScaleY", &SceneObject::pictureTileScaleY},
+                {"pictureInsetL", &SceneObject::pictureInsetL}, {"pictureInsetT", &SceneObject::pictureInsetT},
+                {"pictureInsetR", &SceneObject::pictureInsetR}, {"pictureInsetB", &SceneObject::pictureInsetB},
+                {"pictureTransparency", &SceneObject::pictureTransparency}, {"strokeAngle", &SceneObject::strokeAngle},
+                {"boxInsetL", &SceneObject::boxInsetL}, {"boxInsetT", &SceneObject::boxInsetT},
+                {"boxInsetR", &SceneObject::boxInsetR}, {"boxInsetB", &SceneObject::boxInsetB}};
+            static const QHash<QString, int SceneObject::*> ints{
+                {"gradientPath", &SceneObject::gradientPath}, {"pictureTileAlign", &SceneObject::pictureTileAlign},
+                {"pictureTileFlip", &SceneObject::pictureTileFlip}, {"strokeCompound", &SceneObject::strokeCompound},
+                {"strokeGradientPath", &SceneObject::strokeGradientPath}};
+            if (reals.contains(key)) o.*reals.value(key) = n; else o.*ints.value(key) = int(n);
+            return true;
+        }
+        if (key == QLatin1String("gradientStops")) return FillStyle::decodeStops(v, &o.gradientStops);
+        if (key == QLatin1String("strokeStops")) return FillStyle::decodeStops(v, &o.strokeStops);
+        if (key == QLatin1String("patternPreset")) {
+            const QString name = v.toString();
+            if (!name.isEmpty() && FillStyle::patternCells(name).isEmpty()) return false;
+            o.patternPreset = name;
+            return true;
+        }
+        if (key == QLatin1String("strokeDash")) {
+            const QString name = v.toString();
+            if (!name.isEmpty() && name != QLatin1String("custom") && !FillStyle::dashPresets().contains(name)) return false;
+            o.strokeDash = name;
+            return true;
+        }
+        if (key == QLatin1String("strokeDashCustom")) {
+            const QVariantList list = v.toList();
+            if (list.size() > 20) return false;
+            for (const auto &item : list) {
+                bool ok = false;
+                const qreal n = item.toDouble(&ok);
+                if (!ok || !std::isfinite(n) || n <= 0 || n > 1000) return false;
+            }
+            o.strokeDashCustom = list;
+            return true;
+        }
     }
     const QStringList numeric = {"textKind","tabStop","columns","columnGap","direction","mediaBytes","mediaModified","mediaDuration","mediaTrimStart","mediaTrimEnd","mediaVolume","mediaLoops","x", "y", "w", "h", "rotation", "opacity", "cornerRadius",
                                  "linkKind", "connectorStartX", "connectorStartY", "connectorEndX", "connectorEndY", "connectorFromSide", "connectorToSide", "connectorRoute", "shapeKind", "fillStyle", "fillAngle", "patternStyle", "strokeWidth", "strokeStyle", "strokeJoin", "strokeCap", "shadowX", "shadowY", "shadowBlur", "shadowScaleX", "shadowScaleY", "shadowSkewX", "shadowSkewY", "shadowAlign", "glowRadius", "fontSize", "fontWeight", "origFontSize", "fontScale", "origWeight", "textGlowRadius", "letterSpacing", "textAlign", "verticalAlign", "lineHeight", "paragraphSpacing", "textIndent", "listStyle", "listStart", "textFit", "imageMask", "imageFocalX", "imageFocalY", "imageBrightness", "imageContrast", "imageSaturation", "imageTintAmount", "imageMode", "cropX", "cropY", "cropW", "cropH"};

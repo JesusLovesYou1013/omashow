@@ -91,6 +91,11 @@ const QString kSoftShadow = QStringLiteral("shadow.soft");
 const QString kShapeGlow = QStringLiteral("shape.glow");
 const QString kShadowDetail = QStringLiteral("shadow.detail");
 const QString kBoxShadow = QStringLiteral("textbox.shadow");
+const QString kGradient = QStringLiteral("fill.gradient");
+const QString kPattern = QStringLiteral("fill.pattern");
+const QString kPicture = QStringLiteral("fill.picture");
+const QString kLine = QStringLiteral("line.style");
+const QString kBoxFill = QStringLiteral("textbox.fill");
 
 // What each feature is called, written into every features.json so an app that
 // doesn't know a feature can still name it (e.g. to say what a deck uses that
@@ -103,6 +108,11 @@ QString readableName(const QString &feature) {
         {kShapeGlow, QStringLiteral("Glow around shapes")},
         {kShadowDetail, QStringLiteral("Inner, resized and slanted (perspective) shadows")},
         {kBoxShadow, QStringLiteral("A text box's own shadow, apart from its words'")},
+        {kGradient, QStringLiteral("Gradients with more colours, rectangle and shape gradients, focus and rotation")},
+        {kPattern, QStringLiteral("PowerPoint's preset fill patterns")},
+        {kPicture, QStringLiteral("Picture fills tiled, inset or see-through")},
+        {kLine, QStringLiteral("Line dashes, double and triple lines, gradient lines")},
+        {kBoxFill, QStringLiteral("A text box's own fill and outline")},
     };
     if (names.contains(feature)) return names.value(feature);
     if (feature.startsWith(QLatin1String("key:"))) return QStringLiteral("The setting \"%1\"").arg(feature.section(QLatin1Char('.'), -1));
@@ -113,6 +123,13 @@ QString featureFor(const QString &part, const QString &key) {
     if (part == QLatin1String("object") && key.startsWith(QLatin1String("textGlow"))) return kTextGlow;
     if (part == QLatin1String("object") && key == QLatin1String("shadowBlur")) return kSoftShadow;
     if (part == QLatin1String("object") && key.startsWith(QLatin1String("boxShadow"))) return kBoxShadow;
+    if (part == QLatin1String("object") && key.startsWith(QLatin1String("gradient"))) return kGradient;
+    if (part == QLatin1String("object") && key == QLatin1String("patternPreset")) return kPattern;
+    if (part == QLatin1String("object") && key.startsWith(QLatin1String("picture"))) return kPicture;
+    if (part == QLatin1String("object") && (key.startsWith(QLatin1String("strokeDash")) || key == QLatin1String("strokeCompound") ||
+                                            key.startsWith(QLatin1String("strokeGradient")) || key == QLatin1String("strokeStops") ||
+                                            key == QLatin1String("strokeAngle"))) return kLine;
+    if (part == QLatin1String("object") && (key == QLatin1String("boxDrawn") || key.startsWith(QLatin1String("boxInset")))) return kBoxFill;
     if (part == QLatin1String("object") && (key == QLatin1String("glowRadius") || key == QLatin1String("glowColor"))) return kShapeGlow;
     if (part == QLatin1String("object") && (key == QLatin1String("shadowInner") || key.startsWith(QLatin1String("shadowScale")) ||
                                             key.startsWith(QLatin1String("shadowSkew")) || key == QLatin1String("shadowAlign"))) return kShadowDetail;
@@ -363,7 +380,7 @@ bool splits(const QString &name) {
 // ---- What this build knows ---------------------------------------------------
 
 const QStringList &namedFeatures() {
-    static const QStringList list{kEffects, kTextGlow, kSoftShadow, kShapeGlow, kShadowDetail, kBoxShadow};
+    static const QStringList list{kEffects, kTextGlow, kSoftShadow, kShapeGlow, kShadowDetail, kBoxShadow, kGradient, kPattern, kPicture, kLine, kBoxFill};
     return list;
 }
 

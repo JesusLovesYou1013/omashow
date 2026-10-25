@@ -71,6 +71,29 @@ SceneObject interpolate(const SceneObject &from, const SceneObject &to, qreal u)
     state.boxShadowColor = lerpColor(from.boxShadowColor,to.boxShadowColor,u);
     state.boxShadowBlur = lerp(from.boxShadowBlur,to.boxShadowBlur,u);
     state.glowRadius = lerp(from.glowRadius,to.glowRadius,u); state.glowColor = lerpColor(from.glowColor,to.glowColor,u);
+    // Gradients with the same number of stops, focus, tiles, insets.
+    auto lerpStops = [&](const QVector<GradientStop> &a, const QVector<GradientStop> &b) {
+        if (a.size() != b.size()) return b;
+        QVector<GradientStop> out = b;
+        for (int i = 0; i < out.size(); ++i) {
+            out[i].position = lerp(a[i].position, b[i].position, u);
+            out[i].color = lerpColor(a[i].color, b[i].color, u);
+            out[i].brightness = lerp(a[i].brightness, b[i].brightness, u);
+        }
+        return out;
+    };
+    state.gradientStops = lerpStops(from.gradientStops, to.gradientStops);
+    state.strokeStops = lerpStops(from.strokeStops, to.strokeStops);
+    state.strokeAngle = lerp(from.strokeAngle, to.strokeAngle, u);
+    state.gradientFocusL = lerp(from.gradientFocusL, to.gradientFocusL, u); state.gradientFocusT = lerp(from.gradientFocusT, to.gradientFocusT, u);
+    state.gradientFocusR = lerp(from.gradientFocusR, to.gradientFocusR, u); state.gradientFocusB = lerp(from.gradientFocusB, to.gradientFocusB, u);
+    state.pictureTileX = lerp(from.pictureTileX, to.pictureTileX, u); state.pictureTileY = lerp(from.pictureTileY, to.pictureTileY, u);
+    state.pictureTileScaleX = lerp(from.pictureTileScaleX, to.pictureTileScaleX, u); state.pictureTileScaleY = lerp(from.pictureTileScaleY, to.pictureTileScaleY, u);
+    state.pictureInsetL = lerp(from.pictureInsetL, to.pictureInsetL, u); state.pictureInsetT = lerp(from.pictureInsetT, to.pictureInsetT, u);
+    state.pictureInsetR = lerp(from.pictureInsetR, to.pictureInsetR, u); state.pictureInsetB = lerp(from.pictureInsetB, to.pictureInsetB, u);
+    state.pictureTransparency = lerp(from.pictureTransparency, to.pictureTransparency, u);
+    state.boxInsetL = lerp(from.boxInsetL, to.boxInsetL, u); state.boxInsetT = lerp(from.boxInsetT, to.boxInsetT, u);
+    state.boxInsetR = lerp(from.boxInsetR, to.boxInsetR, u); state.boxInsetB = lerp(from.boxInsetB, to.boxInsetB, u);
     state.textGlowRadius = lerp(from.textGlowRadius,to.textGlowRadius,u); state.textGlowColor = lerpColor(from.textGlowColor,to.textGlowColor,u);
     state.textColor = lerpColor(from.textColor, to.textColor, u);
 

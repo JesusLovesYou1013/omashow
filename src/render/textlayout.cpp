@@ -1,4 +1,5 @@
 #include "render/textlayout.h"
+#include "core/fillstyle.h"
 #include <QAbstractTextDocumentLayout>
 #include <QFontMetricsF>
 #include <QPainter>
@@ -748,7 +749,7 @@ void TextLayout::paint(QPainter &painter, const SceneObject &o, qreal slideHeigh
         // Office font's size factor (FontSwap), which only matches the look.
         paintEffects(painter, e, *doc, context, origin, QSizeF(o.rect.width(), qMax(metrics.renderedHeight, o.rect.height())),
                      !o.origFont.isEmpty() && o.fontScale > 0 ? metrics.effectiveSize / o.fontScale : metrics.effectiveSize, slideHeight,
-                     boxShadow ? o.rect : QRectF());
+                     boxShadow ? FillStyle::boxRect(o) : QRectF());
     painter.save();
     painter.setClipRect(o.rect, Qt::IntersectClip);
     painter.translate(origin);

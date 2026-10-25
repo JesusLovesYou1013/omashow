@@ -73,8 +73,12 @@ bool Backend::combineShapes(int operation) {
   return true;
 }
 void Backend::setShapeImageDialog() {
+  // A shape, or a text box (its own box), takes a picture fill.
   const auto *o = selectedObject();
-  if (!o || o->type != ObjectType::Rect)
+  if (o && o->type == ObjectType::Text)
+    for (const auto &id : selectedIds())
+      if (const auto *rect = m_document.slides.value(m_currentSlide).find(id); rect && rect->type == ObjectType::Rect) { o = rect; break; }
+  if (!o || (o->type != ObjectType::Rect && o->type != ObjectType::Text))
     return;
   m_imageTargetId = o->id;
   m_imageSlideId = m_document.slides.value(m_currentSlide).id;

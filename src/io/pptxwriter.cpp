@@ -4,6 +4,8 @@
 #include "core/chart.h"
 #include "core/design.h"
 #include "core/fonts.h"
+#include "core/fillstyle.h"
+#include "core/imageasset.h"
 #include "core/fontswap.h"
 #include "core/mediaasset.h"
 #include "core/shape.h"
@@ -120,6 +122,35 @@ void writeSolidFill(Xml &x, const QColor &c, qreal opacity = 1.0) {
     x.end();
 }
 
+// A gradient stop's colour, its Brightness as lumMod/lumOff.
+void writeStopColor(Xml &x, const GradientStop &stop, qreal opacity) {
+    x.start("a:srgbClr").attr("val", hex(stop.color));
+    if (stop.brightness > 0) {
+        x.start("a:lumMod").attr("val", qRound((1 - stop.brightness) * 100000)).end();
+        x.start("a:lumOff").attr("val", qRound(stop.brightness * 100000)).end();
+    } else if (stop.brightness < 0) x.start("a:lumMod").attr("val", qRound((1 + stop.brightness) * 100000)).end();
+    const qreal alpha = stop.color.alphaF() * opacity;
+    if (alpha < 0.999) x.start("a:alpha").attr("val", qRound(alpha * 100000)).end();
+    x.end();
+}
+
+// A gradient: stops, then a line (a:lin) or a path with its focus (a:fillToRect).
+void writeGradient(Xml &x, const QVector<GradientStop> &stops, int kind, qreal angle, bool scaled, bool rotate,
+                   const qreal focus[4], qreal opacity) {
+    x.start("a:gradFill").attr("rotWithShape", rotate ? "1" : "0");
+    x.start("a:gsLst");
+    for (const auto &stop : stops) { x.start("a:gs").attr("pos", qRound(qBound(0.0, stop.position, 1.0) * 100000)); writeStopColor(x, stop, opacity); x.end(); }
+    x.end();
+    if (kind == 0) x.start("a:lin").attr("ang", qRound64(std::fmod(std::fmod(angle, 360.0) + 360.0, 360.0) * 60000)).attr("scaled", scaled ? "1" : "0").end();
+    else {
+        x.start("a:path").attr("path", kind == 2 ? "rect" : kind == 3 ? "shape" : "circle");
+        x.start("a:fillToRect").attr("l", qRound(focus[0] * 100000)).attr("t", qRound(focus[1] * 100000))
+            .attr("r", qRound(focus[2] * 100000)).attr("b", qRound(focus[3] * 100000)).end();
+        x.end();
+    }
+    x.end();
+}
+
 // ---------------------------------------------------------------------------
 
 struct Warnings {
@@ -148,25 +179,16 @@ const char *presetFor(int kind) {
     return kind >= 0 && kind < 24 ? names[kind] : nullptr;
 }
 
-const char *dashFor(int style) {
-    switch (style) {
-    case 1: return "dash";
-    case 2: return "sysDot";
-    case 3: return "dashDot";
-    case 4: return "lgDashDotDot";
-    default: return "solid";
-    }
+// A line's dash by its preset name, else the nearest to its Qt
+// dash; a pattern by its preset name, else the nearest to its Qt pattern
+// (patternStyle counts from Qt::Dense1Pattern: the old table here was read
+// two places off, so a cross was written as horizontal lines).
+QString dashFor(const SceneObject &o) {
+    return o.strokeDash.isEmpty() || o.strokeDash == QLatin1String("custom") ? FillStyle::presetForQtDash(o.strokeStyle) : o.strokeDash;
 }
 
-const char *patternFor(int style) {
-    // Qt::Dense1Pattern … Qt::DiagCrossPattern, in the order the model keeps.
-    switch (style) {
-    case 2: return "pct90"; case 3: return "pct75"; case 4: return "pct60"; case 5: return "pct50";
-    case 6: return "pct30"; case 7: return "pct20"; case 8: return "pct10";
-    case 9: return "horz"; case 10: return "vert"; case 11: return "smGrid";
-    case 12: return "wdUpDiag"; case 13: return "wdDnDiag"; case 14: return "diagCross";
-    default: return "pct50";
-    }
+QString patternFor(const SceneObject &o) {
+    return o.patternPreset.isEmpty() ? FillStyle::presetForQtPattern(o.patternStyle) : o.patternPreset;
 }
 
 // 0 → A, 25 → Z, 26 → AA: how a spreadsheet names its columns.
@@ -318,30 +340,66 @@ struct Writer {
         x.end(); // custGeom
     }
 
-    void writeFill(Xml &x, const SceneObject &o, int slide) {
+    void writeFill(Xml &x, const SceneObject &o, SlideCtx &ctx) {
         switch (o.fillStyle) {
         case 0: writeSolidFill(x, o.fill, o.opacity); break;
         case 1: case 2: {
-            x.start("a:gradFill").attr("rotWithShape", "1");
-            x.start("a:gsLst");
-            x.start("a:gs").attr("pos", 0); writeColor(x, o.fill, o.opacity); x.end();
-            x.start("a:gs").attr("pos", 100000); writeColor(x, o.fillSecondary, o.opacity); x.end();
-            x.end();
-            if (o.fillStyle == 1) x.start("a:lin").attr("ang", qRound64(std::fmod(std::fmod(o.fillAngle, 360.0) + 360.0, 360.0) * 60000)).attr("scaled", "0").end();
-            else { x.start("a:path").attr("path", "circle"); x.start("a:fillToRect").attr("l", 50000).attr("t", 50000).attr("r", 50000).attr("b", 50000).end(); x.end(); }
-            x.end();
+            // Every stop; circle, rectangle or shape paths with their focus.
+            const qreal focus[4] = {o.gradientFocusL, o.gradientFocusT, o.gradientFocusR, o.gradientFocusB};
+            writeGradient(x, FillStyle::fillStops(o), o.fillStyle == 1 ? 0 : 1 + qBound(0, o.gradientPath, 2), o.fillAngle,
+                          o.gradientScaled, o.gradientRotate, focus, o.opacity);
             break;
         }
         case 3:
-            x.start("a:pattFill").attr("prst", patternFor(o.patternStyle));
+            x.start("a:pattFill").attr("prst", patternFor(o));
             x.start("a:fgClr"); writeColor(x, o.fill, o.opacity); x.end();
             x.start("a:bgClr"); writeColor(x, o.fillSecondary, o.opacity); x.end();
             x.end();
             break;
-        case 4:
-            warnings.add(QStringLiteral("A shape filled with a picture was given a plain fill"), slide);
-            writeSolidFill(x, o.fill, o.opacity);
+        case 4: {
+            // The picture itself (a:blipFill), placed as it is drawn.
+            const QString rel = pictureRel(o, ctx);
+            if (rel.isEmpty()) { writeSolidFill(x, o.fill, o.opacity); break; }
+            x.start("a:blipFill").attr("dpi", 0).attr("rotWithShape", o.pictureRotate ? "1" : "0");
+            x.start("a:blip").attr("r:embed", rel);
+            const qreal amount = qBound(0.0, (1 - o.pictureTransparency) * o.opacity, 1.0);
+            if (amount < 0.999) x.start("a:alphaModFix").attr("amt", qRound(amount * 100000)).end();
+            if (qFuzzyIsNull(o.imageSaturation)) x.empty("a:grayscl");
+            if (!qFuzzyIsNull(o.imageBrightness) || !qFuzzyCompare(o.imageContrast, 1.0))
+                x.start("a:lum").attr("bright", qRound(qBound(-1.0, o.imageBrightness, 1.0) * 100000)).attr("contrast", qRound(qBound(-1.0, o.imageContrast - 1.0, 1.0) * 100000)).end();
+            x.end();
+            // What part of the picture is drawn: its crop, and for Fill the part that fills the box.
+            const QSizeF full = o.image.isNull() ? o.vectorSize : QSizeF(o.image.size());
+            const QRectF source = ImageAsset::sourceRect(o);
+            if (!full.isEmpty() && !source.isEmpty()) {
+                const qreal l = source.left() / full.width(), t = source.top() / full.height();
+                const qreal r = 1 - source.right() / full.width(), b = 1 - source.bottom() / full.height();
+                if (l > 1e-4 || t > 1e-4 || r > 1e-4 || b > 1e-4)
+                    x.start("a:srcRect").attr("l", qRound(l * 100000)).attr("t", qRound(t * 100000)).attr("r", qRound(r * 100000)).attr("b", qRound(b * 100000)).end();
+            }
+            if (o.pictureTile) {
+                static const char *aligns[] = {"tl", "t", "tr", "l", "ctr", "r", "bl", "b", "br"};
+                static const char *flips[] = {"none", "x", "y", "xy"};
+                x.start("a:tile").attr("tx", emu(o.pictureTileX)).attr("ty", emu(o.pictureTileY))
+                    .attr("sx", qRound(o.pictureTileScaleX * 1000)).attr("sy", qRound(o.pictureTileScaleY * 1000))
+                    .attr("flip", flips[qBound(0, o.pictureTileFlip, 3)]).attr("algn", aligns[qBound(0, o.pictureTileAlign, 8)]).end();
+            } else {
+                qreal in[4] = {0, 0, 0, 0};
+                if (o.imageMode == 2) { in[0] = o.pictureInsetL; in[1] = o.pictureInsetT; in[2] = o.pictureInsetR; in[3] = o.pictureInsetB; }
+                else if (o.imageMode == 0 && !source.isEmpty() && !o.rect.isEmpty()) {
+                    // Fit: the picture's own shape inside the box, the rest left empty.
+                    const qreal picture = source.width() / source.height(), box = o.rect.width() / o.rect.height();
+                    if (picture > box) in[1] = in[3] = (1 - box / picture) / 2; else in[0] = in[2] = (1 - picture / box) / 2;
+                }
+                x.start("a:stretch");
+                if (std::abs(in[0]) + std::abs(in[1]) + std::abs(in[2]) + std::abs(in[3]) > 1e-5)
+                    x.start("a:fillRect").attr("l", qRound(in[0] * 100000)).attr("t", qRound(in[1] * 100000)).attr("r", qRound(in[2] * 100000)).attr("b", qRound(in[3] * 100000)).end();
+                else x.empty("a:fillRect");
+                x.end();
+            }
+            x.end();
             break;
+        }
         default: x.empty("a:noFill"); break;
         }
     }
@@ -349,10 +407,22 @@ struct Writer {
     void writeLine(Xml &x, const SceneObject &o) const {
         if (o.strokeWidth <= 0) { x.start("a:ln"); x.empty("a:noFill"); x.end(); return; }
         x.start("a:ln").attr("w", qMax<qint64>(1, emu(o.strokeWidth)));
-        x.attr("cap", o.strokeCap == 0 ? "flat" : o.strokeCap == 2 ? "sq" : "rnd");
-        writeSolidFill(x, o.strokeColor, o.opacity);
-        x.start("a:prstDash").attr("val", dashFor(o.strokeStyle)).end();
-        if (o.strokeJoin == 0) x.empty("a:miter"); else if (o.strokeJoin == 2) x.empty("a:bevel"); else x.empty("a:round");
+        // Cap and join as the model counts them (0 flat, 1 square,
+        // 2 round; 0 miter, 1 bevel, 2 round: the old mapping had them crossed),
+        // compound lines, gradient lines, every preset dash and custom dashes.
+        x.attr("cap", o.strokeCap == 0 ? "flat" : o.strokeCap == 1 ? "sq" : "rnd");
+        if (o.strokeCompound > 0) x.attr("cmpd", FillStyle::compoundNames().value(qBound(0, o.strokeCompound, 4)));
+        if (o.strokeGradient && o.strokeStops.size() >= 2) {
+            const qreal focus[4] = {.5, .5, .5, .5};
+            writeGradient(x, FillStyle::lineStops(o), qBound(0, o.strokeGradientPath, 3), o.strokeAngle, false, true, focus, o.opacity);
+        } else writeSolidFill(x, o.strokeColor, o.opacity);
+        if (o.strokeDash == QLatin1String("custom") && !o.strokeDashCustom.isEmpty()) {
+            x.start("a:custDash");
+            for (int i = 0; i + 1 < o.strokeDashCustom.size(); i += 2)
+                x.start("a:ds").attr("d", qRound(o.strokeDashCustom[i].toDouble() * 100000)).attr("sp", qRound(o.strokeDashCustom[i + 1].toDouble() * 100000)).end();
+            x.end();
+        } else x.start("a:prstDash").attr("val", dashFor(o)).end();
+        if (o.strokeJoin == 0) x.empty("a:miter"); else if (o.strokeJoin == 1) x.empty("a:bevel"); else x.empty("a:round");
         if (o.connector) {
             if (o.connectorArrowStart) x.start("a:headEnd").attr("type", "triangle").end();
             if (o.connectorArrowEnd) x.start("a:tailEnd").attr("type", "triangle").end();
@@ -471,9 +541,10 @@ struct Writer {
     }
 
     // The words of a text object, or of a table cell, as a txBody.
-    void writeTextBody(Xml &x, const char *tag, const SceneObject &o, SlideCtx &ctx, bool inTable) {
+    void writeTextBody(Xml &x, const char *tag, const SceneObject &o, SlideCtx &ctx, bool inTable, bool boxInsets = false) {
         x.start(tag);
-        x.start("a:bodyPr").attr("wrap", "square").attr("lIns", inTable ? 45720 : 0).attr("tIns", inTable ? 45720 : 0).attr("rIns", inTable ? 45720 : 0).attr("bIns", inTable ? 45720 : 0)
+        const auto inset = [&](qreal own) { return inTable ? qint64(45720) : boxInsets ? qMax<qint64>(0, emu(own)) : qint64(0); };
+        x.start("a:bodyPr").attr("wrap", "square").attr("lIns", inset(o.boxInsetL)).attr("tIns", inset(o.boxInsetT)).attr("rIns", inset(o.boxInsetR)).attr("bIns", inset(o.boxInsetB))
             .attr("rtlCol", o.direction == 2 ? "1" : "0")
             .attr("anchor", o.verticalAlign == 1 ? "ctr" : o.verticalAlign == 2 ? "b" : "t");
         if (o.columns > 1) x.attr("numCol", o.columns);
@@ -550,17 +621,24 @@ struct Writer {
         x.start("p:sp");
         writeNonVisual(x, "p:nvSpPr", "p:cNvSpPr", o, ctx, QStringLiteral("Text %1").arg(ctx.nextId), true);
         x.start("p:spPr");
-        writeXfrm(x, o.rect, o.rotation);
+        // A text box with a box of its own is one p:sp: the box's
+        // rectangle, fill and line, the words inset from it (bodyPr lIns…).
+        const bool box = o.boxDrawn;
+        writeXfrm(x, box ? FillStyle::boxRect(o) : o.rect, o.rotation);
         x.start("a:prstGeom").attr("prst", "rect"); x.empty("a:avLst"); x.end();
-        x.empty("a:noFill");
+        if (box) {
+            SceneObject shape = FillStyle::boxShape(o);
+            writeFill(x, shape, ctx);
+            writeLine(x, shape);
+        } else x.empty("a:noFill");
         // The text box's own glow and shadow, apart from its words'.
         if (o.glowRadius > 0 || o.boxShadowEnabled) {
-            SceneObject box = o;
-            box.swapBoxShadow();
-            writeEffects(x, box);
+            SceneObject shape = o;
+            shape.swapBoxShadow();
+            writeEffects(x, shape);
         }
         x.end();
-        writeTextBody(x, "p:txBody", o, ctx, false);
+        writeTextBody(x, "p:txBody", o, ctx, false, box);
         x.end();
     }
 
@@ -582,7 +660,7 @@ struct Writer {
             x.end();
             x.end();
         } else writeCustomGeometry(x, o);
-        writeFill(x, o, ctx.number);
+        writeFill(x, o, ctx);
         writeLine(x, o);
         writeEffects(x, o);
         x.end();
@@ -636,7 +714,8 @@ struct Writer {
         x.end();
     }
 
-    void writePicture(Xml &x, const SceneObject &o, SlideCtx &ctx) {
+    // The picture's part in the deck, and its relationship from this slide.
+    QString pictureRel(const SceneObject &o, SlideCtx &ctx) {
         QByteArray data = o.imageData;
         QString extension = o.imageFormat.toLower(), mime;
         if (extension == QLatin1String("jpg")) extension = QStringLiteral("jpeg");
@@ -652,7 +731,7 @@ struct Writer {
                 painter.scale(scale, scale);
                 painter.drawPicture(0, 0, o.vectorPicture);
             }
-            if (raster.isNull()) { warnings.add(QStringLiteral("A picture had no data to write"), ctx.number); return; }
+            if (raster.isNull()) { warnings.add(QStringLiteral("A picture had no data to write"), ctx.number); return {}; }
             data = pngOf(raster);
             extension = QStringLiteral("png");
             if (o.imageFormat.toLower() == QLatin1String("svg")) warnings.add(QStringLiteral("A vector picture was written as a bitmap"), ctx.number);
@@ -660,7 +739,12 @@ struct Writer {
         mime = extension == QLatin1String("png") ? QStringLiteral("image/png") : extension == QLatin1String("jpeg") ? QStringLiteral("image/jpeg")
              : extension == QLatin1String("gif") ? QStringLiteral("image/gif") : extension == QLatin1String("webp") ? QStringLiteral("image/webp") : QStringLiteral("application/octet-stream");
         const auto path = mediaPart(o.imageId + QLatin1Char('/') + extension, data, extension, mime);
-        const auto rel = ctx.rels->add(relBase + QStringLiteral("image"), QStringLiteral("../") + path.mid(4));
+        return ctx.rels->add(relBase + QStringLiteral("image"), QStringLiteral("../") + path.mid(4));
+    }
+
+    void writePicture(Xml &x, const SceneObject &o, SlideCtx &ctx) {
+        const QString rel = pictureRel(o, ctx);
+        if (rel.isEmpty()) return;
         x.start("p:pic");
         writeNonVisual(x, "p:nvPicPr", "p:cNvPicPr", o, ctx, QStringLiteral("Picture %1").arg(ctx.nextId));
         writePictureCommon(x, o, ctx, rel, false);

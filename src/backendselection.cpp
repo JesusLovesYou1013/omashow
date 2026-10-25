@@ -1,3 +1,5 @@
+#include "core/fillstyle.h"
+#include <QSet>
 #include "backend.h"
 #include "core/textruns.h"
 #include "core/punctuation.h"
@@ -477,7 +479,13 @@ QVariantMap Backend::effectState(const QString &target) const {
     }
   }
   state["count"] = count;
-  state["onWords"] = onWords && count > 0;   // a box with nothing to draw on
+  // A box with nothing to draw on (unless the
+  // text box has a fill or line of its own, which its box effects follow).
+  bool drawn = false;
+  if (onWords)
+    for (const auto &id : ids)
+      if (const auto *o = slide.find(id); o && FillStyle::boxVisible(*o)) drawn = true;
+  state["onWords"] = onWords && count > 0 && !drawn;
   return state;
 }
 void Backend::setSelectedEffect(const QString &target, const QVariantMap &values) {
@@ -518,6 +526,109 @@ void Backend::setSelectedEffect(const QString &target, const QVariantMap &values
                 Design::setProperty(*words, QStringLiteral("boxShadow") + it.key().mid(6), it.value());
                 Design::markOverride(*words, QStringLiteral("boxShadow") + it.key().mid(6));
               }
+  m_history.commit();
+  touch();
+}
+namespace {
+// The fill and line keys the inspector's Fill and Line set.
+const QStringList &fillKeys() {
+  static const QStringList keys{
+      "fill", "fillStyle", "fillSecondary", "fillAngle", "patternStyle", "patternPreset", "gradientStops", "gradientPath",
+      "gradientFocusL", "gradientFocusT", "gradientFocusR", "gradientFocusB", "gradientScaled", "gradientRotate",
+      "imageMode", "pictureTile", "pictureTileX", "pictureTileY", "pictureTileScaleX", "pictureTileScaleY", "pictureTileAlign",
+      "pictureTileFlip", "pictureInsetL", "pictureInsetT", "pictureInsetR", "pictureInsetB", "pictureTransparency", "pictureRotate",
+      "strokeColor", "strokeWidth", "strokeStyle", "strokeJoin", "strokeCap", "strokeDash", "strokeDashCustom", "strokeCompound",
+      "strokeGradient", "strokeStops", "strokeAngle", "strokeGradientPath", "boxInsetL", "boxInsetT", "boxInsetR", "boxInsetB"};
+  return keys;
+}
+bool fillOnText(const QStringList &ids, const Slide &slide) {
+  for (const auto &id : ids)
+    if (const auto *o = slide.find(id); o && o->type == ObjectType::Rect) return false;
+  return true;
+}
+bool fillTarget(const SceneObject &o, bool onText) {
+  return onText ? o.type == ObjectType::Text : o.type == ObjectType::Rect;
+}
+// A text box without a box of its own reads as no fill and no line (its
+// saved fill is the old default, never drawn); its first fill or line
+// starts from that.
+void startBox(SceneObject &o) {
+  if (o.type != ObjectType::Text || o.boxDrawn) return;
+  Design::setProperty(o, QStringLiteral("fillStyle"), 5);
+  Design::setProperty(o, QStringLiteral("strokeWidth"), 0);
+  Design::setProperty(o, QStringLiteral("strokeDash"), QString());
+  o.gradientStops.clear(); o.strokeStops.clear();
+  o.boxDrawn = true;
+}
+} // namespace
+QStringList Backend::fillPatternPresets() const { return FillStyle::patternPresets(); }
+QStringList Backend::lineDashPresets() const { return FillStyle::dashPresets(); }
+QVariantMap Backend::fillState() const {
+  QVariantMap state{{"count", 0}};
+  const auto ids = selectedIds();
+  if (ids.isEmpty()) return state;
+  const auto slide = Design::resolve(m_document, m_currentSlide);
+  const bool onText = fillOnText(ids, slide);
+  int count = 0;
+  for (const auto &id : ids) {
+    const auto *o = slide.find(id);
+    if (!o || !fillTarget(*o, onText)) continue;
+    if (count++ == 0) {
+      auto shown = *o;
+      startBox(shown);
+      const auto all = Design::properties(shown);
+      for (const auto &key : fillKeys()) state[key] = all.value(key);
+      // What the editors show: every stop, and the named preset of a dash or pattern.
+      state["gradientStops"] = FillStyle::encodeStops(FillStyle::fillStops(shown));
+      state["strokeStops"] = FillStyle::encodeStops(FillStyle::lineStops(shown));
+      if (shown.patternPreset.isEmpty()) state["patternPreset"] = FillStyle::presetForQtPattern(shown.patternStyle);
+      if (shown.strokeDash.isEmpty()) state["strokeDash"] = FillStyle::presetForQtDash(shown.strokeStyle);
+      state["hasPicture"] = !shown.imageId.isEmpty();
+      state["connector"] = shown.connector;
+    }
+  }
+  state["count"] = count;
+  state["target"] = onText ? QStringLiteral("text") : QStringLiteral("shape");
+  return state;
+}
+void Backend::setSelectedFill(const QVariantMap &values) {
+  for (auto it = values.cbegin(); it != values.cend(); ++it)
+    if (!fillKeys().contains(it.key())) return;
+  const auto ids = selectedIds();
+  const auto shown = Design::resolve(m_document, m_currentSlide);
+  const bool onText = fillOnText(ids, shown);
+  bool changed = false;
+  for (const auto &id : ids) {
+    const auto *o = shown.find(id);
+    if (!o || !fillTarget(*o, onText)) continue;
+    auto copy = *o;
+    startBox(copy);
+    for (auto it = values.cbegin(); it != values.cend(); ++it)
+      if (!Design::setProperty(copy, it.key(), it.value())) return;
+    FillStyle::syncLegacy(copy);
+    if (Design::properties(copy) != Design::properties(*o)) changed = true;
+  }
+  if (!changed) return;
+  bool line = true;
+  for (auto it = values.cbegin(); it != values.cend(); ++it)
+    if (!it.key().startsWith(QLatin1String("stroke"))) line = false;
+  m_history.begin(m_document, line ? tr("Change line") : tr("Change fill"));
+  for (const auto &id : ids)
+    if (auto *o = m_document.slides[m_currentSlide].find(id)) {
+      if (!fillTarget(*o, onText)) continue;
+      const bool started = o->type == ObjectType::Text && !o->boxDrawn;
+      startBox(*o);
+      if (started)
+        for (const auto &key : {"fillStyle", "strokeWidth", "strokeDash", "gradientStops", "strokeStops", "boxDrawn"}) Design::markOverride(*o, key);
+      for (auto it = values.cbegin(); it != values.cend(); ++it) {
+        Design::setProperty(*o, it.key(), it.value());
+        Design::markOverride(*o, it.key());
+      }
+      // The old fields follow (fill, fillSecondary, patternStyle, strokeStyle)
+      // so the older writers and readers see the nearest.
+      FillStyle::syncLegacy(*o);
+      for (const auto &key : {"fill", "fillSecondary", "patternStyle", "strokeStyle", "strokeColor"}) Design::markOverride(*o, key);
+    }
   m_history.commit();
   touch();
 }

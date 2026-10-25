@@ -47,7 +47,7 @@ bool Backend::applyImage(SceneObject image, bool replace, int index, const QStri
   if (replace) {
     const auto *existing = m_document.slides.at(index).find(target);
     if (!existing || (existing->type != ObjectType::Image &&
-                      existing->type != ObjectType::Rect)) {
+                      existing->type != ObjectType::Rect && existing->type != ObjectType::Text)) {
       emit failed(tr("The picture to replace is no longer available."));
       return false;
     }
@@ -55,7 +55,13 @@ bool Backend::applyImage(SceneObject image, bool replace, int index, const QStri
     auto *o = m_document.slides[index].find(target);
     o->imageOriginal.reset();
     ImageAsset::copyData(*o, image);
-    if (o->type == ObjectType::Rect) {
+    if (o->type == ObjectType::Text && !o->boxDrawn) {
+      // A text box's first picture fill starts its own box, with no line.
+      o->boxDrawn = true;
+      o->strokeWidth = 0;
+      for (const auto &key : {"boxDrawn", "strokeWidth"}) Design::markOverride(*o, key);
+    }
+    if (o->type == ObjectType::Rect || o->type == ObjectType::Text) {
       o->fillStyle = 4;
       Design::markOverride(*o, "fillStyle");
     }
