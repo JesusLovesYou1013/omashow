@@ -2,7 +2,10 @@
 
 pkgname=omashow
 pkgver=0.2.0
-pkgrel=2
+# Local package of the personal line with the newer styling merged in (local/personal-plus-style:
+# e960b9d + pr/style-3-3d-text, with the rotated-effects fixes up to 0c5157c), never pushed. 0.2.0-5 replaces
+# 0.2.0-4 (same line, plus the fixes) and sorts below any 0.2.1, so the next upstream release replaces it.
+pkgrel=5
 pkgdesc='Keyboard-first presentation editor and presenter for Omarchy'
 arch=('x86_64' 'aarch64')
 url='https://github.com/28allday/omashow'
@@ -31,7 +34,11 @@ sha256sums=()
 # release depends.
 build() {
   cd "$startdir/.."
-  ./bin/build
+  # As ./bin/build, but with the caller's make jobs (MAKEFLAGS, e.g. -j1) instead of every core.
+  mkdir -p build
+  cd build
+  qmake6 ../omashow.pro
+  make
 }
 
 package() {
