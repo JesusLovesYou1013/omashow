@@ -80,7 +80,7 @@ QVariantMap Design::properties(const SceneObject &o) {
             {"listStyle",o.listStyle},{"listStart",o.listStart},{"textFit",o.textFit},{"textKind",o.textKind},
             {"tabStop",o.tabStop},{"columns",o.columns},{"columnGap",o.columnGap},{"direction",o.direction},
             {"language",o.language},
-            {"fontFamily", o.fontFamily}, {"origFont", o.origFont}, {"origFontSize", o.origFontSize}, {"fontScale", o.fontScale}, {"origWeight", o.origWeight}, {"textGlowRadius", o.textGlowRadius}, {"textGlowColor", o.textGlowColor.name(QColor::HexArgb)}, {"uppercase", o.uppercase}, {"letterSpacing", o.letterSpacing},
+            {"fontFamily", o.fontFamily}, {"origFont", o.origFont}, {"origFontSize", o.origFontSize}, {"fontScale", o.fontScale}, {"origWeight", o.origWeight}, {"fitKept", o.fitKept}, {"textGlowRadius", o.textGlowRadius}, {"textGlowColor", o.textGlowColor.name(QColor::HexArgb)}, {"uppercase", o.uppercase}, {"letterSpacing", o.letterSpacing},
             {"fillToken", o.fillToken}, {"textColorToken", o.textColorToken}, {"fontToken", o.fontToken},
             {"altTitle", o.altTitle}, {"altText", o.altText}, {"runs", TextRuns::encode(o.runs)},
             // Soft edges, reflection, 3-D format and rotation; text fill and outline.
