@@ -1184,6 +1184,108 @@ int captureInterface(QQmlApplicationEngine &engine, Backend &backend, Presenter 
         qInfo().noquote() << QStringLiteral("ui-shot colors: %1 of %2 cases failed").arg(failures).arg(cases);
         return failures ? 3 : 0;
     }
+    // SIDEBAR-CHECK (OMASHOW_UI_SHOT_SIDEBAR=first|second|third, one throwaway HOME
+    // for all three launches): the sidebar's hide/show arrow and grip driven with
+    // real mouse events, then the width lock and the width kept for the next launch.
+    //   first:  opens shown at the standard width; arrow hides, arrow shows; a drag
+    //           widens it; locked; a drag no longer changes it; left hidden at exit.
+    //   second: shown again at launch, at the locked width; unlocked; a drag; exit.
+    //   third:  unlocked, so back at the standard width.
+    if (qEnvironmentVariableIsSet("OMASHOW_UI_SHOT_SIDEBAR")) {
+        const QString phase = qEnvironmentVariable("OMASHOW_UI_SHOT_SIDEBAR");
+        QObject *win = window;
+        if (backend.fontGate()) { backend.skipFontGate(); settle(500); }
+        if (QObject *check = window->findChild<QObject *>(QStringLiteral("fontCheckDialog")); check && check->property("visible").toBool()) {
+            QMetaObject::invokeMethod(check, "close");
+            settle(800);
+        }
+        settle(800);
+        QQuickItem *panel = findItem(window->contentItem(), QStringLiteral("inspectorPanel"));
+        QQuickItem *grip = findItem(window->contentItem(), QStringLiteral("inspectorGrip"));
+        QQuickItem *arrow = grip ? findItem(grip, QStringLiteral("sidebarToggleButton")) : nullptr;
+        if (!panel || !grip || !arrow) { qInfo().noquote() << "ui-shot sidebar: parts missing FAIL" << bool(panel) << bool(grip) << bool(arrow); return 3; }
+        int failures = 0;
+        const auto expect = [&](const QString &what, bool ok) {
+            qInfo().noquote() << "ui-shot sidebar:" << phase << "check" << what << (ok ? "ok" : "FAIL");
+            if (!ok) ++failures;
+        };
+        const auto state = [&](const QString &when) {
+            QStringList kept;
+            const auto ps = backend.panelState();
+            for (auto it = ps.cbegin(); it != ps.cend(); ++it) kept << it.key() + QLatin1Char('=') + it.value().toString();
+            qInfo().noquote() << "ui-shot sidebar:" << phase << when << "collapsed" << win->property("inspectorCollapsed").toBool()
+                              << "fixed" << win->property("inspectorFixed").toBool() << "width" << win->property("inspectorWidth").toReal()
+                              << "panel shown" << panel->isVisible() << "panel width" << panel->width() << "saved" << kept.join(QLatin1Char(' '));
+        };
+        const auto shoot = [&](const QString &name) { settle(500); window->grabWindow().save(outDir + QStringLiteral("/sidebar-%1.png").arg(name)); qInfo().noquote() << "ui-shot sidebar: shot" << name; };
+        ulong stamp = 1000;
+        const auto mouse = [&](QEvent::Type type, QPointF at, Qt::MouseButtons held) {
+            QMouseEvent ev(type, at, window->mapToGlobal(at.toPoint()), type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton, held, Qt::NoModifier);
+            ev.setTimestamp(stamp += 16);
+            QCoreApplication::sendEvent(window, &ev);
+        };
+        const auto click = [&](QQuickItem *item) {
+            const QPointF at = item->mapToScene(QPointF(item->width() / 2, item->height() / 2));
+            mouse(QEvent::MouseButtonPress, at, Qt::LeftButton);
+            settle(60);
+            mouse(QEvent::MouseButtonRelease, at, Qt::NoButton);
+            settle(600);
+        };
+        // Grab the grip away from its arrow and pull it toward the canvas (left) by `by`.
+        const auto drag = [&](qreal by) {
+            const QPointF from = grip->mapToScene(QPointF(grip->width() / 2, qMin(grip->height() - 20, arrow->y() + arrow->height() + 120)));
+            mouse(QEvent::MouseButtonPress, from, Qt::LeftButton);
+            settle(40);
+            for (int step = 1; step <= 10; ++step) { mouse(QEvent::MouseMove, from - QPointF(by * step / 10, 0), Qt::LeftButton); settle(30); }
+            mouse(QEvent::MouseButtonRelease, from - QPointF(by, 0), Qt::NoButton);
+            settle(600);
+        };
+        const qreal standard = 380;
+        const qreal near = 3;
+        state(QStringLiteral("launch"));
+        if (phase == QLatin1String("first")) {
+            expect(QStringLiteral("shown at launch"), panel->isVisible() && !win->property("inspectorCollapsed").toBool());
+            expect(QStringLiteral("standard width 380"), qAbs(win->property("inspectorWidth").toReal() - standard) < near);
+            shoot(QStringLiteral("1-launch"));
+            click(arrow);
+            state(QStringLiteral("after hide arrow"));
+            expect(QStringLiteral("hide arrow hides it"), !panel->isVisible() && win->property("inspectorCollapsed").toBool());
+            shoot(QStringLiteral("2-hidden"));
+            click(arrow);
+            state(QStringLiteral("after show arrow"));
+            expect(QStringLiteral("show arrow brings it back at the same width"), panel->isVisible() && qAbs(panel->width() - standard) < near);
+            shoot(QStringLiteral("3-shown"));
+            drag(90);
+            state(QStringLiteral("after drag 90"));
+            const qreal dragged = win->property("inspectorWidth").toReal();
+            expect(QStringLiteral("drag widens it"), dragged > standard + 60);
+            win->setProperty("inspectorFixed", true);   // what View > Lock sidebar width runs
+            settle(400);
+            state(QStringLiteral("after lock"));
+            drag(60);
+            state(QStringLiteral("after drag while locked"));
+            expect(QStringLiteral("locked width does not move"), qAbs(win->property("inspectorWidth").toReal() - dragged) < near);
+            shoot(QStringLiteral("4-locked"));
+            click(arrow);
+            state(QStringLiteral("left hidden at exit"));
+        } else if (phase == QLatin1String("second")) {
+            const qreal kept = backend.panelState().value(QStringLiteral("inspectorWidth")).toReal();
+            expect(QStringLiteral("shown at launch though left hidden"), panel->isVisible() && !win->property("inspectorCollapsed").toBool());
+            expect(QStringLiteral("locked, at the kept width"), win->property("inspectorFixed").toBool() && kept > standard + 60
+                                                               && qAbs(win->property("inspectorWidth").toReal() - kept) < near && qAbs(panel->width() - kept) < near);
+            shoot(QStringLiteral("5-relaunch-locked"));
+            win->setProperty("inspectorFixed", false);
+            settle(400);
+            drag(40);
+            state(QStringLiteral("after unlock and drag 40"));
+        } else {
+            expect(QStringLiteral("unlocked: back at the standard width"), !win->property("inspectorFixed").toBool()
+                                                                          && qAbs(win->property("inspectorWidth").toReal() - standard) < near && panel->isVisible());
+            shoot(QStringLiteral("6-relaunch-unlocked"));
+        }
+        qInfo().noquote() << "ui-shot sidebar:" << phase << "failures" << failures;
+        return failures ? 4 : 0;
+    }
     QQuickItem *canvas = findItem(window->contentItem(), QStringLiteral("editSlideView"));
     if (canvas && backend.slideCount() > 1) {
         backend.select(QString());
