@@ -1270,13 +1270,19 @@ int captureInterface(QQmlApplicationEngine &engine, Backend &backend, Presenter 
                         // A box with no fill or outline draws none of its own (PowerPoint's
                         // way, measured): the set says so in its note instead.
                         const bool explained = via == QLatin1String("shape") && set->property("onWords").toBool() && drawn <= 150;
-                        const bool ok = ((drawn > 150) == shown || explained) && others.isEmpty();
+                        // Given to the words, a text box's own Effects row must not say just
+                        // None: the words' effect draws on the box (the user's case: the
+                        // glow test deck's words glowing and turning, the box's Glow None).
+                        QString boxRow;
+                        if (via == QLatin1String("text")) if (QQuickItem *box = setItem(QStringLiteral("shape")); box && box->property("available").toBool())
+                            if (QQuickItem *r = findItem(box, e.row)) boxRow = r->property("summary").toString();
+                        const bool ok = ((drawn > 150) == shown || explained) && others.isEmpty() && (drawn <= 150 || boxRow != QLatin1String("None"));
                         if (!ok) ++failures;
                         if (qEnvironmentVariableIsSet("OMASHOW_UI_SHOT_FXSTATE_SAVE"))
                             after.save(outDir + QStringLiteral("/fxstate-%1-%2-%3-%4.png").arg(n).arg(turnVia, via, e.name));
                         qInfo().noquote() << "ui-shot fxstate:" << id << "turned via" << turnVia << e.name << "via" << via << "drawn px" << drawn
                                           << "| set on" << on << "row" << rowLine << "| set line" << setLine << "| group line" << groupLine
-                                          << "| others claim" << others.join(QLatin1Char('+')) << (ok ? "ok" : "FAIL");
+                                          << "| others claim" << others.join(QLatin1Char('+')) << "| box row" << boxRow << (ok ? "ok" : "FAIL");
                         for (const QString &t : sets) backend.setSelectedEffect(t, t == QLatin1String("text") ? QVariantMap{{"glowRadius", 0}, {"shadowEnabled", false}, {"reflection", QVariantMap()}, {"scene3d", QVariantMap()}} : none);
                     }
             // The words' glow given to all of the text while editing (it goes on
