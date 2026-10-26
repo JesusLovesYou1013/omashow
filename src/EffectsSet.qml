@@ -58,6 +58,15 @@ ColumnLayout {
     function round1(v) { return Math.round(v * 10) / 10 }
 
     readonly property bool glowOn: (fx.glowRadius ?? 0) > 0
+    // A text box's own Effects: the words' own glow, shadow and reflection
+    // (Text effects) draw on it too, so a row with none on the box says the text
+    // has one rather than just None.
+    readonly property var wordsFx: { backend.selection; backend.textSelection; return onText ? ({}) : backend.effectState("text") }
+    readonly property bool wordsOn: !onText && (wordsFx.count ?? 0) > 0
+    readonly property bool wordsGlow: wordsOn && (wordsFx.glowRadius ?? 0) > 0
+    readonly property bool wordsShadow: wordsOn && (wordsFx.shadowEnabled ?? false)
+    readonly property bool wordsReflection: wordsOn && Object.keys(wordsFx.reflection ?? ({})).length > 0
+    function noneHere(words) { return words ? qsTr("None on the box · the text has one") : qsTr("None") }
     readonly property bool shadowOn: fx.shadowEnabled ?? false
     readonly property real shadowDistance: pts(Math.hypot(fx.shadowX ?? 0, fx.shadowY ?? 0))
     readonly property real shadowAngle: {
@@ -129,7 +138,12 @@ ColumnLayout {
         if (formatOn) on.push(qsTr("3-D format"))
         if (rotationOn) on.push(qsTr("3-D rotation"))
         // Words whose stretches draw different effects show the first that is on.
+        const words = []
+        if (wordsShadow && !shadowOn) words.push(qsTr("Shadow"))
+        if (wordsReflection && !reflectionOn) words.push(qsTr("Reflection"))
+        if (wordsGlow && !glowOn) words.push(qsTr("Glow"))
         return (on.length ? on.join(", ") : qsTr("None")) + (onText && (fx.mixed ?? false) ? " " + qsTr("(varies along the text)") : "")
+               + (words.length ? " " + qsTr("(text: %1)").arg(words.join(", ")) : "")
     }
 
     function angle(v) { return ((v % 360) + 360) % 360 }
@@ -334,7 +348,7 @@ ColumnLayout {
         objectName: "effectsShadowExpander"
         title: qsTr("Shadow")
         open: root.shadowOpen
-        summary: !root.shadowOn ? qsTr("None")
+        summary: !root.shadowOn ? root.noneHere(root.wordsShadow)
                  : (root.fx.shadowInner ?? false) ? qsTr("Inside")
                  : root.perspective ? qsTr("Perspective")
                  : qsTr("%1 pt · %2°").arg(root.round1(root.shadowDistance)).arg(root.shadowAngle)
@@ -489,7 +503,7 @@ ColumnLayout {
         title: qsTr("Reflection")
         open: root.reflectionOpen
         // Shorter while the 3-D note follows it, so the note fits.
-        summary: !root.reflectionOn ? qsTr("None")
+        summary: !root.reflectionOn ? root.noneHere(root.wordsReflection)
                  : root.followNote ? qsTr("%1% · %2 pt").arg(Math.round(root.refl.endPos ?? 100)).arg(root.round1(root.pts(root.refl.dist)))
                  : qsTr("%1% size · %2 pt away").arg(Math.round(root.refl.endPos ?? 100)).arg(root.round1(root.pts(root.refl.dist)))
         text: (summary ? title + " · " + summary : title) + (root.reflectionOn && root.followNote ? " · " + root.followNote : "")
@@ -599,7 +613,7 @@ ColumnLayout {
         objectName: "effectsGlowExpander"
         title: qsTr("Glow")
         open: root.glowOpen
-        summary: root.glowOn ? qsTr("%1 pt · %2% clear").arg(root.round1(root.pts(root.fx.glowRadius))).arg(Math.round((1 - root.alphaOf(root.fx.glowColor)) * 100)) : qsTr("None")
+        summary: root.glowOn ? qsTr("%1 pt · %2% clear").arg(root.round1(root.pts(root.fx.glowRadius))).arg(Math.round((1 - root.alphaOf(root.fx.glowColor)) * 100)) : root.noneHere(root.wordsGlow)
         onClicked: root.toggle("glow")
     }
     ColumnLayout {
