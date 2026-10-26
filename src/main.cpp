@@ -1184,6 +1184,221 @@ int captureInterface(QQmlApplicationEngine &engine, Backend &backend, Presenter 
         qInfo().noquote() << QStringLiteral("ui-shot colors: %1 of %2 cases failed").arg(failures).arg(cases);
         return failures ? 3 : 0;
     }
+    // FX-STATE (OMASHOW_UI_SHOT_FXSTATE=1, OMASHOW_UI_SHOT_FXSTATE_SLIDE=n,
+    // OMASHOW_UI_SHOT_FXSTATE_IDS=id,id…): what an effect control shows against what
+    // is drawn, on turned objects. For each object, turned in 3-D from the box's
+    // or the words' Effects (as by hand), a glow (a Glow variation), a shadow
+    // ("Add shadow") and a reflection ("Add reflection") are added from each
+    // Effects set in turn. The canvas is grabbed before and after; the set's own
+    // row, its closed row's line and its group's line must say the effect is on
+    // exactly when something was drawn, and every other set must not claim it.
+    if (qEnvironmentVariableIsSet("OMASHOW_UI_SHOT_FXSTATE")) {
+        QQuickItem *tabs = findItem(window->contentItem(), QStringLiteral("inspectorTabs"));
+        QQuickItem *inspector = findItem(window->contentItem(), QStringLiteral("inspectorPanel"));
+        QQuickItem *canvas = findItem(window->contentItem(), QStringLiteral("editSlideView"));
+        if (!tabs || !inspector || !canvas) { qInfo().noquote() << "ui-shot fxstate: parts missing FAIL"; return 3; }
+        if (backend.fontGate()) { backend.skipFontGate(); settle(500); }
+        if (QObject *check = window->findChild<QObject *>(QStringLiteral("fontCheckDialog")); check && check->property("visible").toBool()) {
+            QMetaObject::invokeMethod(check, "close");
+            settle(800);
+        }
+        backend.setProperty("currentSlide", qMax(0, qEnvironmentVariableIntValue("OMASHOW_UI_SHOT_FXSTATE_SLIDE")));
+        settle(500);
+        const auto grab = [&]() {
+            settle(600);
+            const QImage whole = window->grabWindow();
+            const QRectF r = canvas->mapRectToScene(QRectF(0, 0, canvas->width(), canvas->height()));
+            const qreal dpr = whole.devicePixelRatio();
+            return whole.copy(QRect(int(r.left() * dpr), int(r.top() * dpr), int(r.width() * dpr), int(r.height() * dpr)).intersected(whole.rect()))
+                .convertToFormat(QImage::Format_RGB32);
+        };
+        const auto changed = [](const QImage &a, const QImage &b) {   // pixels moved more than 12 grey levels
+            if (a.size() != b.size() || a.isNull()) return -1;
+            int n = 0;
+            for (int y = 0; y < a.height(); ++y) {
+                const QRgb *p = reinterpret_cast<const QRgb *>(a.constScanLine(y)), *q = reinterpret_cast<const QRgb *>(b.constScanLine(y));
+                for (int x = 0; x < a.width(); ++x) n += qAbs(qGray(p[x]) - qGray(q[x])) > 4;
+            }
+            return n;
+        };
+        const QVariantMap scene{{"camera", QStringLiteral("perspectiveContrastingRightFacing")}, {"rig", "threePt"}, {"rigDir", "t"}};
+        const QVariantMap none{{"scene3d", QVariantMap()}, {"glowRadius", 0}, {"shadowEnabled", false}, {"reflection", QVariantMap()}, {"effects3dFollow", true}};
+        struct Effect { QString name, on, row, button; };
+        const QList<Effect> effects{{"glow", "glowOn", "effectsGlowExpander", QString()},
+                                    {"shadow", "shadowOn", "effectsShadowExpander", "effects3dShadowButton"},
+                                    {"reflection", "reflectionOn", "effectsReflectionExpander", "effects3dReflectionButton"}};
+        const QStringList sets{QStringLiteral("shape"), QStringLiteral("text")};
+        const auto setItem = [&](const QString &target) {
+            return findItem(inspector, target == QLatin1String("text") ? QStringLiteral("effectsSetText") : QStringLiteral("effectsSetBox"));
+        };
+        const auto group = [&](const QString &target) {
+            QQuickItem *g = findItem(inspector, target == QLatin1String("text") ? QStringLiteral("styleGroupText") : QStringLiteral("effectsPanel"));
+            return g && g->isVisible() ? g->property("summary").toString() : QString();
+        };
+        int n = 0, failures = 0;
+        for (const QString &id : qEnvironmentVariable("OMASHOW_UI_SHOT_FXSTATE_IDS").split(QLatin1Char(','), Qt::SkipEmptyParts)) {
+            for (const QString &turnVia : sets)
+                for (const QString &via : sets)
+                    for (const Effect &e : effects) {
+                        backend.select(id);
+                        settle(200);
+                        tabs->setProperty("currentIndex", 1);
+                        QQuickItem *set = setItem(via);
+                        if (!set || !set->property("available").toBool()) continue;   // no such set for this object
+                        for (const QString &t : sets) backend.setSelectedEffect(t, t == QLatin1String("text") ? QVariantMap{{"glowRadius", 0}, {"shadowEnabled", false}, {"reflection", QVariantMap()}, {"scene3d", QVariantMap()}} : none);
+                        backend.setSelectedEffect(turnVia, {{"scene3d", scene}});
+                        const QImage before = grab();
+                        if (e.button.isEmpty()) {
+                            const qreal u = backend.property("ptPerUnit").toDouble() > 0 ? 1 / backend.property("ptPerUnit").toDouble() : 2;
+                            const QVariant glow = QVariantMap{{"glowRadius", 11 * u}, {"glowColor", QStringLiteral("#66e97132")}};
+                            QMetaObject::invokeMethod(set, "set", Q_ARG(QVariant, glow));
+                        } else if (QQuickItem *b = findItem(set, e.button)) {
+                            QMetaObject::invokeMethod(b, "clicked");
+                        }
+                        const QImage after = grab();
+                        const int drawn = changed(before, after);
+                        QQuickItem *row = findItem(set, e.row);
+                        const bool on = set->property(e.on.toUtf8()).toBool();
+                        const QString rowLine = row ? row->property("summary").toString() : QStringLiteral("?");
+                        const QString setLine = set->property("summary").toString(), groupLine = group(via);
+                        const QString word = e.name == QLatin1String("glow") ? QStringLiteral("Glow") : e.name == QLatin1String("shadow") ? QStringLiteral("Shadow") : QStringLiteral("Reflection");
+                        // Every other set: claims it only if it is that set's own.
+                        QStringList others;
+                        for (const QString &t : sets)
+                            if (t != via) if (QQuickItem *o = setItem(t); o && o->property("available").toBool() && o->property(e.on.toUtf8()).toBool()) others << t;
+                        const bool shown = on && rowLine != QLatin1String("None") && setLine.contains(word);
+                        // A box with no fill or outline draws none of its own (PowerPoint's
+                        // way, measured): the set says so in its note instead.
+                        const bool explained = via == QLatin1String("shape") && set->property("onWords").toBool() && drawn <= 150;
+                        const bool ok = ((drawn > 150) == shown || explained) && others.isEmpty();
+                        if (!ok) ++failures;
+                        if (qEnvironmentVariableIsSet("OMASHOW_UI_SHOT_FXSTATE_SAVE"))
+                            after.save(outDir + QStringLiteral("/fxstate-%1-%2-%3-%4.png").arg(n).arg(turnVia, via, e.name));
+                        qInfo().noquote() << "ui-shot fxstate:" << id << "turned via" << turnVia << e.name << "via" << via << "drawn px" << drawn
+                                          << "| set on" << on << "row" << rowLine << "| set line" << setLine << "| group line" << groupLine
+                                          << "| others claim" << others.join(QLatin1Char('+')) << (ok ? "ok" : "FAIL");
+                        for (const QString &t : sets) backend.setSelectedEffect(t, t == QLatin1String("text") ? QVariantMap{{"glowRadius", 0}, {"shadowEnabled", false}, {"reflection", QVariantMap()}, {"scene3d", QVariantMap()}} : none);
+                    }
+            // The words' glow given to all of the text while editing (it goes on
+            // the stretch), then the box selected again: the Text effects must show
+            // the glow that is drawn, and turning it off there must take it away.
+            if (QQuickItem *words = setItem(QStringLiteral("text")); words) {
+                backend.select(id);
+                settle(200);
+                if (words->property("available").toBool()) {
+                    backend.setSelectedEffect(QStringLiteral("text"), {{"glowRadius", 0}, {"scene3d", scene}});
+                    const QImage before = grab();
+                    const int length = backend.selection().value(QStringLiteral("text")).toString().size();
+                    backend.setTextSelection(0, length);
+                    const qreal u = backend.property("ptPerUnit").toDouble() > 0 ? 1 / backend.property("ptPerUnit").toDouble() : 2;
+                    const QVariant glow = QVariantMap{{"glowRadius", 11 * u}, {"glowColor", QStringLiteral("#66e97132")}};
+                    QMetaObject::invokeMethod(words, "set", Q_ARG(QVariant, glow));
+                    backend.setTextSelection(0, 0);
+                    const QImage on = grab();
+                    QQuickItem *row = findItem(words, QStringLiteral("effectsGlowExpander"));
+                    const bool shown = words->property("glowOn").toBool() && row && row->property("summary").toString() != QLatin1String("None");
+                    const QVariant off = QVariantMap{{"glowRadius", 0}};
+                    QMetaObject::invokeMethod(words, "set", Q_ARG(QVariant, off));
+                    const QImage gone = grab();
+                    const int drawn = changed(before, on), left = changed(before, gone);
+                    const bool ok = length > 0 && drawn > 150 && shown && left <= 150 && !words->property("glowOn").toBool();
+                    if (!ok) ++failures;
+                    qInfo().noquote() << "ui-shot fxstate:" << id << "words' glow on the whole text: drawn px" << drawn << "shown" << shown
+                                      << "row" << (row ? row->property("summary").toString() : QStringLiteral("?")) << "| after No glow px" << left << (ok ? "ok" : "FAIL");
+                    backend.setSelectedEffect(QStringLiteral("text"), {{"glowRadius", 0}, {"scene3d", QVariantMap()}});
+                }
+            }
+            ++n;
+        }
+        qInfo().noquote() << "ui-shot fxstate: objects" << n << "failures" << failures;
+        return failures ? 4 : 0;
+    }
+    // FX-FOLLOW (OMASHOW_UI_SHOT_FXFOLLOW=1, OMASHOW_UI_SHOT_FXFOLLOW_SLIDE=n,
+    // OMASHOW_UI_SHOT_FXFOLLOW_IDS=id,id…): for each object, as by hand: turned
+    // in 3-D, the 3-D Rotation section's "Add shadow" pressed, then "Shadow and
+    // reflection follow 3-D rotation" turned off. The slide canvas is grabbed at
+    // each step; the pixels the shadow changed are reported. Drawn flat, it must
+    // be drawn following the turn too, about as much (FX-FOLLOW, A1).
+    if (qEnvironmentVariableIsSet("OMASHOW_UI_SHOT_FXFOLLOW")) {
+        QQuickItem *tabs = findItem(window->contentItem(), QStringLiteral("inspectorTabs"));
+        QQuickItem *inspector = findItem(window->contentItem(), QStringLiteral("inspectorPanel"));
+        QQuickItem *canvas = findItem(window->contentItem(), QStringLiteral("editSlideView"));
+        if (!tabs || !inspector || !canvas) { qInfo().noquote() << "ui-shot fxfollow: parts missing FAIL"; return 3; }
+        if (backend.fontGate()) { backend.skipFontGate(); settle(500); }
+        if (QObject *check = window->findChild<QObject *>(QStringLiteral("fontCheckDialog")); check && check->property("visible").toBool()) {
+            QMetaObject::invokeMethod(check, "close");
+            settle(800);
+        }
+        backend.setProperty("currentSlide", qMax(0, qEnvironmentVariableIntValue("OMASHOW_UI_SHOT_FXFOLLOW_SLIDE")));
+        settle(500);
+        QObject *opener = findItem(inspector, QStringLiteral("styleOpen"));
+        if (!opener) opener = inspector->findChild<QObject *>(QStringLiteral("styleOpen"));
+        const auto open = [&](const QStringList &keys) { if (opener) for (const auto &k : keys) QMetaObject::invokeMethod(opener, "set", Q_ARG(QVariant, k), Q_ARG(QVariant, true)); settle(300); };
+        const auto grab = [&]() {
+            settle(700);
+            const QImage whole = window->grabWindow();
+            const QRectF r = canvas->mapRectToScene(QRectF(0, 0, canvas->width(), canvas->height()));
+            const qreal dpr = whole.devicePixelRatio();
+            return whole.copy(QRect(int(r.left() * dpr), int(r.top() * dpr), int(r.width() * dpr), int(r.height() * dpr)).intersected(whole.rect()))
+                .convertToFormat(QImage::Format_RGB32);
+        };
+        const auto change = [](const QImage &a, const QImage &b) {   // pixels moved more than 4 grey levels
+            if (a.size() != b.size() || a.isNull()) return -1;
+            int n = 0;
+            for (int y = 0; y < a.height(); ++y) {
+                const QRgb *p = reinterpret_cast<const QRgb *>(a.constScanLine(y)), *q = reinterpret_cast<const QRgb *>(b.constScanLine(y));
+                for (int x = 0; x < a.width(); ++x) n += qAbs(qGray(p[x]) - qGray(q[x])) > 4;
+            }
+            return n;
+        };
+        const QString camera = qEnvironmentVariable("OMASHOW_UI_SHOT_FXFOLLOW_CAMERA", QStringLiteral("perspectiveContrastingRightFacing"));
+        int n = 0, failures = 0;
+        for (const QString &id : qEnvironmentVariable("OMASHOW_UI_SHOT_FXFOLLOW_IDS").split(QLatin1Char(','), Qt::SkipEmptyParts)) {
+            backend.select(id);
+            settle(300);
+            tabs->setProperty("currentIndex", 1);
+            settle(300);
+            const bool words = backend.effectState(QStringLiteral("text")).value("onWords").isValid() && !backend.effectState(QStringLiteral("shape")).value("scene3d").isValid();
+            Q_UNUSED(words);
+            // Which panel has the turn: a text box's words or the shape.
+            const QString target = qEnvironmentVariable("OMASHOW_UI_SHOT_FXFOLLOW_TARGET", QStringLiteral("shape"));
+            const QString group = target == QLatin1String("text") ? QStringLiteral("styleGroupText") : QStringLiteral("effectsPanel");
+            backend.setSelectedEffect(target, {{"scene3d", QVariantMap{{"camera", camera}, {"rig", "threePt"}, {"rigDir", "t"}}},
+                                               {"shadowEnabled", false}, {"effects3dFollow", true}});
+            open({target == QLatin1String("text") ? QStringLiteral("group.text") : QStringLiteral("group.effects"), target + QStringLiteral(".rotation")});
+            QQuickItem *set = findItem(inspector, group);
+            QQuickItem *button = set ? findItem(set, QStringLiteral("effects3dShadowButton")) : nullptr;
+            QQuickItem *follow = set ? findItem(set, QStringLiteral("effects3dFollow")) : nullptr;
+            const QImage turned = grab();
+            turned.save(outDir + QStringLiteral("/fxfollow-%1-a-turned.png").arg(n));
+            if (button) { QMetaObject::invokeMethod(button, "clicked"); }
+            const QImage on = grab();
+            on.save(outDir + QStringLiteral("/fxfollow-%1-b-shadow-follow.png").arg(n));
+            const auto fx = backend.effectState(target);
+            if (follow) { follow->setProperty("checked", false); QMetaObject::invokeMethod(follow, "toggled"); }
+            const QImage off = grab();
+            off.save(outDir + QStringLiteral("/fxfollow-%1-c-shadow-flat.png").arg(n));
+            // The same, flat, without the shadow: what the shadow adds flat (its
+            // glow, say, goes flat too, and is not the shadow's).
+            backend.setSelectedEffect(target, {{"shadowEnabled", false}});
+            const QImage flatNone = grab();
+            backend.undo();
+            settle(100);
+            const int dOn = change(turned, on), dOff = change(flatNone, off);
+            // Not this object's set (a shape has no Text effects): nothing to check.
+            if (!fx.value("count").toInt()) { qInfo().noquote() << "ui-shot fxfollow:" << n << id << "target" << target << "not applicable"; for (int i = 0; i < 3; ++i) { backend.undo(); settle(100); } ++n; continue; }
+            // Following the turn may change where the shadow falls, never whether
+            // it shows: drawn flat, it is drawn turned too, about as much.
+            const bool ok = button && follow && fx.value("shadowEnabled").toBool() && (dOff <= 150 ? true : dOn > 150 && dOn * 10 >= dOff * 3);
+            if (!ok) ++failures;
+            qInfo().noquote() << "ui-shot fxfollow:" << n << id << "target" << target << "button" << bool(button) << "follow box" << bool(follow)
+                              << "shadow set" << fx.value("shadowEnabled").toBool() << "change follow-on" << dOn << "follow-off" << dOff << (ok ? "ok" : "FAIL");
+            for (int i = 0; i < 3; ++i) { backend.undo(); settle(100); }
+            ++n;
+        }
+        qInfo().noquote() << "ui-shot fxfollow: objects" << n << "failures" << failures;
+        return failures ? 4 : 0;
+    }
     // SIDEBAR-CHECK (OMASHOW_UI_SHOT_SIDEBAR=first|second|third, one throwaway HOME
     // for all three launches): the sidebar's hide/show arrow and grip driven with
     // real mouse events, then the width lock and the width kept for the next launch.
