@@ -2,7 +2,10 @@
 
 pkgname=omashow
 pkgver=0.2.0
-pkgrel=1
+# Local test package of the styling branch (pr/style-3-3d-text 5099e72 on the 0.2.0 base), never pushed:
+# 0.2.0-3 sorts above upstream's 0.2.0-1 and the 0.2.0-2 used on this machine's merge line, and below any
+# 0.2.1, so the next upstream release replaces it.
+pkgrel=3
 pkgdesc='Keyboard-first presentation editor and presenter for Omarchy'
 arch=('x86_64' 'aarch64')
 url='https://github.com/28allday/omashow'
@@ -40,7 +43,11 @@ sha256sums=()
 # release depends.
 build() {
   cd "$startdir/.."
-  ./bin/build
+  # As ./bin/build, but with the caller's make jobs (MAKEFLAGS, e.g. -j1) instead of every core.
+  mkdir -p build
+  cd build
+  qmake6 ../omashow.pro
+  make
 }
 
 package() {
