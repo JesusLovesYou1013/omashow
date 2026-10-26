@@ -128,7 +128,8 @@ ColumnLayout {
         if (softOn) on.push(qsTr("Soft edges"))
         if (formatOn) on.push(qsTr("3-D format"))
         if (rotationOn) on.push(qsTr("3-D rotation"))
-        return on.length ? on.join(", ") : qsTr("None")
+        // Words whose stretches draw different effects show the first that is on.
+        return (on.length ? on.join(", ") : qsTr("None")) + (onText && (fx.mixed ?? false) ? " " + qsTr("(varies along the text)") : "")
     }
 
     function angle(v) { return ((v % 360) + 360) % 360 }

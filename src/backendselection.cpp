@@ -478,6 +478,46 @@ bool runRange(int start, int end, const QStringList &ids, const Slide &slide) {
 bool runEffectKey(const QString &key) {
   return FillStyle::textEffectKeys().contains(effectKey(QStringLiteral("text"), key, false));
 }
+// The words' effects as drawn over the whole text: the box's own (a:bodyPr
+// level) where a stretch has none of its own, each stretch's own elsewhere. With
+// no stretch of text selected, the Text effects show these: the set with the
+// most effects on (so an effect that is drawn is not shown as off), `mixed` when
+// the text does not all draw the same.
+QVariantMap wordsEffects(const SceneObject &o, bool *mixed) {
+  const QVariantMap own = FillStyle::textEffectsOf(o);
+  QVector<QVariantMap> sets;
+  int covered = 0;
+  for (const auto &r : o.runs) {
+    if (r.length <= 0) continue;
+    covered += r.length;
+    sets << (r.effects.isEmpty() ? own : FillStyle::textEffectsOf(FillStyle::withTextEffects(o, r.effects)));
+  }
+  if (covered < o.text.size() || sets.isEmpty()) sets << own;
+  // The set with the most effects on (the first such): what is drawn is shown as on.
+  const auto on = [](const QVariantMap &s) {
+    return int(s.value(QStringLiteral("textGlowRadius")).toDouble() > 0) + int(s.value(QStringLiteral("shadowEnabled")).toBool())
+         + int(!s.value(QStringLiteral("textReflection")).toMap().isEmpty());
+  };
+  QVariantMap shown = sets.first();
+  for (const auto &s : sets) if (on(s) > on(shown)) shown = s;
+  if (mixed) {
+    *mixed = false;
+    for (const auto &s : sets) if (s != sets.first()) *mixed = true;
+  }
+  return shown;
+}
+// A change to the words' effects made with no stretch selected is the whole
+// text's: it goes to every stretch with effects of its own as well, which
+// would otherwise keep drawing theirs over it.
+void applyToRuns(SceneObject &o, const QVariantMap &values) {
+  for (auto &r : o.runs) {
+    if (r.effects.isEmpty()) continue;
+    auto look = FillStyle::withTextEffects(o, r.effects);
+    for (auto it = values.cbegin(); it != values.cend(); ++it)
+      if (runEffectKey(it.key())) Design::setProperty(look, effectKey(QStringLiteral("text"), it.key(), false), it.value());
+    r.effects = FillStyle::textEffectsOf(look);
+  }
+}
 } // namespace
 QVariantMap Backend::effectState(const QString &target) const {
   QVariantMap state{{"count", 0}};
@@ -492,9 +532,15 @@ QVariantMap Backend::effectState(const QString &target) const {
     if (count++ == 0) {
       auto shown = *o;
       // A stretch with effects of its own shows those.
-      if (target == QLatin1String("text") && runRange(m_textSelectionStart, m_textSelectionEnd, ids, slide))
+      if (target == QLatin1String("text") && runRange(m_textSelectionStart, m_textSelectionEnd, ids, slide)) {
         if (const auto *run = TextRuns::at(o->runs, m_textSelectionStart); run && !run->effects.isEmpty())
           shown = FillStyle::withTextEffects(*o, run->effects);
+      } else if (target == QLatin1String("text")) {
+        // The whole text: what its stretches draw, not only the box's own.
+        bool mixed = false;
+        shown = FillStyle::withTextEffects(*o, wordsEffects(*o, &mixed));
+        state["mixed"] = mixed;
+      }
       const auto all = Design::properties(shown);
       for (const auto &key : effectKeys()) state[key] = all.value(effectKey(target, key, onWords));
       if (target == QLatin1String("text")) state.remove(QStringLiteral("softEdge"));   // PowerPoint has none for text
@@ -553,6 +599,7 @@ void Backend::setSelectedEffect(const QString &target, const QVariantMap &values
     auto copy = *o;
     for (auto it = values.cbegin(); it != values.cend(); ++it)
       if (!Design::setProperty(copy, effectKey(target, it.key(), onWords), it.value())) return;
+    if (target == QLatin1String("text")) applyToRuns(copy, values);
     if (Design::properties(copy) != Design::properties(*o)) changed = true;
   }
   if (!changed) return;
@@ -563,6 +610,11 @@ void Backend::setSelectedEffect(const QString &target, const QVariantMap &values
       for (auto it = values.cbegin(); it != values.cend(); ++it) {
         Design::setProperty(*o, effectKey(target, it.key(), onWords), it.value());
         Design::markOverride(*o, effectKey(target, it.key(), onWords));
+      }
+      if (target == QLatin1String("text")) {
+        const auto runs = o->runs;
+        applyToRuns(*o, values);
+        if (o->runs != runs) Design::markOverride(*o, QStringLiteral("runs"));
       }
     }
   // An outlined box with no fill casts its shadow from its words
