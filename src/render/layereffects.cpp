@@ -445,8 +445,8 @@ Made make(const QRectF &box, const Look &look, qreal scale, qreal margin,
         return Piece{turnedOver, bounds.topLeft()};
     };
     Piece flatReflection;
+    QVector<Piece> casts;   // the outer shadow and glow, when they follow the turn (in its plane)
     if (inPlane) flatReflection = reflect(layer, QPointF(0, 0), wordsPx);
-    QVector<QImage> lettersTurned;   // per cast of look.letters, in the turned picture's place
 
     if (turned || deep) {
         const qreal depth = deep ? look.format.depth * scale : 0;
@@ -523,25 +523,10 @@ Made make(const QRectF &box, const Look &look, qreal scale, qreal margin,
         resultAt = bounds.topLeft();
         faceBox = QPolygonF{project(wordsPx.topLeft(), front), project(wordsPx.topRight(), front), project(wordsPx.bottomRight(), front),
                             project(wordsPx.bottomLeft(), front)}.boundingRect();
-        // Anything else drawn turned the same way, in its own picture the size
-        // of the turned one.
-        auto turnedPicture = [&](const QImage &image, const QPointF &at, bool withSides) {
-            QImage pic(out.size(), QImage::Format_ARGB32_Premultiplied);
-            pic.fill(Qt::transparent);
-            QPainter q(&pic);
-            q.setRenderHint(QPainter::SmoothPixmapTransform);
-            q.setRenderHint(QPainter::Antialiasing);
-            if (withSides && depth > 0) {
-                const QPointF a = project(middle, front), b = project(middle, front - depth);
-                const int slices = qBound(1, qCeil(QLineF(a, b).length() * 1.5) + 1, 160);
-                for (int k = slices; k >= 1; --k) drawOn(q, image, at, front - depth * k / slices);
-            }
-            drawOn(q, image, at, front);
-            return pic;
-        };
-        if (inPlane && !flatReflection.image.isNull()) {
-            // The reflection's own picture may reach past the turned one's.
-            const QRectF r(flatReflection.at, flatReflection.image.size());
+        // A flat picture in the object's own plane (at `at`, layer pixels), turned with
+        // it into a picture of its own: it may reach past the turned face's.
+        auto inThePlane = [&](const QImage &image, const QPointF &at) -> Piece {
+            const QRectF r(at, image.size());
             QRectF to = QPolygonF{project(r.topLeft(), front), project(r.topRight(), front), project(r.bottomRight(), front),
                                   project(r.bottomLeft(), front)}.boundingRect().adjusted(-2, -2, 2, 2);
             to = to.intersected(QRectF(middle.x() - most, middle.y() - most, 2 * most, 2 * most)).toAlignedRect();
@@ -553,27 +538,41 @@ Made make(const QRectF &box, const Look &look, qreal scale, qreal margin,
                 q.setRenderHint(QPainter::Antialiasing);
                 const QRectF was = bounds;
                 bounds = to;
-                drawOn(q, flatReflection.image, flatReflection.at, front);
+                drawOn(q, image, at, front);
                 bounds = was;
             }
-            reflected = {pic, to.topLeft()};
-        }
-        // The words' effects, each from its own letters, turned (sides and all).
-        if (castFollows(look) && look.letters) {
-            for (int i = 0; i <= look.casts.size(); ++i) {
-                const Cast &c = i == 0 ? look.cast : look.casts.at(i - 1);
-                if (!c.any()) { lettersTurned.append(QImage()); continue; }
-                QImage letters(layer.size(), QImage::Format_ARGB32_Premultiplied);
-                letters.fill(Qt::transparent);
-                {
-                    QPainter q(&letters);
-                    q.setRenderHint(QPainter::Antialiasing);
-                    q.setRenderHint(QPainter::TextAntialiasing);
-                    q.scale(scale, scale);
-                    q.translate(margin - box.left(), margin - box.top());
-                    look.letters(q, i);
+            return {pic, to.topLeft()};
+        };
+        if (inPlane && !flatReflection.image.isNull()) reflected = inThePlane(flatReflection.image, flatReflection.at);
+        // The outer shadow and glow of an object whose effects follow its turn lie
+        // in its own plane, as its reflection does: worked out on the flat face
+        // (the words': each cast from its own letters) by the model every flat
+        // shadow and glow follows, then turned with it. PowerPoint's way, measured
+        // (scratch FX-FOLLOW deck): a perspective shadow runs along the turned foot
+        // and slants with it rather than lying flat on the slide below it.
+        if (castFollows(look)) {
+            auto cast = [&](const QImage &flat, const Cast &c) {
+                const auto made = castOf(flat, QPointF(0, 0), c, scale, middle);
+                if (!made.image.isNull()) casts.append(inThePlane(made.image, made.rect.topLeft()));
+            };
+            if (look.letters) {
+                for (int i = 0; i <= look.casts.size(); ++i) {
+                    const Cast &c = i == 0 ? look.cast : look.casts.at(i - 1);
+                    if (!c.any()) continue;
+                    QImage letters(layer.size(), QImage::Format_ARGB32_Premultiplied);
+                    letters.fill(Qt::transparent);
+                    {
+                        QPainter q(&letters);
+                        q.setRenderHint(QPainter::Antialiasing);
+                        q.setRenderHint(QPainter::TextAntialiasing);
+                        q.scale(scale, scale);
+                        q.translate(margin - box.left(), margin - box.top());
+                        look.letters(q, i);
+                    }
+                    cast(letters, c);
                 }
-                lettersTurned.append(turnedPicture(letters, QPointF(0, 0), true));
+            } else {
+                cast(layer, look.cast);
             }
         }
     }
@@ -584,23 +583,6 @@ Made make(const QRectF &box, const Look &look, qreal scale, qreal margin,
         reflected = flat ? reflect(layer, QPointF(0, 0), wordsPx) : reflect(result, resultAt, faceBox);
     }
 
-
-    // The outer shadow and glow of the turned picture (the words': each
-    // cast from its own letters).
-    QVector<Piece> casts;
-    if (castFollows(look)) {
-        if (look.letters && !lettersTurned.isEmpty()) {
-            for (int i = 0; i < lettersTurned.size(); ++i) {
-                if (lettersTurned.at(i).isNull()) continue;
-                const Cast &c = i == 0 ? look.cast : look.casts.at(i - 1);
-                const auto made = castOf(lettersTurned.at(i), resultAt, c, scale, middle);
-                if (!made.image.isNull()) casts.append({made.image, made.rect.topLeft()});
-            }
-        } else {
-            const auto made = castOf(result, resultAt, look.cast, scale, middle);
-            if (!made.image.isNull()) casts.append({made.image, made.rect.topLeft()});
-        }
-    }
 
     QVector<const Piece *> pieces;
     for (const auto &piece : casts) pieces.append(&piece);
