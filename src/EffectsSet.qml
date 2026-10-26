@@ -3,10 +3,10 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import Omashow 1.0
 
-// BOTH-EFFECTS-1: one set of Glow and Shadow settings (EFFECTS-UI-1), for
+// One set of Glow and Shadow settings, for
 // one target: "text" (the words, a:rPr) or "shape" (the box: a shape or
 // picture's own p:spPr effects, or a text box's own when it has no shape;
-// backend.effectState says which). STYLE3D: the Style tab shows the box set under
+// backend.effectState says which). The inspector shows the box set under
 // Effects and the text set under Text Fill and Outline (Inspector.qml).
 ColumnLayout {
     id: root
@@ -16,7 +16,7 @@ ColumnLayout {
     property string target: "text"
     // A heading over the set.
     property string heading: ""
-    // STYLE3D: which rows are open, kept in the inspector's styleOpen per
+    // Which rows are open, kept in the inspector's styleOpen per
     // session (closed at first), apart for the text's and the box's sets.
     property QtObject opener: null
     function isOpen(name) { return opener ? opener.isOpen(target + "." + name) : false }
@@ -38,7 +38,8 @@ ColumnLayout {
     readonly property bool available: backend.hasSelection && (fx.count ?? 0) > 0
     visible: available
     readonly property bool onText: target === "text"
-    // The box's effects land on the words: a text box with no fill and no outline.
+    // A text box with no fill and no outline: PowerPoint draws only a plain outer
+    // shadow of the box, on its words.
     readonly property bool onWords: !onText && (fx.onWords ?? false)
     // Slide units per point (the inspector shows points).
     readonly property real unitsPerPt: backend.ptPerUnit > 0 ? 1 / backend.ptPerUnit : 1
@@ -68,7 +69,7 @@ ColumnLayout {
 
     function set(values) { backend.setSelectedEffect(root.target, values) }
 
-    // ---- STYLE3D: soft edges, reflection, 3-D format and rotation ---------------
+    // ---- soft edges, reflection, 3-D format and rotation ---------------
 
     readonly property var presets3d: { backend.ptPerUnit; return backend.style3dPresets() }
     readonly property var refl: fx.reflection ?? ({})
@@ -86,7 +87,7 @@ ColumnLayout {
     readonly property real rotZ: scn.rev !== undefined ? scn.rev : (camInfo.rev ?? 0)
     readonly property bool rotationOn: sceneOn && ((scn.camera ?? "orthographicFront") !== "orthographicFront" || rotX !== 0 || rotY !== 0 || rotZ !== 0)
     readonly property var defaultScene: ({ camera: "orthographicFront", rig: "threePt", rigDir: "t" })
-    // ROT-SHADOW-1: what turns these effects. The words also turn with their
+    // What turns these effects. The words also turn with their
     // box's 3-D rotation unless "Keep text flat".
     function sceneTurns(s) {
         if (!s || Object.keys(s).length === 0) return false
@@ -195,7 +196,7 @@ ColumnLayout {
         set({ shadowEnabled: true, shadowX: d * Math.cos(r), shadowY: d * Math.sin(r) })
     }
 
-    // ---- presets (PowerPoint's own values; see history/CHANGELOG EFFECTS-UI-1) ----
+    // ---- presets (PowerPoint's own values) ----
 
     // The Office theme's accents 1-6 (PowerPoint 365's default theme), the colours of
     // its Glow Variations there. A deck's own theme accents aren't kept apart (only its first).
@@ -212,16 +213,17 @@ ColumnLayout {
         { name: qsTr("Offset: top right"), b: 4, d: 3, a: 315, sx: 100, sy: 100, kx: 0, al: 6, o: 0.4 },
         { name: qsTr("Offset: top"), b: 4, d: 3, a: 270, sx: 100, sy: 100, kx: 0, al: 7, o: 0.4 },
         { name: qsTr("Offset: top left"), b: 4, d: 3, a: 225, sx: 100, sy: 100, kx: 0, al: 8, o: 0.4 }]
+    // (An inner shadow points to the edge it darkens; the centre one is opaque.)
     readonly property var innerPresets: [
-        { name: qsTr("Inside: top left"), b: 5, d: 4, a: 45, inner: true, o: 0.5 },
-        { name: qsTr("Inside: top"), b: 5, d: 4, a: 90, inner: true, o: 0.5 },
-        { name: qsTr("Inside: top right"), b: 5, d: 4, a: 135, inner: true, o: 0.5 },
-        { name: qsTr("Inside: left"), b: 5, d: 4, a: 0, inner: true, o: 0.5 },
-        { name: qsTr("Inside: centre"), b: 9, d: 0, a: 0, inner: true, o: 0.5 },
-        { name: qsTr("Inside: right"), b: 5, d: 4, a: 180, inner: true, o: 0.5 },
-        { name: qsTr("Inside: bottom left"), b: 5, d: 4, a: 315, inner: true, o: 0.5 },
-        { name: qsTr("Inside: bottom"), b: 5, d: 4, a: 270, inner: true, o: 0.5 },
-        { name: qsTr("Inside: bottom right"), b: 5, d: 4, a: 225, inner: true, o: 0.5 }]
+        { name: qsTr("Inside: top left"), b: 5, d: 4, a: 225, inner: true, o: 0.5 },
+        { name: qsTr("Inside: top"), b: 5, d: 4, a: 270, inner: true, o: 0.5 },
+        { name: qsTr("Inside: top right"), b: 5, d: 4, a: 315, inner: true, o: 0.5 },
+        { name: qsTr("Inside: left"), b: 5, d: 4, a: 180, inner: true, o: 0.5 },
+        { name: qsTr("Inside: centre"), b: 9, d: 0, a: 0, inner: true, o: 1 },
+        { name: qsTr("Inside: right"), b: 5, d: 4, a: 0, inner: true, o: 0.5 },
+        { name: qsTr("Inside: bottom left"), b: 5, d: 4, a: 135, inner: true, o: 0.5 },
+        { name: qsTr("Inside: bottom"), b: 5, d: 4, a: 90, inner: true, o: 0.5 },
+        { name: qsTr("Inside: bottom right"), b: 5, d: 4, a: 45, inner: true, o: 0.5 }]
     readonly property var perspectivePresets: [
         { name: qsTr("Perspective: upper left"), b: 6, d: 0, a: 225, sx: 100, sy: 23, kx: 20, al: 8, o: 0.2 },
         { name: qsTr("Perspective: upper right"), b: 6, d: 0, a: 315, sx: 100, sy: 23, kx: -20, al: 6, o: 0.2 },
@@ -312,8 +314,8 @@ ColumnLayout {
         color: Theme.textSecondary
         font.pixelSize: Theme.fsLabel
     }
-    // PowerPoint draws a box's effects on its words when the box has no fill
-    // and no outline; they follow the border once it has one.
+    // PowerPoint draws only a plain outer shadow of a box with no fill and no
+    // outline, on its words; its other effects show once it has a fill or outline.
     Label {
         objectName: "effectsBoxHint"
         visible: root.onWords
@@ -321,8 +323,8 @@ ColumnLayout {
         wrapMode: Text.Wrap
         color: Theme.textMuted
         font.pixelSize: Theme.fsLabel
-        text: qsTr("On the text. Give the box a fill or an outline to glow its border instead.") +
-              (root.heading !== "" ? " " + qsTr("Where the text has its own glow or shadow, that one is drawn.") : "")
+        text: qsTr("This box has no fill or outline: only a plain outer shadow shows, on the text. Give the box a fill or an outline to show its glow, inner or perspective shadow.") +
+              (root.heading !== "" ? " " + qsTr("Where the text has its own shadow, that one is drawn.") : "")
     }
 
     // ---- Shadow -------------------------------------------------------------
@@ -335,7 +337,7 @@ ColumnLayout {
                  : (root.fx.shadowInner ?? false) ? qsTr("Inside")
                  : root.perspective ? qsTr("Perspective")
                  : qsTr("%1 pt · %2°").arg(root.round1(root.shadowDistance)).arg(root.shadowAngle)
-        // ROT-SHADOW-1: the turned shape's shadow tilts with it.
+        // The turned shape's shadow tilts with it.
         text: (summary ? title + " · " + summary : title) + (root.outerShadowOn && root.followNote ? " · " + root.followNote : "")
         onClicked: root.toggle("shadow")
     }
@@ -479,7 +481,7 @@ ColumnLayout {
         }
     }
 
-    // ---- Reflection (STYLE3D) --------------------------------------------------
+    // ---- Reflection --------------------------------------------------
 
     Expander {
         objectName: "effectsReflectionExpander"
@@ -676,7 +678,7 @@ ColumnLayout {
         }
     }
 
-    // ---- Soft Edges (STYLE3D; shapes and pictures: PowerPoint has none for text) ----
+    // ---- Soft Edges (shapes and pictures: PowerPoint has none for text) ----
 
     Expander {
         objectName: "effectsSoftExpander"
@@ -739,7 +741,7 @@ ColumnLayout {
         }
     }
 
-    // ---- 3-D Format (STYLE3D; drawn as a shaded 2D approximation) ----------------
+    // ---- 3-D Format (drawn as a shaded 2D approximation) ----------------
 
     Expander {
         objectName: "effects3dFormatExpander"
@@ -761,7 +763,7 @@ ColumnLayout {
             wrapMode: Text.Wrap
             color: Theme.textMuted
             font.pixelSize: Theme.fsLabel
-            text: qsTr("Prototype: drawn as a shaded flat picture, not true 3-D. Saved to PowerPoint exactly.")
+            text: qsTr("Drawn as a shaded flat picture, not true 3-D. Saved to PowerPoint exactly.")
         }
         Repeater {
             model: [{ which: "top", title: qsTr("Top bevel") }, { which: "bottom", title: qsTr("Bottom bevel") }]
@@ -897,7 +899,7 @@ ColumnLayout {
         }
     }
 
-    // ---- 3-D Rotation (STYLE3D; prototype drawing, exact round trip) -------------
+    // ---- 3-D Rotation (approximate drawing, exact round trip) -------------
 
     Expander {
         objectName: "effects3dRotationExpander"
@@ -918,9 +920,9 @@ ColumnLayout {
             wrapMode: Text.Wrap
             color: Theme.textMuted
             font.pixelSize: Theme.fsLabel
-            text: qsTr("Prototype: the turned picture is approximate. The rotation is saved to PowerPoint exactly.")
+            text: qsTr("The turned picture is approximate. The rotation is saved to PowerPoint exactly.")
         }
-        // ROT-SHADOW-1: the shadow and reflection are the Shadow and
+        // The shadow and reflection are the Shadow and
         // Reflection rows' own settings; the rotation only turns how they draw.
         CheckBox {
             objectName: "effects3dFollow"

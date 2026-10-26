@@ -11,21 +11,21 @@ QStringList ObjectStyles::keys() {
           "letterSpacing", "italic",        "underline",        "textAlign",
           "verticalAlign", "lineHeight",    "paragraphSpacing", "textIndent",
           "listStyle",     "listStart",     "textFit",
-          // EFFECTS-UI-1: glow and shadow travel with a saved appearance.
+          // Glow and shadow travel with a saved appearance.
           "shadowBlur",    "shadowInner",   "shadowScaleX",     "shadowScaleY",
           "shadowSkewX",   "shadowSkewY",   "shadowAlign",      "glowRadius",
           "glowColor",     "textGlowRadius", "textGlowColor",
-          // BOTH-EFFECTS-1: a text box's own shadow.
+          // A text box's own shadow.
           "boxShadowEnabled", "boxShadowColor", "boxShadowX", "boxShadowY", "boxShadowBlur", "boxShadowInner",
           "boxShadowScaleX", "boxShadowScaleY", "boxShadowSkewX", "boxShadowSkewY", "boxShadowAlign",
-          // FILL-UI-1: the rest of PowerPoint's fill and line, and a text box's own box.
+          // The rest of PowerPoint's fill and line, and a text box's own box.
           "gradientStops", "gradientPath", "gradientFocusL", "gradientFocusT", "gradientFocusR", "gradientFocusB",
           "gradientScaled", "gradientRotate", "patternPreset", "pictureTile", "pictureTileX", "pictureTileY",
           "pictureTileScaleX", "pictureTileScaleY", "pictureTileAlign", "pictureTileFlip", "pictureInsetL", "pictureInsetT",
           "pictureInsetR", "pictureInsetB", "pictureTransparency", "pictureRotate", "strokeDash", "strokeDashCustom",
           "strokeCompound", "strokeGradient", "strokeStops", "strokeAngle", "strokeGradientPath",
           "boxDrawn", "boxInsetL", "boxInsetT", "boxInsetR", "boxInsetB",
-          // STYLE3D: soft edges, reflection, 3-D format and rotation, text fill and outline.
+          // Soft edges, reflection, 3-D format and rotation, text fill and outline.
           "softEdge", "reflection", "format3d", "scene3d", "textReflection", "textFormat3d", "textScene3d",
           "textFlatZ", "textFill", "textOutline", "textFlat", "effects3dFollow"};
 }

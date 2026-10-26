@@ -24,6 +24,7 @@
 #include <QTextLayout>
 #include <QGlyphRun>
 #include <QSaveFile>
+#include <QTransform>
 #include <QUrl>
 #include <QSet>
 #include <QRegularExpression>
@@ -97,11 +98,30 @@ QString hex(const QColor &c) {
 }
 
 // <a:srgbClr val="…"><a:alpha val="…"/></a:srgbClr>
+// A colour keeps 8 bits of alpha, so a whole per cent read from a file (50 %)
+// comes back as 50.196 %; within half an 8-bit step of a whole per cent it is
+// written as that per cent (PowerPoint then still knows its own presets).
 void writeColor(Xml &x, const QColor &c, qreal opacity = 1.0) {
     x.start("a:srgbClr").attr("val", hex(c));
     const qreal alpha = c.alphaF() * opacity;
-    if (alpha < 0.999) x.start("a:alpha").attr("val", qRound(alpha * 100000)).end();
+    if (alpha < 0.999) {
+        int value = qRound(alpha * 100000);
+        const int whole = qRound(value / 1000.0) * 1000;
+        if (qAbs(value - whole) <= 196) value = whole;
+        x.start("a:alpha").attr("val", value).end();
+    }
     x.end();
+}
+
+// A shadow's dir (60000ths of a degree). One with no distance keeps no
+// direction (the offset is kept as x/y), so it is written as PowerPoint's own
+// zero-distance presets have it: from the anchor toward the middle (upper
+// left and upper right perspective: 225° and 315°), or 0 from the middle.
+qint64 shadowDir(qreal dx, qreal dy, bool still, int align) {
+    auto of = [](qreal y, qreal x) { return qRound64(std::fmod(qRadiansToDegrees(std::atan2(y, x)) + 360.0, 360.0) * 60000) % 21600000; };
+    if (!still) return of(dy, dx);
+    const int column = qBound(0, align, 8) % 3, row = qBound(0, align, 8) / 3;
+    return column == 1 && row == 1 ? 0 : of(1 - row, 1 - column);
 }
 
 void writeSolidFill(Xml &x, const QColor &c, qreal opacity = 1.0) {
@@ -110,7 +130,7 @@ void writeSolidFill(Xml &x, const QColor &c, qreal opacity = 1.0) {
     x.end();
 }
 
-// FILL-UI-1: a gradient stop's colour, its Brightness as lumMod/lumOff.
+// A gradient stop's colour, its Brightness as lumMod/lumOff.
 void writeStopColor(Xml &x, const GradientStop &stop, qreal opacity) {
     x.start("a:srgbClr").attr("val", hex(stop.color));
     if (stop.brightness > 0) {
@@ -167,7 +187,7 @@ const char *presetFor(int kind) {
     return kind >= 0 && kind < 24 ? names[kind] : nullptr;
 }
 
-// FILL-UI-1: a line's dash by its preset name, else the nearest to its Qt
+// A line's dash by its preset name, else the nearest to its Qt
 // dash; a pattern by its preset name, else the nearest to its Qt pattern
 // (patternStyle counts from Qt::Dense1Pattern: the old table here was read
 // two places off, so a cross was written as horizontal lines).
@@ -563,7 +583,7 @@ struct Writer {
         switch (o.fillStyle) {
         case 0: writeSolidFill(x, o.fill, o.opacity); break;
         case 1: case 2: {
-            // FILL-UI-1: every stop; circle, rectangle or shape paths with their focus.
+            // Every stop; circle, rectangle or shape paths with their focus.
             const qreal focus[4] = {o.gradientFocusL, o.gradientFocusT, o.gradientFocusR, o.gradientFocusB};
             writeGradient(x, FillStyle::fillStops(o), o.fillStyle == 1 ? 0 : 1 + qBound(0, o.gradientPath, 2), o.fillAngle,
                           o.gradientScaled, o.gradientRotate, focus, o.opacity);
@@ -576,7 +596,7 @@ struct Writer {
             x.end();
             break;
         case 4: {
-            // FILL-UI-1: the picture itself (a:blipFill), placed as it is drawn.
+            // The picture itself (a:blipFill), placed as it is drawn.
             const QString rel = pictureRel(o, ctx);
             if (rel.isEmpty()) { writeSolidFill(x, o.fill, o.opacity); break; }
             x.start("a:blipFill").attr("dpi", 0).attr("rotWithShape", o.pictureRotate ? "1" : "0");
@@ -626,7 +646,7 @@ struct Writer {
     void writeLine(Xml &x, const SceneObject &o) const {
         if (o.strokeWidth <= 0) { x.start("a:ln"); x.empty("a:noFill"); x.end(); return; }
         x.start("a:ln").attr("w", qMax<qint64>(1, emu(o.strokeWidth)));
-        // FILL-UI-1: cap and join as the model counts them (0 flat, 1 square,
+        // Cap and join as the model counts them (0 flat, 1 square,
         // 2 round; 0 miter, 1 bevel, 2 round: the old mapping had them crossed),
         // compound lines, gradient lines, every preset dash and custom dashes.
         x.attr("cap", o.strokeCap == 0 ? "flat" : o.strokeCap == 1 ? "sq" : "rnd");
@@ -649,11 +669,11 @@ struct Writer {
         x.end();
     }
 
-    // EFFECTS-UI-1: the shape's own glow and shadow (p:spPr/a:effectLst), in
+    // The shape's own glow and shadow (p:spPr/a:effectLst), in
     // the schema's order: glow, then inner shadow, then outer shadow. The blur,
     // size, slant and anchor are written as set (they were left out, and the
     // blur fixed at 3 pt, before).
-    // STYLE3D: a:reflection, every attribute that is not the schema's default
+    // A:reflection, every attribute that is not the schema's default
     // (dir always), in EMU, 1000ths of a percent and 60000ths of a degree.
     void writeReflection(Xml &x, const Effects3D::Reflection &r) const {
         if (!r.on) return;
@@ -676,7 +696,7 @@ struct Writer {
         x.end();
     }
 
-    // STYLE3D: a:scene3d then a:sp3d (spPr's and bodyPr's order).
+    // A:scene3d then a:sp3d (spPr's and bodyPr's order).
     void write3d(Xml &x, const Effects3D::Scene &s, const Effects3D::Format &f, qreal flatZ = 0, bool body = false, bool flat = false) const {
         if (s.on) {
             x.start("a:scene3d");
@@ -692,7 +712,7 @@ struct Writer {
             x.end();
             x.end();
         }
-        // ROT-SHADOW-1: "Keep text flat" is a:flatTx, which a:bodyPr has in
+        // "Keep text flat" is a:flatTx, which a:bodyPr has in
         // place of a:sp3d (EG_Text3D): flat words' own 3-D format isn't written.
         if (f.on && !(body && flat)) {
             x.start("a:sp3d");
@@ -726,12 +746,17 @@ struct Writer {
             x.end();
         }
         if (o.shadowEnabled) {
-            const qint64 dir = qRound64(std::fmod(qRadiansToDegrees(std::atan2(o.shadowY, o.shadowX)) + 360.0, 360.0) * 60000) % 21600000;
+            const auto dist = emu(std::hypot(o.shadowX, o.shadowY));
+            // OmaShow draws the shadow in the shape's turned frame; it is written
+            // rotWithShape="0", so its direction on the slide is the turned one.
+            QPointF onSlide(o.shadowX, o.shadowY);
+            if (!o.shadowInner && !qFuzzyIsNull(o.rotation)) onSlide = QTransform().rotate(o.rotation).map(onSlide);
+            const qint64 dir = shadowDir(onSlide.x(), onSlide.y(), dist == 0, o.shadowInner ? 4 : o.shadowAlign);
             if (o.shadowInner) {
-                x.start("a:innerShdw").attr("blurRad", emu(o.shadowBlur)).attr("dist", emu(std::hypot(o.shadowX, o.shadowY))).attr("dir", dir);
+                x.start("a:innerShdw").attr("blurRad", emu(o.shadowBlur)).attr("dist", dist).attr("dir", dir);
             } else {
                 static const char *aligns[] = {"tl", "t", "tr", "l", "ctr", "r", "bl", "b", "br"};
-                x.start("a:outerShdw").attr("blurRad", emu(o.shadowBlur)).attr("dist", emu(std::hypot(o.shadowX, o.shadowY))).attr("dir", dir);
+                x.start("a:outerShdw").attr("blurRad", emu(o.shadowBlur)).attr("dist", dist).attr("dir", dir);
                 if (!qFuzzyCompare(o.shadowScaleX, 100.0)) x.attr("sx", qRound64(o.shadowScaleX * 1000));
                 if (!qFuzzyCompare(o.shadowScaleY, 100.0)) x.attr("sy", qRound64(o.shadowScaleY * 1000));
                 if (!qFuzzyIsNull(o.shadowSkewX)) x.attr("kx", qRound64(o.shadowSkewX * 60000));
@@ -741,7 +766,7 @@ struct Writer {
             writeColor(x, o.shadowColor);
             x.end();
         }
-        writeReflection(x, o.reflection);   // STYLE3D
+        writeReflection(x, o.reflection);
         if (o.softEdge > 0) x.start("a:softEdge").attr("rad", qMax<qint64>(1, emu(o.softEdge))).end();
         x.end();
     }
@@ -794,7 +819,7 @@ struct Writer {
         if (o.uppercase) x.attr("cap", "all");
         if (!qFuzzyIsNull(o.letterSpacing)) x.attr("spc", qRound(o.letterSpacing * e / 12700.0 * 100));
         const QColor color = run && run->color.isValid() ? run->color : o.textColor;
-        // STYLE3D: Text Outline (a:ln first), then Text Fill.
+        // Text Outline (a:ln first), then Text Fill.
         QVariantMap outline = run && !run->outline.isEmpty() ? run->outline : o.textOutline;
         if (outline.value(QStringLiteral("none")).toBool()) { x.start("a:ln"); x.empty("a:noFill"); x.end(); }
         else if (!outline.isEmpty()) {
@@ -818,7 +843,7 @@ struct Writer {
             } else if (f.fillStyle == 5) x.empty("a:noFill");
             else writeSolidFill(x, color, o.opacity);
         }
-        // STYLE3D: a stretch with effects of its own writes those.
+        // A stretch with effects of its own writes those.
         const SceneObject fx = run && !run->effects.isEmpty() ? FillStyle::withTextEffects(o, run->effects) : o;
         writeTextEffects(x, fx);
         x.start("a:latin").attr("typeface", family).end();
@@ -842,9 +867,9 @@ struct Writer {
                 x.end();
             }
             if (o.shadowEnabled) {
-                // TEXT-SHADOW-2: inner, or outer with its size, slant and anchor.
+                // Inner, or outer with its size, slant and anchor.
                 const qint64 dist = qRound64(std::hypot(o.shadowX, o.shadowY) * e);
-                const qint64 dir = qRound64(std::fmod(qRadiansToDegrees(std::atan2(o.shadowY, o.shadowX)) + 360.0, 360.0) * 60000) % 21600000;
+                const qint64 dir = shadowDir(o.shadowX, o.shadowY, dist == 0, o.shadowInner ? 4 : o.shadowAlign);
                 if (o.shadowInner) {
                     x.start("a:innerShdw").attr("blurRad", qRound64(o.shadowBlur * e)).attr("dist", dist).attr("dir", dir);
                 } else {
@@ -874,7 +899,7 @@ struct Writer {
         if (o.columns > 1) x.attr("numCol", o.columns);
         // Cut off (0) has no PowerPoint counterpart: it is written as no autofit.
         if (o.textFit == 1) x.empty("a:normAutofit"); else if (o.textFit == 3 && !inTable) x.empty("a:spAutoFit"); else x.empty("a:noAutofit");
-        if (!inTable) write3d(x, o.textScene3d, o.textFormat3d, o.textFlatZ, true, o.textFlat);   // STYLE3D
+        if (!inTable) write3d(x, o.textScene3d, o.textFormat3d, o.textFlatZ, true, o.textFlat);
         x.end();
         x.empty("a:lstStyle");
 
@@ -948,7 +973,7 @@ struct Writer {
         x.start("p:sp");
         writeNonVisual(x, "p:nvSpPr", "p:cNvSpPr", o, ctx, QStringLiteral("Text %1").arg(ctx.nextId), true);
         x.start("p:spPr");
-        // FILL-UI-1: a text box with a box of its own is one p:sp: the box's
+        // A text box with a box of its own is one p:sp: the box's
         // rectangle, fill and line, the words inset from it (bodyPr lIns…).
         const bool box = o.boxDrawn;
         writeXfrm(x, box ? FillStyle::boxRect(o) : o.rect, o.rotation);
@@ -958,13 +983,13 @@ struct Writer {
             writeFill(x, shape, ctx);
             writeLine(x, shape);
         } else x.empty("a:noFill");
-        // BOTH-EFFECTS-1: the text box's own glow and shadow, apart from its words'.
+        // The text box's own glow and shadow, apart from its words'.
         if (o.glowRadius > 0 || o.boxShadowEnabled || o.reflection.on || o.softEdge > 0) {
             SceneObject shape = o;
             shape.swapBoxShadow();
             writeEffects(x, shape);
         }
-        write3d(x, o.scene3d, o.format3d);   // STYLE3D: the box's own 3-D
+        write3d(x, o.scene3d, o.format3d);   // The box's own 3-D
         x.end();
         writeTextBody(x, "p:txBody", o, ctx, false, box);
         x.end();
@@ -991,7 +1016,7 @@ struct Writer {
         writeFill(x, o, ctx);
         writeLine(x, o);
         writeEffects(x, o);
-        write3d(x, o.scene3d, o.format3d);   // STYLE3D
+        write3d(x, o.scene3d, o.format3d);
         x.end();
         x.end();
     }
@@ -1040,7 +1065,7 @@ struct Writer {
         x.start("a:prstGeom").attr("prst", mask); x.empty("a:avLst"); x.end();
         if (o.strokeWidth > 0) writeLine(x, o);
         writeEffects(x, o);
-        write3d(x, o.scene3d, o.format3d);   // STYLE3D
+        write3d(x, o.scene3d, o.format3d);
         x.end();
     }
 

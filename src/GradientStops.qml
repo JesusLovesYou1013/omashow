@@ -3,7 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import Omashow 1.0
 
-// FILL-UI-1: a gradient's stops, as PowerPoint's Format Shape shows them: the
+// A gradient's stops, as PowerPoint's Format Shape shows them: the
 // bar with a marker per stop (click one to pick it, drag it to move it), add
 // and remove, and the picked stop's colour, position, transparency and
 // brightness. Stops are {p: 0-1, c: "#AARRGGBB", b: -1..1}; every edit hands

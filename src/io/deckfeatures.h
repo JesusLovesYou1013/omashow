@@ -5,11 +5,12 @@
 //
 // A deck is written in two layers inside the same .omashow file:
 //
-//   the base deck      every JSON file holds only what OmaShow 0.2.0 (upstream
-//                      da8f319) reads: the field names it knows, with
-//                      values it accepts. A feature it doesn't know is simply
-//                      absent there: no strikethrough, the stock text fit, no
-//                      newer animation effects, no PowerPoint extras.
+//   the base deck      every JSON file holds only what OmaShow 0.2.0 reads:
+//                      the field names it knows, with values it accepts. A
+//                      feature it doesn't know is simply absent there: no
+//                      strikethrough, the stock text fit, no newer animation
+//                      effects, no PowerPoint extras, no gradient with more
+//                      than two colours, no glow.
 //   features.json      each feature that was left out, by name, with where it
 //                      goes and the exact values. An app switches on the ones
 //                      it knows and ignores the rest; OmaShow 0.2.0 never

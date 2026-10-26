@@ -1,6 +1,6 @@
 #pragma once
 
-// EFFECTS-UI-1: the small pictures in the Style tab's glow and shadow presets,
+// The small pictures in the inspector's glow and shadow presets,
 // drawn by the slide renderer itself so each one shows what the preset will
 // look like on the slide. The image id is "<text|shape>?<settings>", the
 // settings in points (one point a slide unit here):

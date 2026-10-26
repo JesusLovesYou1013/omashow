@@ -56,7 +56,7 @@ bool Backend::applyImage(SceneObject image, bool replace, int index, const QStri
     o->imageOriginal.reset();
     ImageAsset::copyData(*o, image);
     if (o->type == ObjectType::Text && !o->boxDrawn) {
-      // FILL-UI-1: a text box's first picture fill starts its own box, with no line.
+      // A text box's first picture fill starts its own box, with no line.
       o->boxDrawn = true;
       o->strokeWidth = 0;
       for (const auto &key : {"boxDrawn", "strokeWidth"}) Design::markOverride(*o, key);

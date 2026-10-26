@@ -7,6 +7,7 @@
 #include "core/shape.h"
 #include "core/table.h"
 #include "core/chart.h"
+#include "render/effectmodel.h"
 #include "render/shapeeffects.h"
 #include "render/fillpaint.h"
 #include "core/fillstyle.h"
@@ -24,7 +25,7 @@
 
 namespace {
 
-// STYLE3D: what names a layer picture: everything about the object.
+// What names a layer picture: everything about the object.
 QString layerKey(const SceneObject &o, const char *part) {
     QVariantMap all = Design::properties(o);
     all.insert(QStringLiteral("mediaPosition"), o.mediaPosition);
@@ -36,7 +37,7 @@ QString layerKey(const SceneObject &o, const char *part) {
 void paintShape(QPainter &painter, const SceneObject &o) {
     const auto look = LayerEffects::shapeLook(o);
     if (!LayerEffects::needed(look)) { Shape::paint(painter, o); return; }
-    // ROT-SHADOW-1: a turned shape's outer shadow and glow come from the
+    // A turned shape's outer shadow and glow come from the
     // turned picture; the flat drawing behind it leaves them out.
     SceneObject flat = o;
     if (LayerEffects::castFollows(look)) LayerEffects::dropFollowed(flat, false);
@@ -45,24 +46,30 @@ void paintShape(QPainter &painter, const SceneObject &o) {
 }
 
 // Words through their reflection and 3-D (and, with no box to carry them,
-// the box's: PowerPoint draws those on the words then).
+// the box's 3-D rotation).
 void paintWords(QPainter &painter, const SceneObject &o, qreal slideHeight, bool boxToo) {
     auto look = LayerEffects::textLook(o);
     QRectF frame = o.rect;
-    // A box turned in 3-D turns its words with it (PROTOTYPE: as one flat
+    // A box turned in 3-D turns its words with it (approximately: as one flat
     // picture about the box's middle; PowerPoint's "keep text flat" is kept).
-    // ROT-SHADOW-1: not with "Keep text flat".
+    // Not with "Keep text flat".
     if (!boxToo && !look.scene.on && o.scene3d.on && !o.textFlat) { look.scene = o.scene3d; frame = FillStyle::boxRect(o); }
     if (boxToo) {
+        // A box with no fill and no outline: PowerPoint draws none of its
+        // reflection, soft edges or bevel (measured); its 3-D rotation still
+        // turns the words.
         const auto box = LayerEffects::shapeLook(o);
-        if (!look.reflection.on) look.reflection = box.reflection;
-        if (!look.format.on) look.format = box.format;
         if (!look.scene.on && !o.textFlat) look.scene = box.scene;
-        look.softEdge = box.softEdge;
     }
+    look.words = TextLayout::linesRect(o);
     if (!LayerEffects::needed(look)) { TextLayout::paint(painter, o, slideHeight); return; }
-    // ROT-SHADOW-1: turned words cast their (box-wide) shadow and glow from
+    // Turned words cast their (box-wide) shadow and glow from
     // the turned picture; a stretch's own effects stay flat.
+    // Each stretch of words casts its own, from its own letters.
+    const auto looks = TextLayout::effectLooks(o);
+    look.cast = LayerEffects::castOfWords(looks.first());
+    for (int i = 1; i < looks.size(); ++i) look.casts.append(LayerEffects::castOfWords(looks.at(i)));
+    look.letters = [&o, slideHeight](QPainter &p, int i) { TextLayout::paintLetters(p, o, i, slideHeight); };
     SceneObject flat = o;
     if (LayerEffects::castFollows(look)) LayerEffects::dropFollowed(flat, true);
     LayerEffects::paint(painter, frame, look, layerKey(o, "words") + QString::number(slideHeight),
@@ -105,7 +112,7 @@ void paintObject(QPainter &painter, const SceneObject &object, qreal slideHeight
         break;
     }
     case ObjectType::Image: {
-        // EFFECTS-UI-1: a picture's glow and shadows follow its frame (or
+        // A picture's glow and shadows follow its frame (or
         // mask), as PowerPoint draws them.
         const bool effects = (object.glowRadius > 0 && object.glowColor.alpha() > 0) || object.shadowEnabled;
         QPainterPath frame;
@@ -116,26 +123,29 @@ void paintObject(QPainter &painter, const SceneObject &object, qreal slideHeight
             mask.cornerRadius = object.imageMask == 2 ? (object.cornerRadius > 0 ? object.cornerRadius : qMin(object.rect.width(), object.rect.height()) * .1) : 0;
             frame = Shape::path(mask);
         }
-        // ROT-SHADOW-1: a turned picture's outer shadow and glow come from the turned picture.
+        // A turned picture's outer shadow and glow come from the turned picture.
         const auto look = LayerEffects::shapeLook(object);
         SceneObject flat = object;
         if (LayerEffects::needed(look) && LayerEffects::castFollows(look)) LayerEffects::dropFollowed(flat, false);
-        auto behind = [&](QPainter &p) { if (effects) ShapeEffects::paintBehind(p, flat, frame, QPainterPath()); };
+        // The shadow is cast by the picture as drawn (its own transparency too).
+        auto behind = [&](QPainter &p) {
+            if (effects) ShapeEffects::paintBehind(p, flat, frame, QPainterPath(), [&](QPainter &q) { ImageAsset::paint(q, object); });
+        };
         auto face = [&](QPainter &p) {
             ImageAsset::paint(p, object);
             if (effects) ShapeEffects::paintInside(p, object, frame);
         };
-        // STYLE3D: a picture's soft edges, reflection and 3-D.
+        // A picture's soft edges, reflection and 3-D.
         if (LayerEffects::needed(look)) LayerEffects::paint(painter, object.rect, look, layerKey(object, "picture"), face, behind);
         else { behind(painter); face(painter); }
         break;
     }
     case ObjectType::Text: {
-        // FILL-UI-1: a text box with a fill or an outline of its own draws
+        // A text box with a fill or an outline of its own draws
         // that box first, with the box's glow and shadow about it (as
         // PowerPoint does once the box has something to carry them); the
         // words keep their own effects. An outline with no fill casts its
-        // shadow from the words as well (BOX-SHADOW-2).
+        // shadow from the words as well.
         if (FillStyle::boxVisible(object)) {
             const auto pieces = FillStyle::split(object);
             paintShape(painter, pieces.first());
@@ -152,7 +162,8 @@ void paintObject(QPainter &painter, const SceneObject &object, qreal slideHeight
 } // namespace
 
 void SceneRenderer::paint(QPainter &painter, const QVector<SceneObject> &states, qreal slideHeight) {
-    FillPaint::setUnitsPerPoint(slideHeight / 540.0);   // FILL-UI-1: PowerPoint's slides are 540 pt high
+    FillPaint::setUnitsPerPoint(slideHeight / 540.0);   // PowerPoint's slides are 540 pt high
+    EffectModel::setUnitsPerPoint(slideHeight / 540.0);
     for (const SceneObject &state : states)
         paintObject(painter, state, slideHeight);
 }

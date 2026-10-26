@@ -17,7 +17,7 @@ namespace {
 const QString kFile = QStringLiteral("features.json");
 constexpr int kFormat = 1;
 
-// ---- What OmaShow 0.2.0 (upstream da8f319) reads, frozen ------------------
+// ---- What OmaShow 0.2.0 (da8f319, deck format 25) reads, frozen -----------
 // 0.1.0 (74ce940) plus the Office font swap fields (#18); 0.1.0 refuses every
 // format 25 deck anyway, so keeping these here loses nothing there and lets
 // 0.2.0 keep them.
@@ -138,7 +138,8 @@ QString readableName(const QString &feature) {
         {kFormat3d, QStringLiteral("3-D format: bevels, depth, contour and material")},
         {kRotation3d, QStringLiteral("3-D rotation and lighting")},
         {kTextFill, QStringLiteral("Text fill and text outline (gradients, patterns, outlined letters)")},
-        {kRunEffects, QStringLiteral("Glow, shadow and reflection on part of a text")}};
+        {kRunEffects, QStringLiteral("Glow, shadow and reflection on part of a text")},
+    };
     if (names.contains(feature)) return names.value(feature);
     if (feature.startsWith(QLatin1String("key:"))) return QStringLiteral("The setting \"%1\"").arg(feature.section(QLatin1Char('.'), -1));
     return feature;
@@ -431,9 +432,15 @@ bool splits(const QString &name) {
 
 // ---- What this build knows ---------------------------------------------------
 
+const QStringList &namedFeatures() {
+    static const QStringList list{kStrike, kFitModes, kFontSwap, kEffects, kTiming, kPptxAnimation, kPptxInteractive, kShrinkKept,
+                                  kTextGlow, kSoftShadow, kShapeGlow, kShadowDetail, kBoxShadow, kGradient, kPattern, kPicture, kLine,
+                                  kBoxFill, kSoftEdge, kReflection, kFormat3d, kRotation3d, kTextFill, kRunEffects};
+    return list;
+}
+
 bool knows(const QString &feature) {
-    static const QSet<QString> named{kStrike, kFitModes, kFontSwap, kEffects, kTiming, kPptxAnimation, kPptxInteractive, kShrinkKept, kTextGlow, kSoftShadow, kShapeGlow, kShadowDetail, kBoxShadow, kGradient, kPattern, kPicture, kLine, kBoxFill,
-            kSoftEdge, kReflection, kFormat3d, kRotation3d, kTextFill, kRunEffects};
+    static const QSet<QString> named(namedFeatures().cbegin(), namedFeatures().cend());
     if (named.contains(feature)) return true;
     // A field put aside by name: known when this build's objects have it.
     if (feature.startsWith(QLatin1String("key:object."))) {
@@ -457,10 +464,7 @@ QStringList DeckFeatures::unknownNames(const QByteArray &passthrough) {
     return out;
 }
 
-QStringList DeckFeatures::known() {
-    return {kStrike, kFitModes, kFontSwap, kEffects, kTiming, kPptxAnimation, kPptxInteractive, kShrinkKept, kTextGlow, kSoftShadow, kShapeGlow, kShadowDetail, kBoxShadow, kGradient, kPattern, kPicture, kLine, kBoxFill,
-            kSoftEdge, kReflection, kFormat3d, kRotation3d, kTextFill, kRunEffects};
-}
+QStringList DeckFeatures::known() { return namedFeatures(); }
 
 void DeckFeatures::split(QVector<Zip::Entry> &entries, const QByteArray &passthrough) {
     QJsonArray all;
