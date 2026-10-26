@@ -507,7 +507,7 @@ public:
                                      qreal tolerance = 0.0, bool keepSize = true);
     Q_INVOKABLE void nudgeSelected(qreal dx, qreal dy);
     Q_INVOKABLE void setSelectedProperty(const QString &name, const QVariant &value);
-    // EFFECTS-UI-1: glow and shadow for the Style tab. `target` is "text" (the
+    // Glow and shadow for the inspector. `target` is "text" (the
     // words of the selected text boxes: textGlow*, shadow*) or "shape" (the
     // selected shapes and pictures: glow*, shadow*). The keys are the shape's
     // names (glowRadius, glowColor, shadowEnabled, shadowColor, shadowX, ...);
@@ -515,7 +515,7 @@ public:
     // selected object of that kind has, with "count" (0: none selected).
     Q_INVOKABLE void setSelectedEffect(const QString &target, const QVariantMap &values);
     Q_INVOKABLE QVariantMap effectState(const QString &target) const;
-    // FILL-UI-1: Fill and Line for the Style tab. The targets are the selected
+    // Fill and Line for the inspector. The targets are the selected
     // shapes, or with none the selected text boxes' own boxes (a text box
     // given a fill or line gets boxDrawn). Keys are the shape's property names
     // (fillStyle, fill, gradientStops, patternPreset, strokeDash, ...); all
@@ -525,13 +525,13 @@ public:
     Q_INVOKABLE QVariantMap fillState() const;
     Q_INVOKABLE QStringList fillPatternPresets() const;
     Q_INVOKABLE QStringList lineDashPresets() const;
-    // STYLE3D: the words' own Text Fill and Text Outline (PowerPoint's Format
+    // The words' own Text Fill and Text Outline (PowerPoint's Format
     // Shape > Text Options), with the Fill and Line keys (fill*, gradient*,
     // pattern*; stroke*). With text selected while editing, the selected
     // stretch only; otherwise the whole of each selected text box. One undo step.
     Q_INVOKABLE QVariantMap textFillState() const;
     Q_INVOKABLE void setSelectedTextFill(const QVariantMap &values);
-    // STYLE3D: PowerPoint's preset names and values for the Effects editors:
+    // PowerPoint's preset names and values for the Effects editors:
     // bevels, materials, cameras, lightRigs, rigDirections, reflections (name
     // and value in this deck's units), softEdges (points).
     Q_INVOKABLE QVariantMap style3dPresets() const;
@@ -547,6 +547,8 @@ public:
     Q_INVOKABLE void selectRegion(qreal x, qreal y, qreal w, qreal h, bool extend = false);
     Q_INVOKABLE void groupSelected();
     Q_INVOKABLE void ungroupSelected();
+    // By id from a script, reaching into groups: see backendselection.cpp.
+    Q_INVOKABLE void selectNamed(const QStringList &ids);
     Q_INVOKABLE void enterGroup();
     Q_INVOKABLE void leaveGroup();
     Q_INVOKABLE void alignSelected(const QString &mode, int reference = 0);
@@ -853,6 +855,7 @@ private:
     mutable int m_reviewRevision = -1;
     mutable QVariantList m_reviewIssues;
     SlideRows *m_browserModel = nullptr;
+    bool m_browserSyncPending = false;
     History m_history;
     void resetSlideSelection();
     void restoreCurrentSlide(const QString &id);

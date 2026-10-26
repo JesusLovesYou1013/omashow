@@ -24,7 +24,7 @@
 
 enum class ObjectType { Rect, Text, Image, Media, Table, Chart };
 
-// FILL-UI-1: one colour stop of a gradient (PowerPoint's a:gs): where it sits
+// One colour stop of a gradient (PowerPoint's a:gs): where it sits
 // (0-1 along the gradient), its colour with its own transparency (alpha), and
 // PowerPoint's Brightness (-1 to 1: darker or lighter, as lumMod/lumOff).
 struct GradientStop {
@@ -55,7 +55,7 @@ struct TextRun {
     QString origFont;
     qreal origFontSize = 0, fontScale = 1;
     int origWeight = 0;
-    // STYLE3D: this stretch's own Text Fill and Text Outline (a:rPr fills and
+    // This stretch's own Text Fill and Text Outline (a:rPr fills and
     // a:ln; keys as SceneObject::textFill/textOutline, empty inherits), and
     // its own effects (a:rPr/a:effectLst) as a full set of the box's text
     // effect keys (textGlowRadius, textGlowColor, shadow*, textReflection);
@@ -111,7 +111,7 @@ struct SceneObject {
     QColor strokeColor = QColor(0,0,0);
     qreal strokeWidth = 0;
     int strokeStyle = 0, strokeJoin = 1, strokeCap = 1;
-    // FILL-UI-1: the rest of PowerPoint's Format Shape > Fill and Line (see
+    // The rest of PowerPoint's Format Shape > Fill and Line (see
     // render/fillpaint.h). Left at these values an object draws exactly as it
     // always did: two-colour gradients from fill/fillSecondary, the 13 Qt
     // patterns, the five Qt dashes.
@@ -157,7 +157,7 @@ struct SceneObject {
     QVector<GradientStop> strokeStops;
     qreal strokeAngle = 0;
     int strokeGradientPath = 0;
-    // FILL-UI-1: a text box with a fill and outline of its own (the fill* and
+    // A text box with a fill and outline of its own (the fill* and
     // stroke* fields above, and its glow and boxShadow* effects drawn about
     // that box), as one PowerPoint p:sp holding both. The box is the text's
     // rectangle grown by these insets (PowerPoint's lIns/tIns/rIns/bIns: OmaShow
@@ -172,7 +172,7 @@ struct SceneObject {
     // hard edge. On text the shadow follows PowerPoint's own sizing (see
     // TextLayout's paintEffects).
     qreal shadowBlur = 0;
-    // EFFECTS-UI-1: the rest of PowerPoint's shadow (a:outerShdw / a:innerShdw).
+    // The rest of PowerPoint's shadow (a:outerShdw / a:innerShdw).
     // Inside the shape instead of behind it (inner); its size and slant as
     // PowerPoint's sx/sy (percent) and kx/ky (degrees), taken about the point
     // of the shape named by shadowAlign (0-8: tl t tr l ctr r bl b br, as
@@ -183,14 +183,14 @@ struct SceneObject {
     qreal shadowScaleX = 100, shadowScaleY = 100;
     qreal shadowSkewX = 0, shadowSkewY = 0;
     int shadowAlign = 0;
-    // EFFECTS-UI-1: a glow around the shape itself (spPr a:glow): its outline
+    // A glow around the shape itself (spPr a:glow): its outline
     // and fill, or just the outline when it has no fill. How far it reaches in
     // slide units, and its colour with its own transparency. 0: none. Text
     // boxes glow their words instead (textGlowRadius), as PowerPoint does for
     // a box with no fill and no outline.
     qreal glowRadius = 0;
     QColor glowColor = QColor(68, 114, 196, 102);
-    // BOTH-EFFECTS-1: a text box's own shadow (p:spPr a:effectLst), apart from
+    // A text box's own shadow (p:spPr a:effectLst), apart from
     // its words' (shadow*, a:rPr). Only text objects use it; their box glow is
     // glowRadius/glowColor above. With no fill and no outline PowerPoint draws
     // box effects on the words, so they are drawn there, each kind only where
@@ -285,7 +285,7 @@ struct SceneObject {
     // 0: none. Drawn behind the text and not cut off at the box.
     qreal textGlowRadius = 0;
     QColor textGlowColor = QColor(255, 255, 255, 191);
-    // STYLE3D (core/effects3d.h). On a shape, picture or a text box's own box
+    // (core/effects3d.h). On a shape, picture or a text box's own box
     // (p:spPr): soft edges (how far in the edge fades, slide units; 0 none),
     // reflection, 3-D format (a:sp3d) and 3-D rotation (a:scene3d). On a text
     // box's words: their reflection (a:rPr/a:effectLst, as the box's text
@@ -296,15 +296,15 @@ struct SceneObject {
     Effects3D::Format format3d, textFormat3d;
     Effects3D::Scene scene3d, textScene3d;
     qreal textFlatZ = 0;
-    // ROT-SHADOW-1: PowerPoint's "Keep text flat" (a:bodyPr/a:flatTx, with or
+    // PowerPoint's "Keep text flat" (a:bodyPr/a:flatTx, with or
     // without a z): the words stay out of the box's 3-D scene.
     bool textFlat = false;
-    // ROT-SHADOW-1: the outer shadow, glow and reflection are worked out on the
+    // The outer shadow, glow and reflection are worked out on the
     // 3-D turned picture (as PowerPoint always does) rather than the flat
     // object. OmaShow's own setting: PowerPoint has nothing to say it, so off
     // is kept in features.json and a PowerPoint copy shows them turned.
     bool effects3dFollow = true;
-    // STYLE3D: Text Fill and Text Outline. textFill empty: the words are
+    // Text Fill and Text Outline. textFill empty: the words are
     // textColor (solid, as always); else fill keys of their own (fillStyle 1-3
     // gradients, 3 pattern, 5 none, with fill, fillSecondary, gradient* and
     // patternPreset as on a shape). textOutline empty: no outline; else

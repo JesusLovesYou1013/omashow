@@ -73,7 +73,7 @@ bool Backend::combineShapes(int operation) {
   return true;
 }
 void Backend::setShapeImageDialog() {
-  // FILL-UI-1: a shape, or a text box (its own box), takes a picture fill.
+  // A shape, or a text box (its own box), takes a picture fill.
   const auto *o = selectedObject();
   if (o && o->type == ObjectType::Text)
     for (const auto &id : selectedIds())

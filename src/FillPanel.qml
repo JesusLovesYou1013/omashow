@@ -3,8 +3,8 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import Omashow 1.0
 
-// FILL-UI-1: Fill and Line for the selected shapes, or a text box's own box,
-// in the Style tab: PowerPoint's Format Shape > Fill & Line. Laid out as the
+// Fill and Line for the selected shapes, or a text box's own box,
+// in the inspector: PowerPoint's Format Shape > Fill & Line. Laid out as the
 // Effects (EffectsSet.qml): each a collapsed row until opened, presets first.
 //
 // Fill: No fill, Solid (colour, transparency), Gradient (any number of stops,
@@ -20,11 +20,11 @@ import Omashow 1.0
 // PowerPoint); the first one starts its box. Every change is one undo step
 // (backend.setSelectedFill).
 //
-// STYLE3D: mode "text" is the same editors for the words' own Text Fill and
+// Mode "text" is the same editors for the words' own Text Fill and
 // Text Outline (PowerPoint's Text Options; backend.setSelectedTextFill): the
 // selected stretch while editing text, else the whole box. Picture text fill
 // is not there yet. Which rows are open is kept in the inspector's styleOpen
-// (opener), per session; the Style tab's group header replaces the caption.
+// (opener), per session; the inspector's group header replaces the caption.
 ColumnLayout {
     id: root
     objectName: "fillPanel"

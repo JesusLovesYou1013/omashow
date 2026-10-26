@@ -3,7 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import Omashow 1.0
 
-// STYLE3D: one of the Style tab's three groups (Fill and Line, Effects, Text
+// One of the inspector's three groups (Fill and Line, Effects, Text
 // Fill and Outline): a folding header, as the Saved styles row, with what is
 // set in one line while it is closed. Open or closed is kept per session in
 // the inspector's styleOpen (closed at first).

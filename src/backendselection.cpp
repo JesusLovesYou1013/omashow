@@ -125,6 +125,40 @@ void Backend::selectIds(const QStringList &requested) {
   m_selectedId = ids.isEmpty() ? QString() : ids.last();
   emit selectionChanged();
 }
+// A script naming an object means that object, not the group it sits in
+// (#26). The group scope moves to the deepest group every named object
+// shares, so each named object is a unit of its own where it can be; named
+// objects in different groups still take their group's siblings along, as a
+// click would, and selectedIds() shows that. select() and selectIds() are
+// what a click does: they keep the scope where the person put it.
+void Backend::selectNamed(const QStringList &ids) {
+  const auto slide = Design::resolve(m_document, m_currentSlide);
+  QStringList scope;
+  bool found = false;
+  for (const auto &id : ids)
+    if (const auto *o = slide.find(id)) {
+      if (!found) {
+        scope = o->groups;
+        found = true;
+        continue;
+      }
+      int shared = 0;
+      while (shared < scope.size() && shared < o->groups.size() &&
+             scope.at(shared) == o->groups.at(shared))
+        ++shared;
+      scope = scope.mid(0, shared);
+    }
+  if (!found) {
+    clearSelection();
+    return;
+  }
+  if (scope != m_groupScope) {
+    m_groupScope = scope;
+    m_selectedIds.clear();
+    m_selectedId.clear();
+  }
+  selectIds(ids);
+}
 void Backend::select(const QString &id) {
   selectIds(id.isEmpty() ? QStringList() : QStringList{id});
 }
@@ -418,14 +452,14 @@ void Backend::setSelectedProperty(const QString &key, const QVariant &given) {
   touch();
 }
 namespace {
-// EFFECTS-UI-1: which objects an effect target means, and what each key is
+// Which objects an effect target means, and what each key is
 // called on them. A text box's words carry their glow as textGlow*; shapes
 // and pictures carry their own glow* (PowerPoint's shape glow).
 //
-// BOTH-EFFECTS-1: "shape" (the Box) is the selection's shapes and pictures;
+// "shape" (the Box) is the selection's shapes and pictures;
 // with none, a text box's own box effects: glow* and boxShadow* on the text
-// object (written to its p:spPr), which PowerPoint draws on the words of a
-// box with no fill and no outline.
+// object (written to its p:spPr). Of a box with no fill and no outline,
+// PowerPoint draws only a plain outer shadow, on the words (TextLayout).
 bool boxOnWords(const QStringList &ids, const Slide &slide, const QString &target) {
   if (target != QLatin1String("shape")) return false;
   for (const auto &id : ids)
@@ -439,7 +473,7 @@ bool effectTarget(const SceneObject &o, const QString &target, bool onWords) {
 QString effectKey(const QString &target, const QString &key, bool onWords) {
   if (target == QLatin1String("text") && key == QLatin1String("glowRadius")) return QStringLiteral("textGlowRadius");
   if (target == QLatin1String("text") && key == QLatin1String("glowColor")) return QStringLiteral("textGlowColor");
-  // STYLE3D: the words' reflection and 3-D (a:rPr effectLst, a:bodyPr scene3d/sp3d).
+  // The words' reflection and 3-D (a:rPr effectLst, a:bodyPr scene3d/sp3d).
   if (target == QLatin1String("text") && key == QLatin1String("reflection")) return QStringLiteral("textReflection");
   if (target == QLatin1String("text") && key == QLatin1String("format3d")) return QStringLiteral("textFormat3d");
   if (target == QLatin1String("text") && key == QLatin1String("scene3d")) return QStringLiteral("textScene3d");
@@ -452,9 +486,10 @@ const QStringList &effectKeys() {
                                 "softEdge", "reflection", "format3d", "scene3d", "effects3dFollow", "textFlat"};
   return keys;
 }
-// STYLE3D: the selected stretch of a text box being edited, if any.
-bool runRange(bool editing, int start, int end, const QStringList &ids, const Slide &slide) {
-  if (!editing || end <= start || ids.size() != 1) return false;
+// The selected stretch of a text box being edited, if any (the editor clears
+// the selection when editing ends, as textSelection() reads it).
+bool runRange(int start, int end, const QStringList &ids, const Slide &slide) {
+  if (end <= start || ids.size() != 1) return false;
   const auto *o = slide.find(ids.first());
   return o && o->type == ObjectType::Text;
 }
@@ -475,20 +510,20 @@ QVariantMap Backend::effectState(const QString &target) const {
     if (!o || !effectTarget(*o, target, onWords)) continue;
     if (count++ == 0) {
       auto shown = *o;
-      // STYLE3D: a stretch with effects of its own shows those.
-      if (target == QLatin1String("text") && runRange(m_textEditing, m_textSelectionStart, m_textSelectionEnd, ids, slide))
+      // A stretch with effects of its own shows those.
+      if (target == QLatin1String("text") && runRange(m_textSelectionStart, m_textSelectionEnd, ids, slide))
         if (const auto *run = TextRuns::at(o->runs, m_textSelectionStart); run && !run->effects.isEmpty())
           shown = FillStyle::withTextEffects(*o, run->effects);
       const auto all = Design::properties(shown);
       for (const auto &key : effectKeys()) state[key] = all.value(effectKey(target, key, onWords));
       if (target == QLatin1String("text")) state.remove(QStringLiteral("softEdge"));   // PowerPoint has none for text
-      // ROT-SHADOW-1: the box's own 3-D rotation, which the words follow
+      // The box's own 3-D rotation, which the words follow
       // unless "Keep text flat".
       if (target == QLatin1String("text")) state["boxScene3d"] = all.value(QStringLiteral("scene3d"));
     }
   }
   state["count"] = count;
-  // BOTH-EFFECTS-1: a box with nothing to draw on (FILL-UI-1: unless the
+  // A box with nothing to draw on (unless the
   // text box has a fill or line of its own, which its box effects follow).
   bool drawn = false;
   if (onWords)
@@ -504,9 +539,9 @@ void Backend::setSelectedEffect(const QString &target, const QVariantMap &values
   const auto ids = selectedIds();
   const auto shown = Design::resolve(m_document, m_currentSlide);
   const bool onWords = boxOnWords(ids, shown, target);
-  // STYLE3D: text selected while editing: glow, shadow and reflection go on
+  // Text selected while editing: glow, shadow and reflection go on
   // the selected stretch (a:rPr effectLst); its 3-D stays the box's (a:bodyPr).
-  if (target == QLatin1String("text") && runRange(m_textEditing, m_textSelectionStart, m_textSelectionEnd, ids, shown)) {
+  if (target == QLatin1String("text") && runRange(m_textSelectionStart, m_textSelectionEnd, ids, shown)) {
     bool allRun = true;
     for (auto it = values.cbegin(); it != values.cend(); ++it)
       if (!runEffectKey(it.key())) allRun = false;
@@ -549,7 +584,7 @@ void Backend::setSelectedEffect(const QString &target, const QVariantMap &values
         Design::markOverride(*o, effectKey(target, it.key(), onWords));
       }
     }
-  // BOX-SHADOW-2: an outlined box with no fill casts its shadow from its words
+  // An outlined box with no fill casts its shadow from its words
   // too (PowerPoint draws one shadow of both), so the box's words follow its shadow.
   if (target == QLatin1String("shape") && !onWords)
     for (const auto &id : ids)
@@ -565,7 +600,7 @@ void Backend::setSelectedEffect(const QString &target, const QVariantMap &values
   touch();
 }
 namespace {
-// FILL-UI-1: the fill and line keys the Style tab's Fill and Line set.
+// The fill and line keys the inspector's Fill and Line set.
 const QStringList &fillKeys() {
   static const QStringList keys{
       "fill", "fillStyle", "fillSecondary", "fillAngle", "patternStyle", "patternPreset", "gradientStops", "gradientPath",
@@ -668,7 +703,7 @@ void Backend::setSelectedFill(const QVariantMap &values) {
   touch();
 }
 namespace {
-// STYLE3D: a text box's words as one carrier of fill keys and one of line keys.
+// A text box's words as one carrier of fill keys and one of line keys.
 SceneObject wordsFill(const SceneObject &o, const TextRun *run) {
   const QVariantMap fill = run && !run->fill.isEmpty() ? run->fill : run && run->color.isValid() ? QVariantMap() : o.textFill;
   const QColor colour = run && run->color.isValid() ? run->color : o.textColor;
@@ -683,7 +718,7 @@ QVariantMap Backend::textFillState() const {
   const auto ids = selectedIds();
   if (ids.isEmpty()) return state;
   const auto slide = Design::resolve(m_document, m_currentSlide);
-  const bool range = runRange(m_textEditing, m_textSelectionStart, m_textSelectionEnd, ids, slide);
+  const bool range = runRange(m_textSelectionStart, m_textSelectionEnd, ids, slide);
   int count = 0;
   for (const auto &id : ids) {
     const auto *o = slide.find(id);
@@ -716,7 +751,7 @@ void Backend::setSelectedTextFill(const QVariantMap &values) {
   if (!fillPart && !linePart) return;
   const auto ids = selectedIds();
   const auto shown = Design::resolve(m_document, m_currentSlide);
-  const bool range = runRange(m_textEditing, m_textSelectionStart, m_textSelectionEnd, ids, shown);
+  const bool range = runRange(m_textSelectionStart, m_textSelectionEnd, ids, shown);
   // What each text box becomes, worked out on copies first (all or nothing).
   QHash<QString, SceneObject> after;
   for (const auto &id : ids) {
@@ -802,21 +837,40 @@ void Backend::deleteSelected() {
   clearSelection();
   touch();
 }
+// Moves the selection |delta| places up (positive) or down the stacking
+// order, stopping at the ends: a large delta is bring-to-front or
+// send-to-back. Nothing moving is nothing done, so it is not an edit.
 void Backend::raiseSelected(int delta) {
   const auto ids = selectedIds();
-  if (ids.isEmpty())
+  if (ids.isEmpty() || delta == 0)
     return;
   m_history.begin(m_document,
                   delta > 0 ? tr("Bring forward") : tr("Send backward"));
   auto &objects = m_document.slides[m_currentSlide].objects;
-  if (delta > 0) {
-    for (int i = objects.size() - 2; i >= 0; --i)
-      if (ids.contains(objects.at(i).id) && !ids.contains(objects.at(i + 1).id))
-        objects.swapItemsAt(i, i + 1);
-  } else {
-    for (int i = 1; i < objects.size(); ++i)
-      if (ids.contains(objects.at(i).id) && !ids.contains(objects.at(i - 1).id))
-        objects.swapItemsAt(i, i - 1);
+  const qint64 steps = qMin<qint64>(qAbs(qint64(delta)), objects.size());
+  bool movedAtAll = false;
+  for (qint64 step = 0; step < steps; ++step) {
+    bool moved = false;
+    if (delta > 0) {
+      for (int i = objects.size() - 2; i >= 0; --i)
+        if (ids.contains(objects.at(i).id) && !ids.contains(objects.at(i + 1).id)) {
+          objects.swapItemsAt(i, i + 1);
+          moved = true;
+        }
+    } else {
+      for (int i = 1; i < objects.size(); ++i)
+        if (ids.contains(objects.at(i).id) && !ids.contains(objects.at(i - 1).id)) {
+          objects.swapItemsAt(i, i - 1);
+          moved = true;
+        }
+    }
+    if (!moved)
+      break;
+    movedAtAll = true;
+  }
+  if (!movedAtAll) {
+    m_history.abandon();
+    return;
   }
   m_history.commit();
   touch();

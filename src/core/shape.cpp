@@ -233,11 +233,11 @@ bool Shape::contains(const SceneObject &o, const QPointF &point) {
 }
 void Shape::paint(QPainter &painter, const SceneObject &o) {
   const auto p = path(o);
-  // EFFECTS-UI-1: a glow, a soft, inner, resized or slanted shadow is drawn
+  // A glow, a soft, inner, resized or slanted shadow is drawn
   // from the shape's silhouette (render/shapeeffects.h); a plain offset shadow
   // stays the solid copy it always was.
   const bool soft = ShapeEffects::soft(o);
-  // FILL-UI-1: PowerPoint's newer fills and lines (render/fillpaint.h);
+  // PowerPoint's newer fills and lines (render/fillpaint.h);
   // anything else is drawn below exactly as before.
   const bool modernFill = FillStyle::modernFill(o), modernLine = FillStyle::modernLine(o);
   QPainterPath outline;
@@ -249,11 +249,21 @@ void Shape::paint(QPainter &painter, const SceneObject &o) {
     }
   }
   const QPainterPath area = o.fillStyle == 5 ? QPainterPath() : p;
-  // STYLE3D: drawn in two goes when the face has effects of its own
+  // Drawn in two goes when the face has effects of its own
   // (render/layereffects.h): what goes behind it, then the face.
   const auto pass = LayerEffects::pass();
   if (pass == LayerEffects::Pass::Face) {}
-  else if (soft) ShapeEffects::paintBehind(painter, o, area, outline);
+  else if (soft) {
+    // The shadow is cast by the shape as drawn: its fill and outline with their
+    // own transparency (render/effectmodel.h).
+    SceneObject plain = o;
+    plain.shadowEnabled = false;
+    plain.glowRadius = 0;
+    ShapeEffects::paintBehind(painter, o, area, outline, [&plain](QPainter &q) {
+      LayerEffects::PassScope whole(LayerEffects::Pass::All);
+      Shape::paint(q, plain);
+    });
+  }
   else if (o.shadowEnabled) {
     painter.save();
     painter.translate(o.shadowX, o.shadowY);

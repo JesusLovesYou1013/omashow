@@ -74,8 +74,8 @@ HEADERS += src/core/objectcopy.h
 SOURCES += src/core/objectcopy.cpp src/backendclipboard.cpp
 
 HEADERS += src/render/textlayout.h
-SOURCES += src/render/textlayout.cpp src/render/shapeeffects.cpp src/render/effectpreview.cpp
-HEADERS += src/render/shapeeffects.h src/render/effectpreview.h
+SOURCES += src/render/textlayout.cpp src/render/shapeeffects.cpp src/render/effectmodel.cpp src/render/effectpreview.cpp
+HEADERS += src/render/shapeeffects.h src/render/effectmodel.h src/render/effectpreview.h
 HEADERS += src/render/mathlayout.h
 SOURCES += src/render/mathlayout.cpp
 
@@ -192,6 +192,6 @@ SOURCES += src/core/fontswap.cpp src/core/fontsandbox.cpp src/core/fontdownloade
 HEADERS += src/io/deckfeatures.h
 SOURCES += src/io/deckfeatures.cpp
 
-# STYLE3D: soft edges, reflection, 3-D format and rotation, text fill and outline
+# Soft edges, reflection, 3-D format and rotation, text fill and outline
 HEADERS += src/core/effects3d.h src/render/layereffects.h
 SOURCES += src/core/effects3d.cpp src/render/layereffects.cpp

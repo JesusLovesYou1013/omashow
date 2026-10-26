@@ -1,6 +1,6 @@
 #pragma once
 
-// STYLE3D: the rest of PowerPoint's Format Shape > Effects, as data.
+// The rest of PowerPoint's Format Shape > Effects, as data.
 //
 //   soft edges   (a:softEdge rad)          SceneObject::softEdge
 //   reflection   (a:reflection)            Effects3D::Reflection
@@ -118,10 +118,19 @@ Rig rig(const Scene &s);
 struct Material { qreal diffuse = 1, specular = 0.3, power = 8; bool metal = false; };
 Material material(const QString &name);
 
+// The colour PowerPoint gives a flat front face, from its fill colour, under a
+// rig and material: each channel v becomes gain * v + lift (0-255), drawn at
+// `opacity`; a wireframe draws only its outline. Measured from PowerPoint's
+// own pictures (eight fills, each rig at its own direction with warmMatte,
+// each material under threePt, on light and dark backgrounds); a rig and a
+// material are measured apart and put together.
+struct FaceTint { qreal gain[3] = {1, 1, 1}; qreal lift[3] = {0, 0, 0}; qreal opacity = 1; bool wireframe = false; };
+FaceTint faceTint(const Scene &s, const QString &material);
+
 // ---- Reflection Variations (Format Shape > Effects > Reflection), and the
 // Soft Edges and Bevel galleries, as PowerPoint writes them.
 
-struct ReflectionPreset { QString name; qreal endPos; qreal dist; qreal endAlpha; };
+struct ReflectionPreset { QString name; qreal endPos; qreal dist; qreal endAlpha; qreal startAlpha = 50000; };
 // tight/half/full × touching/4 pt/8 pt. Lengths in points.
 const QVector<ReflectionPreset> &reflectionPresets();
 Reflection reflectionPreset(int index, qreal unitsPerPoint);

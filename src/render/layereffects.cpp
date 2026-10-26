@@ -1,6 +1,7 @@
 #include "render/layereffects.h"
 
 #include "core/scene.h"
+#include "render/effectmodel.h"
 #include "render/fillpaint.h"
 #include "render/shapeeffects.h"
 
@@ -19,42 +20,7 @@ namespace LayerEffects {
 namespace {
 thread_local Pass tPass = Pass::All;
 
-// Distance from every pixel to the nearest marked one, in pixels (exact
-// Euclidean, Felzenszwalb & Huttenlocher), as render/textlayout.cpp.
-QVector<float> distanceTo(const QVector<bool> &marked, int w, int h) {
-    const float far = 1e20f;
-    QVector<float> d(w * h);
-    for (int i = 0; i < w * h; ++i) d[i] = marked[i] ? 0 : far;
-    const int n = qMax(w, h);
-    QVector<float> f(n), out(n), z(n + 1);
-    QVector<int> v(n);
-    auto pass = [&](int count) {
-        int k = 0;
-        v[0] = 0; z[0] = -far; z[1] = far;
-        for (int q = 1; q < count; ++q) {
-            auto meet = [&](int r) { return ((f[q] + q * q) - (f[r] + r * r)) / (2.0f * (q - r)); };
-            float s = meet(v[k]);
-            while (s <= z[k]) s = meet(v[--k]);
-            ++k; v[k] = q; z[k] = s; z[k + 1] = far;
-        }
-        k = 0;
-        for (int q = 0; q < count; ++q) {
-            while (z[k + 1] < q) ++k;
-            out[q] = (q - v[k]) * (q - v[k]) + f[v[k]];
-        }
-    };
-    for (int x = 0; x < w; ++x) {
-        for (int y = 0; y < h; ++y) f[y] = d[y * w + x];
-        pass(h);
-        for (int y = 0; y < h; ++y) d[y * w + x] = out[y];
-    }
-    for (int y = 0; y < h; ++y) {
-        std::copy(d.cbegin() + y * w, d.cbegin() + (y + 1) * w, f.begin());
-        pass(w);
-        for (int x = 0; x < w; ++x) d[y * w + x] = std::sqrt(out[x]);
-    }
-    return d;
-}
+using EffectModel::distanceTo;   // shared with every glow (render/effectmodel.h)
 
 void gaussian(QVector<float> &plane, int w, int h, qreal sigma) {
     if (sigma < 0.3) return;
@@ -101,7 +67,7 @@ void blur(QImage &image, qreal sigma) {
 }
 
 // A bevel's height from the outline in (t 0) to its inner edge (t 1), 0-1.
-// PROTOTYPE: drawn from PowerPoint's gallery by eye, not measured.
+// Approximation: drawn from PowerPoint's gallery by eye, not measured.
 qreal profile(const QString &preset, qreal t) {
     t = qBound<qreal>(0, t, 1);
     if (preset == QLatin1String("relaxedInset")) return 0.5 - 0.5 * std::cos(M_PI * t);
@@ -145,16 +111,28 @@ V3 normalised(const V3 &v) {
 }
 qreal dot(const V3 &a, const V3 &b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
 
-// The light rig's lighting of a surface facing `n`, against a flat face
-// toward the viewer (so an unturned, unbevelled face keeps its colour).
+// The light rig's lighting of a surface facing `n`, in the shape's own frame:
+// PowerPoint's lights turn with the shape, so a turned face takes the same
+// diffuse light as an unturned one (measured: matte faces do not change as
+// they turn). The viewer does not turn with it: the shine is worked out
+// towards the camera as the shape's frame sees it (`view`, the camera's turn
+// undone), Blinn's half-way vector between each light and the viewer, raised
+// to 3.3 x the material's power and scaled by 0.974 x its specular (fitted
+// black-box on PowerPoint's renders of grey faces and angle bevels at 81 turns,
+// plastic and warm matte, held-out turns within 6.3 levels of 255). Against
+// the flat face seen straight on; that face takes the measured
+// Effects3D::faceTint.
 struct Lighting {
+    static constexpr qreal kShinePower = 3.3, kShineGain = 0.974;
     Effects3D::Rig rig;
     Effects3D::Material material;
+    V3 view{0, 0, 1};
     qreal flat = 1, flatShine = 0;
-    explicit Lighting(const Effects3D::Scene &s, const QString &materialName)
+    Lighting(const Effects3D::Scene &s, const QString &materialName, const V3 &towardViewer = {0, 0, 1})
         : rig(Effects3D::rig(s)), material(Effects3D::material(materialName)) {
         flat = qMax<qreal>(1e-3, diffuse({0, 0, 1}));
-        flatShine = shine({0, 0, 1});
+        flatShine = shine({0, 0, 1});   // straight on
+        view = normalised(towardViewer);
     }
     qreal diffuse(const V3 &n) const {
         qreal sum = rig.ambient;
@@ -171,10 +149,10 @@ struct Lighting {
         for (const auto &l : rig.lights) {
             if (!l.specular) continue;
             const V3 to = normalised({-l.x, -l.y, -l.z});
-            const V3 half = normalised({to.x, to.y, to.z + 1});
-            sum += (l.r + l.g + l.b) / 3 * std::pow(qMax<qreal>(0, dot(n, half)), material.power * 2);
+            const V3 half = normalised({to.x + view.x, to.y + view.y, to.z + view.z});
+            sum += (l.r + l.g + l.b) / 3 * std::pow(qMax<qreal>(0, dot(n, half)), material.power * kShinePower);
         }
-        return sum * material.specular * 0.6;
+        return sum * material.specular * kShineGain;
     }
     qreal shade(const V3 &n) const {
         const qreal relative = diffuse(n) / flat;
@@ -184,9 +162,9 @@ struct Lighting {
 
 struct Made { QImage image; QRectF rect; };
 
-// ROT-SHADOW-1: a turned picture's outer shadow and glow, worked out on its
-// silhouette as ShapeEffects::paintBehind does on a flat shape's: the glow
-// fading out from the edge to its size, the shadow resized and slanted about
+// A turned picture's outer shadow and glow, worked out on its
+// silhouette by the same model as ShapeEffects::paintBehind on a flat shape's
+// (render/effectmodel.h): the glow grown and softened, the shadow resized and slanted about
 // its point of the drawn bounds, moved and blurred. In layer pixels; `rect`
 // is where the result sits (its size in pixels).
 Made castOf(const QImage &src, const QPointF &at, const Cast &c, qreal scale, const QPointF &middle) {
@@ -200,19 +178,24 @@ Made castOf(const QImage &src, const QPointF &at, const Cast &c, qreal scale, co
     if (x1 < 0) return {};
     const QRectF opaque(at.x() + x0, at.y() + y0, x1 - x0 + 1, y1 - y0 + 1);
     const bool shadow = c.shadow && c.shadowColor.alpha() > 0;
-    const qreal glow = c.glow > 0 && c.glowColor.alpha() > 0 ? c.glow * scale : 0;
-    const qreal sigma = shadow ? qMax<qreal>(0, c.blur) / 2.5 * scale : 0;   // as ShapeEffects' sigmaOf
+    // The one model every glow and shadow follows (render/effectmodel.h).
+    const qreal glow = c.glow > 0 && c.glowColor.alpha() > 0 ? c.glow * c.k : 0;
+    const qreal grow = glow > 0 ? EffectModel::glowGrow(glow, FillPaint::unitsPerPoint()) * scale : 0;
+    const qreal glowSigma = EffectModel::glowSigma(glow) * scale;
+    const qreal sigma = shadow ? EffectModel::sigma(c.blur * c.k) * scale : 0;
     QTransform t;
     if (shadow) {
         const QPointF a = ShapeEffects::anchor(opaque, c.align);
-        t.translate(c.dx * scale, c.dy * scale);
+        t.translate(c.dx * c.k * scale, c.dy * c.k * scale);
         t.translate(a.x(), a.y());
-        t.shear(std::tan(qDegreesToRadians(qBound(-89.0, c.kx, 89.0))), std::tan(qDegreesToRadians(qBound(-89.0, c.ky, 89.0))));
+        // Slanted, then resized (PowerPoint's order, as ShapeEffects).
         t.scale(c.sx / 100.0, c.sy / 100.0);
+        t.shear(std::tan(qDegreesToRadians(qBound(-89.0, c.kx, 89.0))), std::tan(qDegreesToRadians(qBound(-89.0, c.ky, 89.0))));
         t.translate(-a.x(), -a.y());
     }
-    QRectF region = opaque.adjusted(-glow * 1.2 - 1, -glow * 1.2 - 1, glow * 1.2 + 1, glow * 1.2 + 1);
-    if (shadow) region = region.united(t.mapRect(opaque).adjusted(-3 * sigma - 1, -3 * sigma - 1, 3 * sigma + 1, 3 * sigma + 1));
+    const qreal reach = grow + 4 * glowSigma + 1;
+    QRectF region = opaque.adjusted(-reach, -reach, reach, reach);
+    if (shadow) region = region.united(t.mapRect(opaque).adjusted(-4 * sigma - 1, -4 * sigma - 1, 4 * sigma + 1, 4 * sigma + 1));
     const qreal most = 8000;
     region = region.intersected(QRectF(middle.x() - most, middle.y() - most, 2 * most, 2 * most)).toAlignedRect();
     const int w = qMax(1, qCeil(region.width())), h = qMax(1, qCeil(region.height()));
@@ -234,19 +217,10 @@ Made castOf(const QImage &src, const QPointF &at, const Cast &c, qreal scale, co
         return a;
     };
     QVector<float> halo(w * h, 0.f), fall;
-    if (glow > 0) {
-        const QVector<float> body = alphaOf(QTransform());
-        QVector<bool> inside(w * h);
-        for (int i = 0; i < w * h; ++i) inside[i] = body[i] >= 0.5f;
-        const QVector<float> d = distanceTo(inside, w, h);
-        const qreal reach = glow * 0.5, fade = qMax<qreal>(0.5, glow * 0.2);
-        const float strength = float(c.glowColor.alphaF());
-        for (int i = 0; i < w * h; ++i)
-            halo[i] = qMax(body[i], float(0.5 * std::erfc((d[i] - reach) / (fade * M_SQRT2)))) * strength;
-    }
+    if (glow > 0) halo = EffectModel::glow(alphaOf(QTransform()), w, h, grow, glowSigma, float(c.glowColor.alphaF()));
     if (shadow) {
         fall = alphaOf(t);
-        gaussian(fall, w, h, sigma);
+        EffectModel::gaussian(fall, w, h, sigma, 0.f);
         const float strength = float(c.shadowColor.alphaF());
         for (auto &v : fall) v *= strength;
     }
@@ -315,10 +289,35 @@ Made make(const QRectF &box, const Look &look, qreal scale, qreal margin,
     const Effects3D::Camera cam = Effects3D::camera(look.scene.camera);
     const bool oblique = turned && cam.skew > 0;
     const Turn turn = oblique ? Turn() : Turn(lat, lon, rev);
-    const Lighting light(look.scene.on ? look.scene : Effects3D::Scene(), look.format.material);
+    // The camera's direction in the shape's own frame: the turn undone.
+    V3 towardViewer{0, 0, 1};
+    if (turned) {
+        const Turn full(lat, lon, rev);
+        towardViewer = {full.m[2][0], full.m[2][1], full.m[2][2]};   // (M^T)(0, 0, 1)
+    }
+    const Lighting light(look.scene.on ? look.scene : Effects3D::Scene(), look.format.material, towardViewer);
+    const Effects3D::FaceTint tint = Effects3D::faceTint(look.scene.on ? look.scene : Effects3D::Scene(), look.format.material);
+    const bool lit = bevelled || turned || deep;
 
-    // Bevel (and a turned face's light): the face shaded by its slope.
-    if (bevelled || (turned && !oblique)) {
+    // A wireframe: only the outline, a thin dark line (measured: black at 75 %,
+    // about 1.1 pt wide), nothing inside.
+    if (lit && tint.wireframe) {
+        const QVector<float> out = distanceTo(inside, w, h), into = in.isEmpty() ? distanceTo(outside, w, h) : in;
+        const qreal half = 0.55 * FillPaint::unitsPerPoint() * scale;
+        for (int y = 0; y < h; ++y) {
+            auto *row = reinterpret_cast<QRgb *>(layer.scanLine(y));
+            for (int x = 0; x < w; ++x) {
+                const int i = y * w + x;
+                const qreal d = (inside[i] ? into[i] : out[i]) - 0.5;
+                const int a = qRound(qBound<qreal>(0, half + 0.5 - d, 1) * 0.75 * 255);
+                row[x] = qRgba(0, 0, 0, a);
+            }
+        }
+    }
+
+    // Bevel (and a turned or deep face's light): the face in its measured
+    // colour, shaded by its slope.
+    if (lit && !tint.wireframe) {
         const qreal bw = bevelled ? look.format.top.w * scale : 0, bh = bevelled ? look.format.top.h * scale : 0;
         QVector<float> height(w * h, 0.f);
         if (bevelled)
@@ -336,16 +335,20 @@ Made make(const QRectF &box, const Look &look, qreal scale, qreal margin,
                     gx = (height[y * w + x1] - height[y * w + x0]) / qMax(1, x1 - x0);
                     gy = (height[y1 * w + x] - height[y0 * w + x]) / qMax(1, y1 - y0);
                 }
-                const V3 n = turn(normalised({-gx, -gy, 1}));
+                const V3 n = normalised({-gx, -gy, 1});
                 const qreal s = light.shade(n);
+                // Shine only adds: a face or bevel never goes darker than its
+                // diffuse light for lack of it (legacy rigs light the face head on).
                 const qreal shine = qMax<qreal>(0, light.shine(n) - light.flatShine);
                 const qreal a = qAlpha(c);
-                auto channel = [&](int v) {
-                    // Shine is white on most materials, the colour itself on metals.
-                    const qreal lit = v * s + (metal ? shine * v * 1.5 : shine * a);
-                    return qBound(0, qRound(lit), int(a));
+                auto channel = [&](int v, int k) {
+                    // The flat face's measured colour (premultiplied), then the slope's light;
+                    // shine is white on most materials, the colour itself on metals.
+                    const qreal base = qBound<qreal>(0, tint.gain[k] * v + tint.lift[k] * a / 255, a);
+                    const qreal lit = base * s + (metal ? shine * base * 1.5 : shine * a);
+                    return qBound(0, qRound(lit * tint.opacity), 255);
                 };
-                row[x] = qRgba(channel(qRed(c)), channel(qGreen(c)), channel(qBlue(c)), int(a));
+                row[x] = qRgba(channel(qRed(c), 0), channel(qGreen(c), 1), channel(qBlue(c), 2), qRound(a * tint.opacity));
             }
         }
     }
@@ -379,99 +382,32 @@ Made make(const QRectF &box, const Look &look, qreal scale, qreal margin,
     const QPointF middle = boxPx.center();
     QImage result = layer;
     QPointF resultAt(0, 0);   // where `result` sits in layer pixels
-    QRectF faceBox = boxPx;   // the box as drawn (turned), for the reflection
+    // Words turn their reflection over about the foot of their lines, not the
+    // frame (as PowerPoint does, measured).
+    const QRectF wordsPx = look.words.isValid()
+        ? QRectF((look.words.left() - box.left() + margin) * scale, (look.words.top() - box.top() + margin) * scale,
+                 look.words.width() * scale, look.words.height() * scale)
+        : boxPx;
+    QRectF faceBox = wordsPx;   // the box (or lines) as drawn (turned), for the reflection
 
-    if (turned || deep) {
-        const qreal depth = deep ? look.format.depth * scale : 0;
-        const qreal front = look.format.on ? look.format.z * scale : 0;
-        const bool persp = turned && !cam.parallel && !look.scene.camera.startsWith(QLatin1String("legacy"));
-        const qreal fov = persp ? Effects3D::fieldOfView(look.scene) : 0;
-        // PowerPoint's viewing scale: 159.76 mm at half the field of view.
-        const qreal distance = fov > 0 ? 452.9 * FillPaint::unitsPerPoint() * scale / std::tan(qDegreesToRadians(fov / 2)) : 0;
-        const qreal zoom = look.scene.on ? qMax<qreal>(0.01, look.scene.zoom / 100) : 1;
-        const qreal skew = oblique ? cam.skew / 100 : 0;
-        const qreal angle = qDegreesToRadians(cam.skewAngle);
-        auto project = [&](const QPointF &p, qreal z) {
-            V3 q = turn({p.x() - middle.x(), p.y() - middle.y(), z});
-            qreal f = 1;
-            if (distance > 0) f = distance / qMax(distance * 0.05, distance - q.z);
-            QPointF s(q.x * f, q.y * f);
-            if (oblique) s += QPointF(std::cos(angle), -std::sin(angle)) * (-z * skew);
-            return middle + s * zoom;
-        };
-        const QRectF src(0, 0, w, h);
-        auto quadAt = [&](qreal z) {
-            return QPolygonF{project(src.topLeft(), z), project(src.topRight(), z), project(src.bottomRight(), z), project(src.bottomLeft(), z)};
-        };
-        const QPolygonF frontQuad = quadAt(front);
-        const QPolygonF backQuad = quadAt(front - depth);
-        QRectF bounds = frontQuad.boundingRect().united(backQuad.boundingRect()).adjusted(-2, -2, 2, 2);
-        const qreal most = 6000;
-        bounds = bounds.intersected(QRectF(middle.x() - most, middle.y() - most, 2 * most, 2 * most));
-        QImage out(qMax(1, qCeil(bounds.width())), qMax(1, qCeil(bounds.height())), QImage::Format_ARGB32_Premultiplied);
-        out.fill(Qt::transparent);
-        QPainter p(&out);
-        p.setRenderHint(QPainter::SmoothPixmapTransform);
-        p.setRenderHint(QPainter::Antialiasing);
-        const QPolygonF srcQuad{src.topLeft(), src.topRight(), src.bottomRight(), src.bottomLeft()};
-        auto drawAt = [&](const QImage &image, const QPolygonF &quad) {
-            QTransform t;
-            QPolygonF moved = quad.translated(-bounds.topLeft());
-            if (!QTransform::quadToQuad(srcQuad, moved, t)) return;
-            p.setTransform(t);
-            p.drawImage(QPointF(), image);
-        };
-        if (depth > 0) {
-            // The sides: the silhouette in the depth's colour, each pixel lit
-            // as the side nearest it faces.
-            const QColor ec = look.format.extrusionColor.isValid() ? look.format.extrusionColor : look.face;
-            QImage sides(w, h, QImage::Format_ARGB32_Premultiplied);
-            for (int y = 0; y < h; ++y) {
-                const auto *src = reinterpret_cast<const QRgb *>(layer.constScanLine(y));
-                auto *row = reinterpret_cast<QRgb *>(sides.scanLine(y));
-                for (int x = 0; x < w; ++x) {
-                    const int a = qAlpha(src[x]);
-                    if (!a) { row[x] = 0; continue; }
-                    const int x0 = qMax(0, x - 1), x1 = qMin(w - 1, x + 1), y0 = qMax(0, y - 1), y1 = qMin(h - 1, y + 1);
-                    const qreal gx = (in[y * w + x1] - in[y * w + x0]) / qMax(1, x1 - x0);
-                    const qreal gy = (in[y1 * w + x] - in[y0 * w + x]) / qMax(1, y1 - y0);
-                    const V3 n = turn(normalised({-gx, -gy, 0.0001}));
-                    const qreal s = qBound<qreal>(0.15, light.diffuse(n) / light.flat, 1.4) * 0.85;
-                    const qreal f = a / 255.0 * ec.alphaF();
-                    row[x] = qRgba(qBound(0, qRound(ec.red() * s * f), 255), qBound(0, qRound(ec.green() * s * f), 255),
-                                   qBound(0, qRound(ec.blue() * s * f), 255), qRound(f * 255));
-                }
-            }
-            const QPointF a = project(middle, front), b = project(middle, front - depth);
-            const int slices = qBound(1, qCeil(QLineF(a, b).length() * 1.5) + 1, 160);
-            for (int k = slices; k >= 1; --k) drawAt(sides, quadAt(front - depth * k / slices));
-        }
-        drawAt(layer, frontQuad);
-        p.end();
-        result = out;
-        resultAt = bounds.topLeft();
-        faceBox = QPolygonF{project(boxPx.topLeft(), front), project(boxPx.topRight(), front), project(boxPx.bottomRight(), front),
-                            project(boxPx.bottomLeft(), front)}.boundingRect();
-    }
-
-    // Reflection: turned over about its point of the box, moved, faded, blurred.
-    // ROT-SHADOW-1: of the turned picture (PowerPoint's way), or of the flat
-    // face when the effects don't follow the 3-D rotation.
+    // Reflection: turned over about its point of the box, moved, faded,
+    // blurred. On a turned object whose effects follow the rotation it lies
+    // in the object's own plane: the flat face's reflection, turned with it
+    // (PowerPoint's way, measured: its top edge runs along the turned foot).
+    // Its effects not following, the flat face's, flat.
     struct Piece { QImage image; QPointF at; };
     Piece reflected;
-    if (Effects3D::drawn(look.reflection)) {
-        const bool flat = turned && !look.follow;
-        const QImage &source = flat ? layer : result;
-        const QPointF sourceAt = flat ? QPointF(0, 0) : resultAt;
-        const QRectF sourceFace = flat ? boxPx : faceBox;
+    const bool reflects = Effects3D::drawn(look.reflection);
+    const bool inPlane = reflects && turned && look.follow;
+    auto reflect = [&](const QImage &source, const QPointF &sourceAt, const QRectF &sourceFace) -> Piece {
         const auto &r = look.reflection;
         const QPointF anchor = ShapeEffects::anchor(sourceFace, r.align);
         QTransform t;
         const qreal dist = r.dist * scale;
         t.translate(dist * std::cos(qDegreesToRadians(r.dir)), dist * std::sin(qDegreesToRadians(r.dir)));
         t.translate(anchor.x(), anchor.y());
-        t.shear(std::tan(qDegreesToRadians(qBound(-89.0, r.kx, 89.0))), std::tan(qDegreesToRadians(qBound(-89.0, r.ky, 89.0))));
         t.scale(r.sx / 100, r.sy / 100);
+        t.shear(std::tan(qDegreesToRadians(qBound(-89.0, r.kx, 89.0))), std::tan(qDegreesToRadians(qBound(-89.0, r.ky, 89.0))));
         t.translate(-anchor.x(), -anchor.y());
         const QRectF sourceRect(sourceAt, source.size());
         const qreal sigma = r.blur * scale / 2;
@@ -506,28 +442,179 @@ Made make(const QRectF &box, const Look &look, qreal scale, qreal margin,
             }
         }
         blur(turnedOver, sigma);
-        reflected = {turnedOver, bounds.topLeft()};
+        return Piece{turnedOver, bounds.topLeft()};
+    };
+    Piece flatReflection;
+    if (inPlane) flatReflection = reflect(layer, QPointF(0, 0), wordsPx);
+    QVector<QImage> lettersTurned;   // per cast of look.letters, in the turned picture's place
+
+    if (turned || deep) {
+        const qreal depth = deep ? look.format.depth * scale : 0;
+        const qreal front = look.format.on ? look.format.z * scale : 0;
+        const bool persp = turned && !cam.parallel && !look.scene.camera.startsWith(QLatin1String("legacy"));
+        const qreal fov = persp ? Effects3D::fieldOfView(look.scene) : 0;
+        // PowerPoint's viewing scale: 159.76 mm at half the field of view.
+        const qreal distance = fov > 0 ? 452.9 * FillPaint::unitsPerPoint() * scale / std::tan(qDegreesToRadians(fov / 2)) : 0;
+        const qreal zoom = look.scene.on ? qMax<qreal>(0.01, look.scene.zoom / 100) : 1;
+        const qreal skew = oblique ? cam.skew / 100 : 0;
+        const qreal angle = qDegreesToRadians(cam.skewAngle);
+        auto project = [&](const QPointF &p, qreal z) {
+            V3 q = turn({p.x() - middle.x(), p.y() - middle.y(), z});
+            qreal f = 1;
+            if (distance > 0) f = distance / qMax(distance * 0.05, distance - q.z);
+            QPointF s(q.x * f, q.y * f);
+            if (oblique) s += QPointF(std::cos(angle), -std::sin(angle)) * (-z * skew);
+            return middle + s * zoom;
+        };
+        const QRectF src(0, 0, w, h);
+        auto quadAt = [&](qreal z) {
+            return QPolygonF{project(src.topLeft(), z), project(src.topRight(), z), project(src.bottomRight(), z), project(src.bottomLeft(), z)};
+        };
+        const QPolygonF frontQuad = quadAt(front);
+        const QPolygonF backQuad = quadAt(front - depth);
+        QRectF bounds = frontQuad.boundingRect().united(backQuad.boundingRect()).adjusted(-2, -2, 2, 2);
+        const qreal most = 6000;
+        bounds = bounds.intersected(QRectF(middle.x() - most, middle.y() - most, 2 * most, 2 * most));
+        QImage out(qMax(1, qCeil(bounds.width())), qMax(1, qCeil(bounds.height())), QImage::Format_ARGB32_Premultiplied);
+        out.fill(Qt::transparent);
+        QPainter p(&out);
+        p.setRenderHint(QPainter::SmoothPixmapTransform);
+        p.setRenderHint(QPainter::Antialiasing);
+        // `image` (at `at`, layer pixels, flat) drawn turned onto `p`.
+        auto drawOn = [&](QPainter &p, const QImage &image, const QPointF &at, qreal z) {
+            const QRectF r(at, image.size());
+            const QPolygonF from{QPointF(0, 0), QPointF(r.width(), 0), QPointF(r.width(), r.height()), QPointF(0, r.height())};
+            const QPolygonF to = QPolygonF{project(r.topLeft(), z), project(r.topRight(), z), project(r.bottomRight(), z),
+                                           project(r.bottomLeft(), z)}.translated(-bounds.topLeft());
+            QTransform t;
+            if (!QTransform::quadToQuad(from, to, t)) return;
+            p.setTransform(t);
+            p.drawImage(QPointF(), image);
+        };
+
+        if (depth > 0 && !tint.wireframe) {
+            // The sides: the silhouette in the depth's colour, each pixel lit
+            // as the side nearest it faces.
+            const QColor ec = look.format.extrusionColor.isValid() ? look.format.extrusionColor : look.face;
+            QImage sides(w, h, QImage::Format_ARGB32_Premultiplied);
+            for (int y = 0; y < h; ++y) {
+                const auto *src = reinterpret_cast<const QRgb *>(layer.constScanLine(y));
+                auto *row = reinterpret_cast<QRgb *>(sides.scanLine(y));
+                for (int x = 0; x < w; ++x) {
+                    const int a = qAlpha(src[x]);
+                    if (!a) { row[x] = 0; continue; }
+                    const int x0 = qMax(0, x - 1), x1 = qMin(w - 1, x + 1), y0 = qMax(0, y - 1), y1 = qMin(h - 1, y + 1);
+                    const qreal gx = (in[y * w + x1] - in[y * w + x0]) / qMax(1, x1 - x0);
+                    const qreal gy = (in[y1 * w + x] - in[y0 * w + x]) / qMax(1, y1 - y0);
+                    const V3 n = normalised({-gx, -gy, 0.0001});
+                    const qreal s = qBound<qreal>(0.15, light.diffuse(n) / light.flat, 1.4) * 0.85;
+                    const qreal f = a / 255.0 * ec.alphaF() * tint.opacity;
+                    auto side = [&](int v, int k) { return qBound(0, qRound(qBound<qreal>(0, tint.gain[k] * v + tint.lift[k], 255) * s * f), 255); };
+                    row[x] = qRgba(side(ec.red(), 0), side(ec.green(), 1), side(ec.blue(), 2), qRound(f * 255));
+                }
+            }
+            const QPointF a = project(middle, front), b = project(middle, front - depth);
+            const int slices = qBound(1, qCeil(QLineF(a, b).length() * 1.5) + 1, 160);
+            for (int k = slices; k >= 1; --k) drawOn(p, sides, QPointF(0, 0), front - depth * k / slices);
+        }
+        drawOn(p, layer, QPointF(0, 0), front);
+        p.end();
+        result = out;
+        resultAt = bounds.topLeft();
+        faceBox = QPolygonF{project(wordsPx.topLeft(), front), project(wordsPx.topRight(), front), project(wordsPx.bottomRight(), front),
+                            project(wordsPx.bottomLeft(), front)}.boundingRect();
+        // Anything else drawn turned the same way, in its own picture the size
+        // of the turned one.
+        auto turnedPicture = [&](const QImage &image, const QPointF &at, bool withSides) {
+            QImage pic(out.size(), QImage::Format_ARGB32_Premultiplied);
+            pic.fill(Qt::transparent);
+            QPainter q(&pic);
+            q.setRenderHint(QPainter::SmoothPixmapTransform);
+            q.setRenderHint(QPainter::Antialiasing);
+            if (withSides && depth > 0) {
+                const QPointF a = project(middle, front), b = project(middle, front - depth);
+                const int slices = qBound(1, qCeil(QLineF(a, b).length() * 1.5) + 1, 160);
+                for (int k = slices; k >= 1; --k) drawOn(q, image, at, front - depth * k / slices);
+            }
+            drawOn(q, image, at, front);
+            return pic;
+        };
+        if (inPlane && !flatReflection.image.isNull()) {
+            // The reflection's own picture may reach past the turned one's.
+            const QRectF r(flatReflection.at, flatReflection.image.size());
+            QRectF to = QPolygonF{project(r.topLeft(), front), project(r.topRight(), front), project(r.bottomRight(), front),
+                                  project(r.bottomLeft(), front)}.boundingRect().adjusted(-2, -2, 2, 2);
+            to = to.intersected(QRectF(middle.x() - most, middle.y() - most, 2 * most, 2 * most)).toAlignedRect();
+            QImage pic(qMax(1, qCeil(to.width())), qMax(1, qCeil(to.height())), QImage::Format_ARGB32_Premultiplied);
+            pic.fill(Qt::transparent);
+            {
+                QPainter q(&pic);
+                q.setRenderHint(QPainter::SmoothPixmapTransform);
+                q.setRenderHint(QPainter::Antialiasing);
+                const QRectF was = bounds;
+                bounds = to;
+                drawOn(q, flatReflection.image, flatReflection.at, front);
+                bounds = was;
+            }
+            reflected = {pic, to.topLeft()};
+        }
+        // The words' effects, each from its own letters, turned (sides and all).
+        if (castFollows(look) && look.letters) {
+            for (int i = 0; i <= look.casts.size(); ++i) {
+                const Cast &c = i == 0 ? look.cast : look.casts.at(i - 1);
+                if (!c.any()) { lettersTurned.append(QImage()); continue; }
+                QImage letters(layer.size(), QImage::Format_ARGB32_Premultiplied);
+                letters.fill(Qt::transparent);
+                {
+                    QPainter q(&letters);
+                    q.setRenderHint(QPainter::Antialiasing);
+                    q.setRenderHint(QPainter::TextAntialiasing);
+                    q.scale(scale, scale);
+                    q.translate(margin - box.left(), margin - box.top());
+                    look.letters(q, i);
+                }
+                lettersTurned.append(turnedPicture(letters, QPointF(0, 0), true));
+            }
+        }
     }
 
-    // ROT-SHADOW-1: the outer shadow and glow of the turned picture.
-    Piece cast;
+
+    if (reflects && !inPlane) {
+        const bool flat = turned && !look.follow;
+        reflected = flat ? reflect(layer, QPointF(0, 0), wordsPx) : reflect(result, resultAt, faceBox);
+    }
+
+
+    // The outer shadow and glow of the turned picture (the words': each
+    // cast from its own letters).
+    QVector<Piece> casts;
     if (castFollows(look)) {
-        const auto made = castOf(result, resultAt, look.cast, scale, middle);
-        cast = {made.image, made.rect.topLeft()};
+        if (look.letters && !lettersTurned.isEmpty()) {
+            for (int i = 0; i < lettersTurned.size(); ++i) {
+                if (lettersTurned.at(i).isNull()) continue;
+                const Cast &c = i == 0 ? look.cast : look.casts.at(i - 1);
+                const auto made = castOf(lettersTurned.at(i), resultAt, c, scale, middle);
+                if (!made.image.isNull()) casts.append({made.image, made.rect.topLeft()});
+            }
+        } else {
+            const auto made = castOf(result, resultAt, look.cast, scale, middle);
+            if (!made.image.isNull()) casts.append({made.image, made.rect.topLeft()});
+        }
     }
 
-    if (!cast.image.isNull() || !reflected.image.isNull()) {
+    QVector<const Piece *> pieces;
+    for (const auto &piece : casts) pieces.append(&piece);
+    if (!reflected.image.isNull()) pieces.append(&reflected);
+    if (!pieces.isEmpty()) {
         QRectF bounds(resultAt, result.size());
-        for (const Piece *piece : {&cast, &reflected})
-            if (!piece->image.isNull()) bounds = bounds.united(QRectF(piece->at, piece->image.size()));
+        for (const Piece *piece : pieces) bounds = bounds.united(QRectF(piece->at, piece->image.size()));
         bounds = bounds.toAlignedRect();
         QImage all(qMax(1, qCeil(bounds.width())), qMax(1, qCeil(bounds.height())), QImage::Format_ARGB32_Premultiplied);
         all.fill(Qt::transparent);
         {
             QPainter p(&all);
             p.translate(-bounds.topLeft());
-            for (const Piece *piece : {&cast, &reflected})
-                if (!piece->image.isNull()) p.drawImage(piece->at, piece->image);
+            for (const Piece *piece : pieces) p.drawImage(piece->at, piece->image);
             p.drawImage(resultAt, result);
         }
         result = all;
@@ -544,11 +631,23 @@ PassScope::PassScope(Pass p) : was(tPass) { tPass = p; }
 PassScope::~PassScope() { tPass = was; }
 
 bool turned(const Look &look) { return Effects3D::drawn(look.scene); }
-bool castFollows(const Look &look) { return look.follow && turned(look) && look.cast.any(); }
+bool castFollows(const Look &look) {
+    if (!look.follow || !turned(look)) return false;
+    if (look.cast.any()) return true;
+    for (const auto &c : look.casts) if (c.any()) return true;
+    return false;
+}
 void dropFollowed(SceneObject &o, bool words) {
     if (!o.shadowInner) o.shadowEnabled = false;
-    if (words) o.textGlowRadius = 0;
-    else o.glowRadius = 0;
+    if (!words) { o.glowRadius = 0; return; }
+    o.textGlowRadius = 0;
+    // A no-fill box's shadow on its words, and each stretch's own.
+    if (!o.boxShadowInner) o.boxShadowEnabled = false;
+    for (auto &run : o.runs) {
+        if (run.effects.isEmpty()) continue;
+        if (!run.effects.value(QStringLiteral("shadowInner")).toBool()) run.effects.insert(QStringLiteral("shadowEnabled"), false);
+        run.effects.insert(QStringLiteral("textGlowRadius"), 0);
+    }
 }
 
 bool needed(const Look &look) {
@@ -601,6 +700,14 @@ Look shapeLook(const SceneObject &o) {
     return l;
 }
 
+Cast castOfWords(const SceneObject &o) {
+    Cast c{o.shadowEnabled && !o.shadowInner, o.shadowColor, o.shadowX, o.shadowY, o.shadowBlur, o.shadowScaleX, o.shadowScaleY,
+           o.shadowSkewX, o.shadowSkewY, o.shadowAlign, o.textGlowRadius, o.textGlowColor};
+    // The words' own effects are drawn smaller on smaller words (render/effectmodel.h).
+    c.k = EffectModel::textScale(o.fontSize / qMax<qreal>(1e-6, FillPaint::unitsPerPoint()));
+    return c;
+}
+
 Look textLook(const SceneObject &o) {
     Look l;
     l.reflection = o.textReflection;
@@ -609,12 +716,11 @@ Look textLook(const SceneObject &o) {
             Effects3D::Reflection r;
             if (Effects3D::fromMap(run.effects.value(QStringLiteral("textReflection")), &r) && r.on) { l.reflection = r; break; }
         }
-    // ROT-SHADOW-1: "Keep text flat" keeps the words out of any 3-D (and
+    // "Keep text flat" keeps the words out of any 3-D (and
     // PowerPoint keeps no 3-D format for flat words: a:flatTx or a:sp3d).
     if (!o.textFlat) { l.format = o.textFormat3d; l.scene = o.textScene3d; }
     l.face = o.textColor;
-    l.cast = {o.shadowEnabled && !o.shadowInner, o.shadowColor, o.shadowX, o.shadowY, o.shadowBlur, o.shadowScaleX, o.shadowScaleY,
-              o.shadowSkewX, o.shadowSkewY, o.shadowAlign, o.textGlowRadius, o.textGlowColor};
+    l.cast = castOfWords(o);
     l.follow = o.effects3dFollow;
     return l;
 }

@@ -1,6 +1,6 @@
 #pragma once
 
-// FILL-UI-1: PowerPoint's Format Shape > Fill and Line, as data: gradient
+// PowerPoint's Format Shape > Fill and Line, as data: gradient
 // stops, the preset patterns and dashes by their DrawingML names, and a text
 // box's own box (boxDrawn). Drawing them is render/fillpaint.h.
 
@@ -72,7 +72,7 @@ bool boxVisible(const SceneObject &o);
 SceneObject boxShape(const SceneObject &o);
 QVector<SceneObject> split(const SceneObject &o);
 
-// ---- STYLE3D: Text Fill, Text Outline and a stretch's own text effects
+// ---- Text Fill, Text Outline and a stretch's own text effects
 
 // The keys a text fill / outline / run effect set may hold.
 const QStringList &textFillKeys();

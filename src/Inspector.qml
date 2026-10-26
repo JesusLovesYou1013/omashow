@@ -87,7 +87,7 @@ Rectangle {
             if (tabs.currentIndex === 0 && !text) tabs.currentIndex = 1
         }
     }
-    // STYLE3D: which Style tab groups and rows are open, for this session
+    // Which inspector groups and rows are open, for this session
     // (all closed at first). Keys: "group.fill|effects|text", then the
     // panel's mode or target and the row ("shape.glow", "text.fill").
     QtObject {
@@ -290,7 +290,7 @@ Rectangle {
             Divider {}
             FieldRow {
                 label: root.isText ? qsTr("Colour") : qsTr("Fill")
-                // FILL-UI-1: a shape's fill is in Fill and Line below.
+                // A shape's fill is in Fill and Line below.
                 visible: !root.isImage && !root.isMedia && (root.isText || root.sel.type !== "rect")
                 ColorField {
                     value: root.swatchText
@@ -378,8 +378,8 @@ Rectangle {
                 Button { objectName: "discardOriginalPicture"; Layout.fillWidth: true; visible: root.sel.imageHasOriginal??false; text: qsTr("Discard original to reduce deck size"); onClicked: backend.discardOriginalMedia() }
             }
 
-            // STYLE3D: three groups, as PowerPoint's Format Shape: Fill and Line
-            // (FILL-UI-1: the shapes', or a text box's own box), Effects (the
+            // Three groups, as PowerPoint's Format Shape: Fill and Line
+            // (the shapes', or a text box's own box), Effects (the
             // shapes' and pictures', or a text box's box effects: Shadow,
             // Reflection, Glow, Soft Edges, 3-D Format, 3-D Rotation) and, for
             // text, Text Fill and Outline with the words' own effects.

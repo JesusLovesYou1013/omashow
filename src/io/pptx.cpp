@@ -376,18 +376,20 @@ struct Look {
     bool lineSet = false, line = false;
     QColor lineColor;
     qreal lineWidthEmu = 0;
+    bool lineWidthSet = false;
     int dash = 0;
     bool shadow = false;
     QColor shadowColor;
     qreal shadowDistEmu = 0, shadowDir = 0;
-    // EFFECTS-UI-1: the rest of the shadow, and the shape's glow.
+    // The rest of the shadow, and the shape's glow.
     qreal shadowBlurEmu = 0;
     bool shadowInner = false;
     qreal shadowSx = 100, shadowSy = 100, shadowKx = 0, shadowKy = 0;
     int shadowAlign = 0;
+    bool shadowRotates = true;   // rotWithShape (the schema's default)
     qreal glowRadEmu = 0;
     QColor glowColor;
-    // FILL-UI-1: the rest of a:gradFill, a:pattFill and a:blipFill, and of a:ln.
+    // The rest of a:gradFill, a:pattFill and a:blipFill, and of a:ln.
     QVector<GradientStop> stops;
     int gradPath = 0;                       // circle, rect, shape
     qreal focus[4] = {0, 0, 0, 0};          // a:fillToRect l t r b (the schema's 0)
@@ -401,14 +403,14 @@ struct Look {
     QVector<GradientStop> lineStops;
     qreal lineAngle = 0;
     int lineGradPath = 0;
-    // STYLE3D: soft edges, reflection (lengths in EMU until applied), 3-D.
+    // Soft edges, reflection (lengths in EMU until applied), 3-D.
     qreal softEdgeEmu = 0;
     Effects3D::Reflection reflection;
     Effects3D::Format format3d;
     Effects3D::Scene scene3d;
 };
 
-// ---- STYLE3D: a:reflection, a:sp3d and a:scene3d as written (lengths in EMU).
+// ---- a:reflection, a:sp3d and a:scene3d as written (lengths in EMU).
 
 int shadowAlignOf(const QString &algn);
 
@@ -529,7 +531,7 @@ bool readFill(const Node *owner, Look &look, const ColorContext &ctx) {
         if (k.name == QLatin1String("noFill")) { look.fillSet = true; look.fillStyle = 5; return true; }
         if (k.name == QLatin1String("gradFill")) {
             look.fillSet = true;
-            // FILL-UI-1: every stop, the path and its focus, scaled, rotate with shape.
+            // Every stop, the path and its focus, scaled, rotate with shape.
             QVector<GradientStop> stops;
             if (const Node *list = k.child(QStringLiteral("gsLst")))
                 for (const auto *gs : list->all(QStringLiteral("gs"))) {
@@ -585,7 +587,7 @@ bool readFill(const Node *owner, Look &look, const ColorContext &ctx) {
         }
         if (k.name == QLatin1String("pattFill")) {
             look.fillSet = true; look.fillStyle = 3;
-            // FILL-UI-1: the pattern itself (the schema's default is pct5),
+            // The pattern itself (the schema's default is pct5),
             // black on white unless the colours are named.
             look.pattern = k.attr(QStringLiteral("prst"), QStringLiteral("pct5"));
             if (FillStyle::patternCells(look.pattern).isEmpty()) look.pattern = QStringLiteral("pct5");
@@ -598,7 +600,7 @@ bool readFill(const Node *owner, Look &look, const ColorContext &ctx) {
         if (k.name == QLatin1String("blipFill")) {
             look.fillSet = true; look.fillStyle = 5;
             if (const Node *blip = k.child(QStringLiteral("blip"))) look.blipRid = blip->attr(QStringLiteral("embed"));
-            look.blip = &k;   // FILL-UI-1: drawn once the picture is read (convertShape)
+            look.blip = &k;   // Drawn once the picture is read (convertShape)
             return true;
         }
         if (k.name == QLatin1String("grpFill")) { look.fillSet = true; look.fillStyle = 5; return true; }
@@ -608,18 +610,27 @@ bool readFill(const Node *owner, Look &look, const ColorContext &ctx) {
 
 void readLine(const Node *ln, Look &look, const ColorContext &ctx) {
     if (!ln) return;
-    look.lineSet = true;
-    look.lineWidthEmu = ln->attr(QStringLiteral("w"), QStringLiteral("9525")).toDouble();
+    if (ln->has(QStringLiteral("w"))) {
+        look.lineWidthEmu = ln->attr(QStringLiteral("w")).toDouble();
+        look.lineWidthSet = true;
+    } else if (!look.lineWidthSet) look.lineWidthEmu = 9525;
     Look inner;
     readFill(ln, inner, ctx);
-    if (inner.fillSet && inner.fillStyle == 5) { look.line = false; return; }
+    // An <a:ln> that says nothing about its fill (PowerPoint writes an empty
+    // one on most text boxes) has no line of its own: the line comes from the
+    // shape's <p:style> lnRef or an inherited placeholder, or there is none.
+    // PowerPoint and LibreOffice draw nothing for it; this used to be a thin
+    // black frame round every such box.
+    if (!inner.fillSet) return;
+    look.lineSet = true;
+    if (inner.fillStyle == 5) { look.line = false; return; }
     look.lineColor = inner.fill.isValid() ? inner.fill : QColor(Qt::black);
     // A fully transparent line is no line.
     if (inner.fill.isValid() && inner.fill.alpha() == 0) { look.line = false; return; }
     look.line = true;
     if (const Node *dash = ln->child(QStringLiteral("prstDash"))) {
         const auto v = dash->attr(QStringLiteral("val"));
-        // FILL-UI-1: the dash by its own name (dash keeps the nearest Qt one).
+        // The dash by its own name (dash keeps the nearest Qt one).
         if (FillStyle::dashPresets().contains(v) && v != QLatin1String("solid")) look.dashPreset = v;
         look.dash = FillStyle::nearestQtDash(v);
     } else if (const Node *custom = ln->child(QStringLiteral("custDash"))) {
@@ -647,7 +658,7 @@ void readLine(const Node *ln, Look &look, const ColorContext &ctx) {
 
 void readEffects(const Node *effectLst, Look &look, const ColorContext &ctx) {
     if (!effectLst) return;
-    // EFFECTS-UI-1: every attribute PowerPoint writes, with the schema's own
+    // Every attribute PowerPoint writes, with the schema's own
     // defaults (0 for distance, direction and blur, 100% size, no slant, algn
     // b). The outer shadow wins when a shape has both (OmaShow keeps one).
     const Node *outer = effectLst->child(QStringLiteral("outerShdw"));
@@ -666,15 +677,24 @@ void readEffects(const Node *effectLst, Look &look, const ColorContext &ctx) {
             look.shadowKx = shadow->attr(QStringLiteral("kx"), QStringLiteral("0")).toDouble() / 60000.0;
             look.shadowKy = shadow->attr(QStringLiteral("ky"), QStringLiteral("0")).toDouble() / 60000.0;
             look.shadowAlign = shadowAlignOf(shadow->attr(QStringLiteral("algn"), QStringLiteral("b")));
+            const QString turns = shadow->attr(QStringLiteral("rotWithShape"), QStringLiteral("1"));
+            look.shadowRotates = turns != QLatin1String("0") && turns != QLatin1String("false");
         }
     }
     if (const Node *glow = effectLst->child(QStringLiteral("glow"))) {
         const auto c = colorIn(glow, ctx);
         if (c.isValid()) { look.glowRadEmu = glow->attr(QStringLiteral("rad"), QStringLiteral("0")).toDouble(); look.glowColor = c; }
     }
-    // STYLE3D: reflection and soft edges.
+    // Reflection and soft edges.
     look.reflection = readReflection(effectLst->child(QStringLiteral("reflection")));
     if (const Node *soft = effectLst->child(QStringLiteral("softEdge"))) look.softEdgeEmu = qMax(0.0, attrNumber(soft, "rad", 0));
+}
+
+// OmaShow draws a shape's shadow in the shape's turned frame; PowerPoint keeps a
+// shadow with rotWithShape="0" pointing its own way on the slide (measured on
+// turned shapes), so its direction is turned back by the shape's rotation.
+void shadowOnSlide(Look &look, qreal rotation) {
+    if (look.shadow && !look.shadowInner && !look.shadowRotates) look.shadowDir -= rotation;
 }
 
 // p:style — theme-indexed fill and line for shapes that name none of their own.
@@ -693,7 +713,7 @@ void applyStyleRefs(const Node *style, Look &look, const ColorContext &ctx) {
             const auto color = colorIn(ref, ctx);
             if (idx > 0 && color.isValid()) {
                 look.lineSet = true; look.line = true; look.lineColor = color;
-                look.lineWidthEmu = 9525.0 * idx;
+                if (!look.lineWidthSet) look.lineWidthEmu = 9525.0 * idx;
             }
         }
     }
@@ -719,19 +739,19 @@ struct RunLook {
     int shadow = -1;
     QColor shadowColor;
     qreal shadowDist = 0, shadowDir = 0, shadowBlur = 0;
-    // TEXT-SHADOW-2: an inner shadow (innerShdw), or the outer one's size,
+    // An inner shadow (innerShdw), or the outer one's size,
     // slant and anchor (sx/sy %, kx/ky degrees, algn as SceneObject counts it).
     bool shadowInner = false;
     qreal shadowSx = 100, shadowSy = 100, shadowKx = 0, shadowKy = 0;
     int shadowAlign = 7;
-    // STYLE3D: Text Fill (empty: solid, as color), Text Outline (strokeWidth
+    // Text Fill (empty: solid, as color), Text Outline (strokeWidth
     // in EMU until applied; {"none": true} for a:noFill) and the reflection
     // (lengths in EMU).
     QVariantMap fill, outline;
     Effects3D::Reflection reflection;
 };
 
-// STYLE3D: a text fill read as a Look, as SceneObject fill keys.
+// A text fill read as a Look, as SceneObject fill keys.
 QVariantMap textFillMap(const Look &look) {
     if (!look.fillSet || look.fillStyle == 0) return {};
     if (look.fillStyle == 5) return {{"fillStyle", 5}};
@@ -751,7 +771,7 @@ QVariantMap textFillMap(const Look &look) {
     return m;
 }
 
-// STYLE3D: a text outline (a:rPr/a:ln) as SceneObject stroke keys, width in EMU.
+// A text outline (a:rPr/a:ln) as SceneObject stroke keys, width in EMU.
 QVariantMap textOutlineMap(const Look &look) {
     if (!look.lineSet) return {};
     if (!look.line) return {{"none", true}};
@@ -841,7 +861,7 @@ void applyRPr(RunLook &run, const Node *rPr, const TextContext &ctx) {
         if (c.isValid()) run.color = c;
         run.fill.clear();
     }
-    // STYLE3D: Text Fill (gradient, pattern, none) and Text Outline.
+    // Text Fill (gradient, pattern, none) and Text Outline.
     for (const char *kind : {"gradFill", "pattFill", "noFill", "blipFill"}) {
         if (!rPr->child(QLatin1String(kind))) continue;
         Look look;
@@ -859,14 +879,14 @@ void applyRPr(RunLook &run, const Node *rPr, const TextContext &ctx) {
     }
     // An effect list replaces the inherited one: no glow or shadow in it is none.
     if (const Node *effects = rPr->child(QStringLiteral("effectLst"))) {
-        run.reflection = readReflection(effects->child(QStringLiteral("reflection")));   // STYLE3D
+        run.reflection = readReflection(effects->child(QStringLiteral("reflection")));
         run.glowRad = 0;
         if (const Node *glow = effects->child(QStringLiteral("glow"))) {
             const auto c = colorIn(glow, *ctx.color);
             if (c.isValid()) { run.glowRad = glow->attr(QStringLiteral("rad")).toDouble(); run.glowColor = c; }
         }
         run.shadow = 0;
-        // TEXT-SHADOW-2: the outer shadow, else the inner one (OmaShow keeps one).
+        // The outer shadow, else the inner one (OmaShow keeps one).
         const Node *outer = effects->child(QStringLiteral("outerShdw"));
         if (const Node *shadow = outer ? outer : effects->child(QStringLiteral("innerShdw"))) {
             const auto c = colorIn(shadow, *ctx.color);
@@ -951,11 +971,11 @@ struct TextOut {
     qreal inset[4] = {91440, 45720, 91440, 45720};
     QString link;
     bool empty = true;
-    // STYLE3D: the text's own 3-D (a:bodyPr: scene3d, sp3d in EMU, flatTx z).
+    // The text's own 3-D (a:bodyPr: scene3d, sp3d in EMU, flatTx z).
     Effects3D::Scene scene3d;
     Effects3D::Format format3d;
     qreal flatZ = 0;
-    bool flat = false;   // ROT-SHADOW-1: a:flatTx there at all
+    bool flat = false;   // A:flatTx there at all
 };
 
 static void readInsets(const Node *bodyPr, qreal inset[4]) {
@@ -965,7 +985,7 @@ static void readInsets(const Node *bodyPr, qreal inset[4]) {
             inset[i] = qMax(0.0, bodyPr->attr(QLatin1String(names[i])).toDouble());
 }
 
-// STYLE3D: a run's whole set of text effects as SceneObject keys, lengths in
+// A run's whole set of text effects as SceneObject keys, lengths in
 // EMU (TextRun::effects once scaled).
 QVariantMap runEffectsEmu(const RunLook &l) {
     const bool glow = l.glowRad > 0 && l.glowColor.isValid();
@@ -1082,7 +1102,7 @@ TextOut convertText(const Node *txBody, const TextChain &chain, const TextContex
         if (l.family != b.family && !l.family.isEmpty()) { run.fontFamily = l.family; differs = true; }
         if (l.color.isValid() && l.color != b.color) { run.color = l.color; differs = true; }
         if (l.lang != b.lang && !l.lang.isEmpty()) { run.language = l.lang; differs = true; }
-        // STYLE3D: a fill, outline or effects of the stretch's own (lengths in
+        // A fill, outline or effects of the stretch's own (lengths in
         // EMU here, slide units once applied).
         if (l.fill != b.fill) { run.fill = l.fill; if (l.fill.isEmpty() && l.color.isValid()) run.color = l.color; differs = true; }
         if (l.outline != b.outline) { run.outline = l.outline.isEmpty() ? QVariantMap{{"none", true}} : l.outline; differs = true; }
@@ -1333,7 +1353,7 @@ struct Reader {
         if (look.fill.isValid()) o.fill = look.fill;
         if (look.fill2.isValid()) o.fillSecondary = look.fill2;
         o.fillAngle = look.angle;
-        // FILL-UI-1: the gradient's own stops and path, the pattern's name.
+        // The gradient's own stops and path, the pattern's name.
         if (o.fillStyle == 1 || o.fillStyle == 2) {
             o.gradientStops = look.stops;
             o.gradientPath = look.gradPath;
@@ -1383,7 +1403,7 @@ struct Reader {
         apply3d(o, look);
     }
 
-    // STYLE3D: soft edges, reflection and 3-D, EMU to slide units.
+    // Soft edges, reflection and 3-D, EMU to slide units.
     void apply3d(SceneObject &o, const Look &look) const {
         o.softEdge = look.softEdgeEmu * u.k;
         o.reflection = look.reflection;
@@ -1393,10 +1413,10 @@ struct Reader {
         o.scene3d = look.scene3d;
     }
 
-    // EFFECTS-UI-1: a box with no fill and no outline has its glow and shadow
+    // A box with no fill and no outline has its glow and shadow
     // drawn on its words by PowerPoint, so they become the words' own, unless
     // the words already name theirs. The whole shadow carries over, inner and
-    // perspective too (TEXT-SHADOW-2: the words draw them). A box with an outline but no fill casts its
+    // perspective too (the words draw them). A box with an outline but no fill casts its
     // shadow from the outline and the words alike, so then only the shadow
     // carries over (shadowOnly).
     void boxEffectsOnWords(SceneObject &words, const Look &look, bool shadowOnly = false) const {
@@ -1420,12 +1440,12 @@ struct Reader {
         }
     }
 
-    // BOTH-EFFECTS-1: a box with no fill and no outline keeps its own effects
+    // A box with no fill and no outline keeps its own effects
     // as the text box's (glow*, boxShadow*), apart from its words' own; they
     // are drawn on the words where the words have none (TextLayout::paint),
     // and written back to the box's p:spPr.
     void boxEffectsOfWords(SceneObject &words, const Look &look) const {
-        apply3d(words, look);   // STYLE3D: the box's own, kept on the text box
+        apply3d(words, look);   // The box's own, kept on the text box
         if (look.glowRadEmu > 0 && look.glowColor.isValid()) {
             words.glowRadius = look.glowRadEmu * u.k;
             words.glowColor = look.glowColor;
@@ -1506,7 +1526,7 @@ struct Reader {
         o.fillStyle = 5;
         o.strokeWidth = 0;
         o.fillToken.clear(); o.textColorToken.clear(); o.fontToken.clear();
-        // STYLE3D: the words' Text Fill and Outline, reflection and 3-D.
+        // The words' Text Fill and Outline, reflection and 3-D.
         FillStyle::checkTextFill(b.fill, &o.textFill);
         o.textOutline = scaledOutline(b.outline);
         o.textReflection = b.reflection;
@@ -1595,7 +1615,7 @@ struct Reader {
         readFill(spPr, look, color);
         if (spPr) readLine(spPr->child(QStringLiteral("ln")), look, color);
         if (spPr) readEffects(spPr->child(QStringLiteral("effectLst")), look, color);
-        read3d(spPr, look, color);   // STYLE3D
+        read3d(spPr, look, color);
         for (const auto *from : {layoutSp, masterSp}) {
             if (!from) continue;
             const Node *pr = from->child(QStringLiteral("spPr"));
@@ -1603,7 +1623,8 @@ struct Reader {
             if (!look.lineSet && pr) readLine(pr->child(QStringLiteral("ln")), look, color);
         }
         applyStyleRefs(sp->child(QStringLiteral("style")), look, color);
-        // FILL-UI-1: a shape filled with a picture keeps it.
+        shadowOnSlide(look, place.rotation);
+        // A shape filled with a picture keeps it.
         SceneObject picture;
         if (look.blip) {
             if (readBlipFill(picture, look.blip, scope)) look.fillStyle = 4;
@@ -1637,7 +1658,7 @@ struct Reader {
         QStringList own = groups;
         QString firstId;
         const bool hasWords = !text.empty && !text.text.trimmed().isEmpty();
-        // FILL-UI-1: a rectangle with words and a fill or an outline is one
+        // A rectangle with words and a fill or an outline is one
         // text box with a box of its own, as PowerPoint has it; other shapes
         // with words stay a shape and a text box, grouped.
         const Node *prstOf = spPr ? spPr->child(QStringLiteral("prstGeom")) : nullptr;
@@ -1710,7 +1731,7 @@ struct Reader {
                 words.boxInsetB = qMax(0.0, place.rect.bottom() - words.rect.bottom());
                 boxEffectsOfWords(words, look);
             } else if (!visibleBox) boxEffectsOfWords(words, look);
-            // BOX-SHADOW-2: an outlined box with no fill casts one shadow from
+            // An outlined box with no fill casts one shadow from
             // its outline and its words together, turned about the box (sx/sy,
             // kx/ky, algn): the words carry it as their box's shadow (boxShadow*,
             // drawn as the box's), not as their own.
@@ -1751,7 +1772,7 @@ struct Reader {
         return false;
     }
 
-    // FILL-UI-1: a shape's a:blipFill: the picture, cropped (srcRect), stretched
+    // A shape's a:blipFill: the picture, cropped (srcRect), stretched
     // into the box less its insets (fillRect) or tiled (tile), see-through
     // (alphaModFix), with the picture's own adjustments.
     bool readBlipFill(SceneObject &o, const Node *blipFill, const Scope &scope) {
@@ -1885,7 +1906,8 @@ struct Reader {
             Look look;
             readLine(spPr->child(QStringLiteral("ln")), look, scope.master->color);
             readEffects(spPr->child(QStringLiteral("effectLst")), look, scope.master->color);
-            read3d(spPr, look, scope.master->color);   // STYLE3D
+            shadowOnSlide(look, place.rotation);
+            read3d(spPr, look, scope.master->color);
             look.fillSet = true; look.fillStyle = 5;
             applyLook(o, look);
             o.fillStyle = 5;

@@ -35,8 +35,8 @@ void DeckResize::scaleObject(SceneObject &o, qreal scale, const QPointF &origin)
   o.rect = QRectF(origin + (o.rect.topLeft() - origin) * scale, o.rect.size() * scale);
   Table::scale(o.table, scale);
   o.fontSize *= scale;
-  o.origFontSize *= scale;
-  o.textGlowRadius *= scale;   // a swapped Office font's size before its size factor
+  o.origFontSize *= scale;   // a swapped Office font's size before its size factor
+  o.textGlowRadius *= scale;
   o.letterSpacing *= scale;
   o.paragraphSpacing *= scale;
   o.textIndent *= scale;
@@ -48,16 +48,16 @@ void DeckResize::scaleObject(SceneObject &o, qreal scale, const QPointF &origin)
   o.shadowY *= scale;
   o.shadowBlur *= scale;
   o.glowRadius *= scale;
-  o.boxShadowX *= scale;   // BOTH-EFFECTS-1
+  o.boxShadowX *= scale;
   o.boxShadowY *= scale;
   o.boxShadowBlur *= scale;
-  o.pictureTileX *= scale;   // FILL-UI-1
+  o.pictureTileX *= scale;
   o.pictureTileY *= scale;
   o.boxInsetL *= scale;
   o.boxInsetT *= scale;
   o.boxInsetR *= scale;
   o.boxInsetB *= scale;
-  // STYLE3D: soft edges, reflections, bevels and depth; text outlines and a
+  // Soft edges, reflections, bevels and depth; text outlines and a
   // stretch's own effects.
   o.softEdge *= scale;
   Effects3D::scale(o.reflection, scale);

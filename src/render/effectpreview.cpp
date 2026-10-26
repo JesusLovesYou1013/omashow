@@ -27,12 +27,12 @@ QImage EffectPreviewProvider::requestImage(const QString &id, QSize *size, const
     constexpr qreal tile = 64;
     SceneObject o;
     o.id = QStringLiteral("preview");
-    // BOTH-EFFECTS-1 (lit=1): a light card behind a dark sample, so a soft
+    // With lit=1: a light card behind a dark sample, so a soft
     // black shadow (the perspective ones) reads on the dark panel.
     const bool lit = number("lit", 0) != 0;
     const QColor own = colour("f", lit ? QColor(0x3a, 0x41, 0x50) : QColor(0xd8, 0xdc, 0xe2));
     if (kind == QLatin1String("fill")) {
-        // FILL-UI-1: a fill or line sample (gallery and pattern swatches):
+        // A fill or line sample (gallery and pattern swatches):
         // p is the shape's fill and line keys as JSON. Unknown keys are ignored.
         o.type = ObjectType::Rect;
         o.rect = QRectF(6, 6, 52, 52);
@@ -82,7 +82,7 @@ QImage EffectPreviewProvider::requestImage(const QString &id, QSize *size, const
     o.shadowSkewX = qBound<qreal>(-89, number("skx", 0), 89);
     o.shadowSkewY = qBound<qreal>(-89, number("sky", 0), 89);
     o.shadowAlign = qBound(0, int(number("sa", 0)), 8);
-    // STYLE3D (x): soft edge, reflection and 3-D as JSON of their keys, in
+    // With x: soft edge, reflection and 3-D as JSON of their keys, in
     // points (softEdge, reflection, format3d, scene3d; the text sample takes
     // them on its words). Unknown keys and bad values are ignored.
     if (query.hasQueryItem(QStringLiteral("x"))) {

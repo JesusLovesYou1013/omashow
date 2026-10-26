@@ -1,6 +1,6 @@
 #pragma once
 
-// FILL-UI-1: drawing PowerPoint's fills and lines (Format Shape > Fill, Line)
+// Drawing PowerPoint's fills and lines (Format Shape > Fill, Line)
 // for what core/fillstyle.h calls modern: gradients with their own stops and
 // circle, rectangle and shape paths; the 54 preset patterns; tiled, inset and
 // see-through pictures; preset and custom dashes, compound and gradient lines.

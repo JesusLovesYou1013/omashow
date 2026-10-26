@@ -388,13 +388,17 @@ Rig rig(const Scene &s) {
     return out;
 }
 
+// `metal`: the shine takes the face's colour. Measured on PowerPoint's
+// renders (a blue and a grey face turned 30 degrees): plastic, translucent
+// powder, warm matte, powder, dark and soft edge shine white (the same amount
+// on every channel); metal and soft metal are kept coloured.
 Material material(const QString &name) {
     struct Row { const char *name; qreal diffuse, specular, power; bool metal; };
     static const Row rows[] = {
         {"clear", 100, 60, 20, false}, {"dkEdge", 70, 100, 35, false}, {"flat", 100, 80, 50, false},
         {"legacyMatte", 100, 0, 0, false}, {"legacyMetal", 66.7, 122.07, 32, true}, {"legacyPlastic", 100, 122.07, 32, false},
-        {"matte", 100, 0, 0, false}, {"metal", 100, 100, 12, true}, {"plastic", 100, 60, 12, true}, {"powder", 100, 30, 10, false},
-        {"softEdge", 100, 100, 35, false}, {"softmetal", 100, 100, 8, true}, {"translucentPowder", 100, 30, 10, true},
+        {"matte", 100, 0, 0, false}, {"metal", 100, 100, 12, true}, {"plastic", 100, 60, 12, false}, {"powder", 100, 30, 10, false},
+        {"softEdge", 100, 100, 35, false}, {"softmetal", 100, 100, 8, true}, {"translucentPowder", 100, 30, 10, false},
         {"warmMatte", 100, 30, 8, false}, {"legacyWireframe", 100, 0, 0, false}};
     const QString wanted = name.isEmpty() ? QStringLiteral("warmMatte") : name;
     for (const auto &row : rows)
@@ -402,20 +406,65 @@ Material material(const QString &name) {
     return {1, .3, 8, false};
 }
 
+FaceTint faceTint(const Scene &s, const QString &name) {
+    // Front face under each rig, with warmMatte (gain, lift per channel).
+    struct RigRow { const char *name; qreal gain[3], lift[3]; };
+    static const RigRow rigs[] = {
+        {"balanced", {0.9517, 0.9517, 0.9517}, {6.8, 6.8, 6.8}},     {"brightRoom", {0.9961, 0.9961, 0.9961}, {0, 0, 0}},
+        {"chilly", {0.9961, 0.9925, 1.0449}, {0, 0, 0}},             {"contrasting", {0.9961, 0.9961, 0.9961}, {0, 0, 0}},
+        {"flat", {0.9961, 0.9961, 0.9961}, {0, 0, 0}},               {"flood", {0.8576, 0.8576, 0.8576}, {0, 0, 0}},
+        {"freezing", {0.6704, 0.7483, 0.8737}, {0, 0, 0}},           {"glow", {0.9961, 0.9961, 0.9961}, {0, 0, 0}},
+        {"harsh", {0.8347, 0.8347, 0.8347}, {0, 0, 0}},              {"legacyFlat1", {1.4619, 1.4619, 1.4619}, {44.1, 44.1, 44.1}},
+        {"legacyFlat2", {0.7257, 0.7257, 0.7257}, {0, 0, 0}},        {"legacyFlat3", {0.7570, 0.7570, 0.7570}, {0, 0, 0}},
+        {"legacyFlat4", {0.7257, 0.7257, 0.7257}, {0, 0, 0}},        {"legacyHarsh1", {1.0557, 1.0557, 1.0557}, {60.1, 60.1, 60.1}},
+        {"legacyHarsh2", {0.2118, 0.2118, 0.2118}, {0, 0, 0}},       {"legacyHarsh3", {0.2574, 0.2574, 0.2574}, {0, 0, 0}},
+        {"legacyHarsh4", {0.2118, 0.2118, 0.2118}, {0, 0, 0}},       {"legacyNormal1", {1.1807, 1.1807, 1.1807}, {51.1, 51.1, 51.1}},
+        {"legacyNormal2", {0.4626, 0.4626, 0.4626}, {0, 0, 0}},      {"legacyNormal3", {0.5016, 0.5016, 0.5016}, {0, 0, 0}},
+        {"legacyNormal4", {0.4626, 0.4626, 0.4626}, {0, 0, 0}},      {"morning", {0.8737, 0.8507, 0.7654}, {0, 0, 0}},
+        {"soft", {0.9677, 0.9677, 0.9677}, {2.0, 2.0, 2.0}},         {"sunrise", {0.8423, 0.7880, 0.6639}, {0, 0, 0}},
+        {"sunset", {0.8595, 0.6939, 0.5363}, {0, 0, 0}},             {"threePt", {1.0371, 1.0371, 1.0371}, {5.0, 5.0, 5.0}},
+        {"twoPt", {0.9844, 0.9844, 0.9844}, {5.8, 5.8, 5.8}}};
+    // Front face of each material under threePt: opacity, gain, lift.
+    struct MaterialRow { const char *name; qreal opacity, gain, lift; };
+    static const MaterialRow materials[] = {
+        {"clear", 0.098, 0.97, 0},          {"dkEdge", 1, 1.0371, 0},     {"flat", 1, 0.9961, 0},
+        {"legacyMatte", 1, 1.0371, 0},      {"legacyMetal", 1, 0.7876, 0}, {"legacyPlastic", 1, 1.0371, 24.0},
+        {"matte", 1, 1.0371, 0},            {"metal", 1, 1.0312, 4.8},    {"plastic", 1, 1.0371, 2.0},
+        {"powder", 1, 0.5312, 178.0},       {"softEdge", 1, 1.0371, 0},   {"softmetal", 1, 1.0781, 8.0},
+        {"translucentPowder", 0.698, 1.0298, 67.3}, {"warmMatte", 1, 1.0371, 5.0}};
+    const qreal baseGain = 1.0371, baseLift = 5.0;   // threePt with warmMatte
+    FaceTint t;
+    const QString materialName = name.isEmpty() ? QStringLiteral("warmMatte") : name;
+    if (materialName == QLatin1String("legacyWireframe")) { t.wireframe = true; return t; }
+    MaterialRow m{"warmMatte", 1, baseGain, baseLift};
+    for (const auto &row : materials) if (materialName == QLatin1String(row.name)) m = row;
+    const QString rigName = s.rig.isEmpty() ? QStringLiteral("threePt") : s.rig;
+    RigRow r{"threePt", {baseGain, baseGain, baseGain}, {baseLift, baseLift, baseLift}};
+    for (const auto &row : rigs) if (rigName == QLatin1String(row.name)) r = row;
+    for (int k = 0; k < 3; ++k) {
+        const qreal rigGain = r.gain[k] / baseGain;
+        t.gain[k] = rigGain * m.gain;
+        t.lift[k] = rigGain * (m.lift - baseLift) + r.lift[k];
+    }
+    t.opacity = m.opacity;
+    return t;
+}
+
 // ---- galleries
 
 const QVector<ReflectionPreset> &reflectionPresets() {
-    // As PowerPoint writes them: blurRad 0.5 pt, stA 50%, dir 90°, sy -100%,
-    // algn bl, no rotate with shape.
+    // As PowerPoint writes them: blurRad 0.5 pt, stA 50% (52% for the first),
+    // dir 90°, sy -100%, algn bl, no rotate with shape. Sizes, distances and
+    // start opacities measured in PowerPoint.
     static const QVector<ReflectionPreset> presets{
-        {QStringLiteral("Tight Reflection: Touching"), 35000, 0, 300},
+        {QStringLiteral("Tight Reflection: Touching"), 35000, 0, 300, 52000},
         {QStringLiteral("Half Reflection: Touching"), 55000, 0, 300},
         {QStringLiteral("Full Reflection: Touching"), 90000, 0, 300},
-        {QStringLiteral("Tight Reflection: 4 pt offset"), 35000, 4, 300},
-        {QStringLiteral("Half Reflection: 4 pt offset"), 55000, 4, 300},
+        {QStringLiteral("Tight Reflection: 4 pt offset"), 38500, 4, 300},
+        {QStringLiteral("Half Reflection: 4 pt offset"), 55500, 4, 300},
         {QStringLiteral("Full Reflection: 4 pt offset"), 90000, 4, 300},
-        {QStringLiteral("Tight Reflection: 8 pt offset"), 35000, 8, 300},
-        {QStringLiteral("Half Reflection: 8 pt offset"), 55000, 8, 300},
+        {QStringLiteral("Tight Reflection: 8 pt offset"), 40000, 8, 300},
+        {QStringLiteral("Half Reflection: 8 pt offset"), 55500, 8, 300},
         {QStringLiteral("Full Reflection: 8 pt offset"), 92000, 8, 295}};
     return presets;
 }
@@ -427,7 +476,7 @@ Reflection reflectionPreset(int index, qreal unitsPerPoint) {
     const auto &p = all.at(index);
     r.on = true;
     r.blur = 0.5 * unitsPerPoint;
-    r.startAlpha = 50;
+    r.startAlpha = p.startAlpha / 1000.0;
     r.endAlpha = p.endAlpha / 1000.0;
     r.endPos = p.endPos / 1000.0;
     r.dist = p.dist * unitsPerPoint;

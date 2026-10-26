@@ -18,6 +18,7 @@
 #include "core/textruns.h"
 #include "render/mathlayout.h"
 #include "core/shape.h"
+#include "render/effectmodel.h"
 #include "render/shapeeffects.h"
 #include "render/layereffects.h"
 #include "render/fillpaint.h"
@@ -188,7 +189,7 @@ qreal overhangShift(const SceneObject &o, qreal size) {
     return o.textAlign == 1 ? -extra / 2 : o.textAlign == 2 ? -extra : 0;
 }
 
-// STYLE3D: the char format properties that say which stretch a fragment is
+// The char format properties that say which stretch a fragment is
 // (0 the box, else run index + 1) and which effect set it draws with (0 the
 // box's, else 1 + its place among the runs' own sets).
 constexpr int kRunProperty = QTextFormat::UserProperty + 1;
@@ -342,7 +343,7 @@ std::shared_ptr<QTextDocument> layout(const SceneObject &o, qreal size, bool hid
             format.setFont(font);
             if (run.strike != 0) format.setFontStrikeOut(run.strike == 1);
             if (run.color.isValid()) format.setForeground(run.color);
-            // STYLE3D: the stretch's own text fill, and which letters are seen.
+            // The stretch's own text fill, and which letters are seen.
             format.setProperty(kRunProperty, runIndex + 1);
             format.setProperty(kEffectProperty, effectSet);
             const bool ownFill = !run.fill.isEmpty();
@@ -457,108 +458,57 @@ TextLayout::Metrics TextLayout::measure(const SceneObject &o) {
     return m;
 }
 namespace {
-// Distance from every pixel to the nearest one with a mark, in pixels (exact
-// Euclidean, Felzenszwalb & Huttenlocher's two passes).
-QVector<float> distanceTo(const QVector<bool> &marked, int w, int h) {
-    const float far = 1e20f;
-    QVector<float> d(w * h);
-    for (int i = 0; i < w * h; ++i) d[i] = marked[i] ? 0 : far;
-    const int n = qMax(w, h);
-    QVector<float> f(n), out(n), z(n + 1);
-    QVector<int> v(n);
-    auto pass = [&](int count) {   // squared distance along one line, f → out
-        int k = 0;
-        v[0] = 0; z[0] = -far; z[1] = far;
-        for (int q = 1; q < count; ++q) {
-            auto meet = [&](int r) { return ((f[q] + q * q) - (f[r] + r * r)) / (2.0f * (q - r)); };
-            float s = meet(v[k]);
-            while (s <= z[k]) s = meet(v[--k]);   // z[0] is below every meeting point
-            ++k; v[k] = q; z[k] = s; z[k + 1] = far;
-        }
-        k = 0;
-        for (int q = 0; q < count; ++q) {
-            while (z[k + 1] < q) ++k;
-            out[q] = (q - v[k]) * (q - v[k]) + f[v[k]];
-        }
-    };
-    for (int x = 0; x < w; ++x) {
-        for (int y = 0; y < h; ++y) f[y] = d[y * w + x];
-        pass(h);
-        for (int y = 0; y < h; ++y) d[y * w + x] = out[y];
-    }
-    for (int y = 0; y < h; ++y) {
-        std::copy(d.cbegin() + y * w, d.cbegin() + (y + 1) * w, f.begin());
-        pass(w);
-        for (int x = 0; x < w; ++x) d[y * w + x] = std::sqrt(out[x]);
-    }
-    return d;
-}
-
-// Blurs a plane of strengths in place: a Gaussian of this standard
-// deviation (pixels), one direction then the other.
-void gaussian(QVector<float> &plane, int w, int h, qreal sigma) {
-    if (sigma < 0.3) return;
-    const int r = qCeil(sigma * 3);
-    QVector<float> k(2 * r + 1);
-    float sum = 0;
-    for (int i = -r; i <= r; ++i) sum += (k[i + r] = float(std::exp(-i * i / (2 * sigma * sigma))));
-    for (auto &v : k) v /= sum;
-    QVector<float> line(qMax(w, h));
-    auto pass = [&](int count, int stride, float *start) {
-        for (int i = 0; i < count; ++i) line[i] = start[i * stride];
-        for (int i = 0; i < count; ++i) {
-            float v = 0;
-            for (int j = qMax(-r, -i); j <= qMin(r, count - 1 - i); ++j) v += line[i + j] * k[j + r];
-            start[i * stride] = v;
-        }
-    };
-    for (int y = 0; y < h; ++y) pass(w, 1, plane.data() + y * w);
-    for (int x = 0; x < w; ++x) pass(h, w, plane.data() + x);
-}
-
 // What a box's words cast behind them: PowerPoint's text glow and outer
 // shadow, made at the size they are drawn and kept, so a slide that doesn't
 // change isn't worked out again.
 //
-// Both follow PowerPoint's own rules, measured from its exports of test decks
-// of text sizes 12-96 pt (history/tools/glow); PowerPoint shrinks its text
-// effects on smaller words, so each depends on the text size as well as on its
-// setting (all in points):
-//   glow    a band of the glow colour around the letters' outline, at full
-//           strength near them, half strength `reach` out, fading over a
-//           third of that:       reach = 0.0433 x glow^0.857 x size^0.653
-//   shadow  cast by the letters AND their glow (a glowing word's shadow is
-//           the whole glowing shape), moved   0.0561 x distance^0.929 x size^0.717
-//           in its direction and blurred by   0.0133 x blur^1.082 x size^0.709
-//           (a Gaussian's standard deviation).
-// Each is exactly as strong as its colour's own transparency.
+// Both follow the one model of glow and shadows every object shares
+// (render/effectmodel.h), measured from PowerPoint's own exports: the glow is the
+// letters grown and softened, the shadow the letters AND their glow (a glowing
+// word's shadow is the whole glowing shape) moved and softened, each exactly as
+// strong as its colour's own transparency. Effects set on the words are drawn
+// smaller on smaller words: every length (distance, blur, glow) times
+// EffectModel::textScale(text size).
 //
-// TEXT-SHADOW-2 (after EFFECTS-UI-1): a perspective outer shadow (sx/sy, kx/ky
+// A perspective outer shadow (sx/sy, kx/ky
 // about the shadowAlign point) is the same cast shape resized and slanted
-// about that point of the words' own ink box, then moved and blurred as above.
+// about that point of the laid-out lines (a box's own shadow: of the box;
+// measured), then moved and blurred as above.
 // An inner shadow (shadowInner) draws nothing here: paintInnerShadow draws it
-// over the words. PROTOTYPE: the anchor box (ink, not the text box) and the
-// inner shadow's sizes (the outer shadow's measured rule reused) are not
-// measured against PowerPoint.
+// over the words.
 bool perspectiveShadow(const SceneObject &o) {
     return !qFuzzyCompare(o.shadowScaleX, 100.0) || !qFuzzyCompare(o.shadowScaleY, 100.0)
         || !qFuzzyIsNull(o.shadowSkewX) || !qFuzzyIsNull(o.shadowSkewY);
 }
 
-// The ink box of a plane of strengths, in pixels (empty when blank).
-QRectF inkBox(const QVector<float> &plane, int w, int h) {
-    int x0 = w, y0 = h, x1 = -1, y1 = -1;
-    for (int y = 0; y < h; ++y)
-        for (int x = 0; x < w; ++x)
-            if (plane[y * w + x] > 0.02f) { x0 = qMin(x0, x); x1 = qMax(x1, x); y0 = qMin(y0, y); y1 = qMax(y1, y); }
-    return x1 < 0 ? QRectF() : QRectF(x0, y0, x1 - x0 + 1, y1 - y0 + 1);
+// The laid-out lines' rectangle (each line's advance width and height), in document units.
+// PowerPoint turns a text run's perspective shadow about this, not the text box or the ink
+// (measured: the anchor follows the lines whatever the box size or vertical anchoring).
+QRectF linesBox(QTextDocument &doc) {
+    QRectF r;
+    bool any = false;
+    QAbstractTextDocumentLayout *layout = doc.documentLayout();
+    for (QTextBlock b = doc.begin(); b.isValid(); b = b.next()) {
+        const QTextLayout *lines = b.layout();
+        if (!lines) continue;
+        const QPointF at = layout->blockBoundingRect(b).topLeft();
+        const QTextBlockFormat format = b.blockFormat();
+        for (int i = 0; i < lines->lineCount(); ++i) {
+            const QTextLine line = lines->lineAt(i);
+            // The line's whole advance, with its spacing, as the document lays it out.
+            QRectF n = line.naturalTextRect().translated(at);
+            n.setHeight(format.lineHeight(line.height(), 1.0));
+            r = any ? r.united(n) : n;
+            any = true;
+        }
+    }
+    return r;
 }
 
-// BOX-SHADOW-2: `box`, when not empty, is the text box (slide units) a box's
+// `box`, when not empty, is the text box (slide units) a box's
 // own shadow drawn on its words turns about, and that shadow is sized as a
-// shape's is (its distance as set, blur radius / 2.5 as the deviation, as
-// ShapeEffects), not by the measured text rule: it is the box's shadow, cast
-// by what the box holds.
+// shape's is (its lengths as set, not scaled by the text size): it is the
+// box's shadow, cast by what the box holds.
 void paintEffects(QPainter &painter, const SceneObject &o, QTextDocument &doc,
                   const QAbstractTextDocumentLayout::PaintContext &context, const QPointF &origin, const QSizeF &area,
                   qreal fontSize, qreal slideHeight, const QRectF &box = QRectF()) {
@@ -572,25 +522,29 @@ void paintEffects(QPainter &painter, const SceneObject &o, QTextDocument &doc,
     const bool glows = o.textGlowRadius > 0 && o.textGlowColor.alpha() > 0;
     const bool shadows = o.shadowEnabled && o.shadowColor.alpha() > 0 && !o.shadowInner;
     const bool slanted = shadows && perspectiveShadow(o);
-    const qreal reach = glows ? point * 0.0433 * std::pow(o.textGlowRadius / point, 0.857) * std::pow(size, 0.653) : 0;
-    const qreal soft = reach * 0.343;
     const qreal set = std::hypot(o.shadowX, o.shadowY);
     const bool asShape = !box.isEmpty();
-    const qreal moved = !shadows || set <= 0 ? 0 : asShape ? set : point * 0.0561 * std::pow(set / point, 0.929) * std::pow(size, 0.717);
+    const QRectF lines = slanted && !asShape ? linesBox(doc) : QRectF();
+    const qreal k = asShape ? 1 : EffectModel::textScale(size);
+    const qreal glowRadius = glows ? o.textGlowRadius * k : 0;
+    const qreal reach = glows ? EffectModel::glowGrow(glowRadius, point) : 0;
+    const qreal soft = glows ? EffectModel::glowSigma(glowRadius) : 0;
+    const qreal moved = !shadows || set <= 0 ? 0 : set * k;
     const QPointF offset = set > 0 ? QPointF(o.shadowX, o.shadowY) * (moved / set) : QPointF();
-    const qreal sigma = !shadows || o.shadowBlur <= 0 ? 0 : asShape ? o.shadowBlur / 2.5 : point * 0.0133 * std::pow(o.shadowBlur / point, 1.082) * std::pow(size, 0.709);
+    const qreal sigma = !shadows ? 0 : EffectModel::sigma(o.shadowBlur * k);
     const qreal glowEdge = glows ? reach + 4 * soft : 0;
-    qreal margin = glowEdge + (shadows ? moved + 3 * sigma : 0) + 1;
+    qreal margin = glowEdge + (shadows ? moved + 4 * sigma : 0) + 1;
     if (slanted) {
         // Room for the resized and slanted shape, whichever point it turns on.
         const QRectF box(QPointF(), area);
+        const QRectF turns = asShape || lines.isEmpty() ? box : lines;
         QRectF reached = box;
         for (int align = 0; align < 9; ++align) {
-            const QPointF a = ShapeEffects::anchor(box, align);
+            const QPointF a = ShapeEffects::anchor(turns, align);
             QTransform t;
             t.translate(a.x(), a.y());
-            t.shear(std::tan(qDegreesToRadians(qBound(-89.0, o.shadowSkewX, 89.0))), std::tan(qDegreesToRadians(qBound(-89.0, o.shadowSkewY, 89.0))));
             t.scale(o.shadowScaleX / 100.0, o.shadowScaleY / 100.0);
+            t.shear(std::tan(qDegreesToRadians(qBound(-89.0, o.shadowSkewX, 89.0))), std::tan(qDegreesToRadians(qBound(-89.0, o.shadowSkewY, 89.0))));
             t.translate(-a.x(), -a.y());
             reached = reached.united(t.mapRect(box));
         }
@@ -600,7 +554,11 @@ void paintEffects(QPainter &painter, const SceneObject &o, QTextDocument &doc,
     QSizeF full(area.width() + 2 * margin, area.height() + 2 * margin);
     // Never larger than the screen needs, never a huge picture for a huge zoom.
     scale = qBound(0.05, scale, 4096.0 / qMax(1.0, qMax(full.width(), full.height())));
-    const QSize px(qMax(1, qCeil(full.width() * scale)), qMax(1, qCeil(full.height() * scale)));
+    // On whole pixels, so the picture lands where it was worked out.
+    const QRectF at = EffectModel::onPixels(t, QRectF(origin - QPointF(margin, margin), full), scale);
+    const QPointF lead = origin - at.topLeft();
+    full = at.size();
+    const QSize px(qMax(1, qRound(full.width() * scale)), qMax(1, qRound(full.height() * scale)));
     const QString key = QStringList{QString::number(quintptr(&doc)), QString::number(qHash(o.text)),
         QString::number(px.width()), QString::number(px.height()), QString::number(area.width()), QString::number(area.height()),
         QString::number(glows ? reach : 0), o.textGlowColor.name(QColor::HexArgb),
@@ -608,7 +566,7 @@ void paintEffects(QPainter &painter, const SceneObject &o, QTextDocument &doc,
         QString::number(sigma), QString::number(slanted ? o.shadowScaleX : 100), QString::number(slanted ? o.shadowScaleY : 100),
         QString::number(slanted ? o.shadowSkewX : 0), QString::number(slanted ? o.shadowSkewY : 0),
         QString::number(slanted ? o.shadowAlign : 0), QString::number(box.x() - origin.x()), QString::number(box.y() - origin.y()),
-        QString::number(box.width()), QString::number(box.height())}.join(QLatin1Char('|'));
+        QString::number(box.width()), QString::number(box.height()), QString::number(lead.x()), QString::number(lead.y())}.join(QLatin1Char('|'));
     QImage effects;
     {
         QMutexLocker locked(&lock);
@@ -620,7 +578,7 @@ void paintEffects(QPainter &painter, const SceneObject &o, QTextDocument &doc,
         QPainter p(&image);
         p.setRenderHint(QPainter::Antialiasing);
         p.scale(scale, scale);
-        p.translate(margin, margin);
+        p.translate(lead);
         doc.documentLayout()->draw(&p, context);
         p.end();
         const int w = image.width(), h = image.height();
@@ -629,14 +587,7 @@ void paintEffects(QPainter &painter, const SceneObject &o, QTextDocument &doc,
             const auto *row = reinterpret_cast<const QRgb *>(image.constScanLine(y));
             for (int x = 0; x < w; ++x) letters[y * w + x] = qAlpha(row[x]) / 255.f;
         }
-        if (glows) {
-            QVector<bool> inside(w * h);
-            for (int i = 0; i < w * h; ++i) inside[i] = letters[i] >= 0.5f;
-            const QVector<float> d = distanceTo(inside, w, h);
-            const qreal at = reach * scale, fade = qMax<qreal>(0.5, soft * scale), strength = o.textGlowColor.alphaF();
-            // Half strength at `reach` from the outline, a smooth edge either side.
-            for (int i = 0; i < w * h; ++i) glow[i] = float(strength * 0.5 * std::erfc((d[i] - at) / (fade * M_SQRT2)));
-        }
+        if (glows) glow = EffectModel::glow(letters, w, h, reach * scale, soft * scale, float(o.textGlowColor.alphaF()));
         QVector<float> shadow;
         if (shadows) {
             // The glowing word's own shape, moved (in whole and part pixels) and blurred.
@@ -650,21 +601,25 @@ void paintEffects(QPainter &painter, const SceneObject &o, QTextDocument &doc,
             };
             shadow.resize(w * h);
             if (slanted) {
-                // The cast shape resized and slanted about its ink box's point, then moved.
+                // The cast shape slanted, then resized, about its ink box's point, then
+                // moved (PowerPoint's order, as for shapes).
                 QImage shape(w, h, QImage::Format_ARGB32_Premultiplied);
                 QVector<float> whole(w * h);
                 for (int y = 0; y < h; ++y) {
                     auto *row = reinterpret_cast<QRgb *>(shape.scanLine(y));
                     for (int x = 0; x < w; ++x) { const float v = cast(x, y); whole[y * w + x] = v; const int a = qRound(v * 255); row[x] = qRgba(a, a, a, a); }
                 }
-                const QRectF ink = asShape ? QRectF((box.topLeft() - origin + QPointF(margin, margin)) * scale, box.size() * scale)
-                                           : inkBox(whole, w, h);
+                // A box's shadow turns about the box; a run's about its laid-out lines
+                // (measured: not the letters' ink, not the text box).
+                const QRectF ink = asShape ? QRectF((box.topLeft() - origin + lead) * scale, box.size() * scale)
+                                 : lines.isEmpty() ? QRectF(lead * scale, area * scale)
+                                                   : QRectF((lead + lines.topLeft()) * scale, lines.size() * scale);
                 const QPointF a = ShapeEffects::anchor(ink.isEmpty() ? QRectF(0, 0, w, h) : ink, o.shadowAlign);
                 QTransform t;
                 t.translate(dx, dy);
                 t.translate(a.x(), a.y());
-                t.shear(std::tan(qDegreesToRadians(qBound(-89.0, o.shadowSkewX, 89.0))), std::tan(qDegreesToRadians(qBound(-89.0, o.shadowSkewY, 89.0))));
                 t.scale(o.shadowScaleX / 100.0, o.shadowScaleY / 100.0);
+                t.shear(std::tan(qDegreesToRadians(qBound(-89.0, o.shadowSkewX, 89.0))), std::tan(qDegreesToRadians(qBound(-89.0, o.shadowSkewY, 89.0))));
                 t.translate(-a.x(), -a.y());
                 QImage moved(w, h, QImage::Format_ARGB32_Premultiplied);
                 moved.fill(Qt::transparent);
@@ -686,7 +641,7 @@ void paintEffects(QPainter &painter, const SceneObject &o, QTextDocument &doc,
                     shadow[y * w + x] = (1 - fy) * ((1 - fx) * cast(sx, sy) + fx * cast(sx - 1, sy))
                                       + fy * ((1 - fx) * cast(sx, sy - 1) + fx * cast(sx - 1, sy - 1));
                 }
-            gaussian(shadow, w, h, sigma * scale);
+            EffectModel::gaussian(shadow, w, h, sigma * scale, 0.f);
             const float strength = float(o.shadowColor.alphaF());
             for (auto &v : shadow) v *= strength;
         }
@@ -705,14 +660,14 @@ void paintEffects(QPainter &painter, const SceneObject &o, QTextDocument &doc,
         QMutexLocker locked(&lock);
         cache.insert(key, new QImage(image), int(qMin<qint64>(INT_MAX, qint64(image.sizeInBytes()))));
     }
-    painter.drawImage(QRectF(origin - QPointF(margin, margin), full), effects);
+    painter.drawImage(at, effects);
 }
 
-// TEXT-SHADOW-2: PowerPoint's inner shadow on the letters (rPr innerShdw):
-// the outside of the letters, moved in the shadow's direction and blurred,
-// seen only inside the letters; drawn over the words. PROTOTYPE: its distance
-// and blur are sized by the outer shadow's measured rule (above), not measured
-// for inner shadows.
+// PowerPoint's inner shadow on the letters (rPr innerShdw):
+// the outside of the letters, moved against the shadow's direction and blurred,
+// seen only inside the letters, so the edges the shadow points to darken (as
+// PowerPoint draws it); drawn over the words, sized by the same model as the
+// outer shadow (render/effectmodel.h).
 void paintInnerShadow(QPainter &painter, const SceneObject &o, QTextDocument &doc,
                       const QAbstractTextDocumentLayout::PaintContext &context, const QPointF &origin, const QSizeF &area,
                       qreal fontSize, qreal slideHeight, bool asShape = false) {
@@ -723,16 +678,21 @@ void paintInnerShadow(QPainter &painter, const SceneObject &o, QTextDocument &do
     const qreal point = qMax<qreal>(1e-3, slideHeight) / 540;
     const qreal size = qMax<qreal>(1, fontSize) / point;
     const qreal set = std::hypot(o.shadowX, o.shadowY);
-    const qreal moved = set <= 0 ? 0 : asShape ? set : point * 0.0561 * std::pow(set / point, 0.929) * std::pow(size, 0.717);
-    const QPointF offset = set > 0 ? QPointF(o.shadowX, o.shadowY) * (moved / set) : QPointF();
-    const qreal sigma = o.shadowBlur <= 0 ? 0 : asShape ? o.shadowBlur / 2.5 : point * 0.0133 * std::pow(o.shadowBlur / point, 1.082) * std::pow(size, 0.709);
-    const qreal margin = moved + 3 * sigma + 1;
-    const QSizeF full(area.width() + 2 * margin, area.height() + 2 * margin);
+    const qreal k = asShape ? 1 : EffectModel::textInnerScale(size);
+    const qreal moved = set <= 0 ? 0 : set * k;
+    const QPointF offset = set > 0 ? -QPointF(o.shadowX, o.shadowY) * (moved / set) : QPointF();
+    const qreal sigma = EffectModel::sigma(o.shadowBlur * k);
+    const qreal margin = moved + 4 * sigma + 1;
+    QSizeF full(area.width() + 2 * margin, area.height() + 2 * margin);
     scale = qBound(0.05, scale, 4096.0 / qMax(1.0, qMax(full.width(), full.height())));
-    const QSize px(qMax(1, qCeil(full.width() * scale)), qMax(1, qCeil(full.height() * scale)));
+    const QRectF at = EffectModel::onPixels(t, QRectF(origin - QPointF(margin, margin), full), scale);
+    const QPointF lead = origin - at.topLeft();
+    full = at.size();
+    const QSize px(qMax(1, qRound(full.width() * scale)), qMax(1, qRound(full.height() * scale)));
     const QString key = QStringList{QString::number(quintptr(&doc)), QString::number(qHash(o.text)),
         QString::number(px.width()), QString::number(px.height()), QString::number(area.width()), QString::number(area.height()),
-        o.shadowColor.name(QColor::HexArgb), QString::number(offset.x()), QString::number(offset.y()), QString::number(sigma)}.join(QLatin1Char('|'));
+        o.shadowColor.name(QColor::HexArgb), QString::number(offset.x()), QString::number(offset.y()), QString::number(sigma),
+        QString::number(lead.x()), QString::number(lead.y())}.join(QLatin1Char('|'));
     QImage inner;
     {
         QMutexLocker locked(&lock);
@@ -744,7 +704,7 @@ void paintInnerShadow(QPainter &painter, const SceneObject &o, QTextDocument &do
         QPainter p(&image);
         p.setRenderHint(QPainter::Antialiasing);
         p.scale(scale, scale);
-        p.translate(margin, margin);
+        p.translate(lead);
         doc.documentLayout()->draw(&p, context);
         p.end();
         const int w = image.width(), h = image.height();
@@ -753,7 +713,7 @@ void paintInnerShadow(QPainter &painter, const SceneObject &o, QTextDocument &do
             const auto *row = reinterpret_cast<const QRgb *>(image.constScanLine(y));
             for (int x = 0; x < w; ++x) letters[y * w + x] = qAlpha(row[x]) / 255.f;
         }
-        // Outside the letters, moved by the offset (beyond the picture is outside).
+        // Outside the letters, moved back by the offset (beyond the picture is outside).
         const qreal dx = offset.x() * scale, dy = offset.y() * scale;
         const int ix = qFloor(dx), iy = qFloor(dy);
         const float fx = float(dx - ix), fy = float(dy - iy);
@@ -768,7 +728,7 @@ void paintInnerShadow(QPainter &painter, const SceneObject &o, QTextDocument &do
                 shade[y * w + x] = (1 - fy) * ((1 - fx) * out(sx, sy) + fx * out(sx - 1, sy))
                                  + fy * ((1 - fx) * out(sx, sy - 1) + fx * out(sx - 1, sy - 1));
             }
-        gaussian(shade, w, h, sigma * scale);
+        EffectModel::gaussian(shade, w, h, sigma * scale, 1.f);
         const QColor c = o.shadowColor;
         const float strength = float(c.alphaF());
         for (int y = 0; y < h; ++y) {
@@ -782,11 +742,11 @@ void paintInnerShadow(QPainter &painter, const SceneObject &o, QTextDocument &do
         QMutexLocker locked(&lock);
         cache.insert(key, new QImage(image), int(qMin<qint64>(INT_MAX, qint64(image.sizeInBytes()))));
     }
-    painter.drawImage(QRectF(origin - QPointF(margin, margin), full), inner);
+    painter.drawImage(at, inner);
 }
 } // namespace
 
-// STYLE3D: Text Fill and Text Outline. The letters with a fill of their own
+// Text Fill and Text Outline. The letters with a fill of their own
 // were drawn clear; their outlines are filled here as a shape's fill is
 // (gradients across the text box), and every outline drawn over, as
 // PowerPoint draws a:rPr's a:ln. `box` is the text box in the painter's frame.
@@ -853,8 +813,44 @@ static void paintFillsAndOutlines(QPainter &painter, const SceneObject &o, QText
     }
 }
 
+namespace {
+thread_local int tLetters = -1;
+
+// A box with no fill and no outline: PowerPoint draws only a plain outer
+// shadow of it (no resize or slant), cast by its words. Its glow, inner
+// shadow and perspective shadow draw nothing (measured); they are kept and
+// written back all the same.
+bool boxShadowOnWords(const SceneObject &o) {
+    return o.boxShadowEnabled && !o.shadowEnabled && !o.boxShadowInner && qFuzzyCompare(o.boxShadowScaleX, 100.0) &&
+           qFuzzyCompare(o.boxShadowScaleY, 100.0) && qFuzzyIsNull(o.boxShadowSkewX) && qFuzzyIsNull(o.boxShadowSkewY);
+}
+// What the words without effects of their own draw: the box's own effects
+// (with a no-fill box's shadow on them).
+SceneObject effectsCarrier(const SceneObject &o) {
+    SceneObject merged = o;
+    if (boxShadowOnWords(o)) merged.swapBoxShadow();
+    return merged;
+}
+} // namespace
+
+QVector<SceneObject> TextLayout::effectLooks(const SceneObject &o) {
+    QVector<SceneObject> looks{effectsCarrier(o)};
+    for (const auto &set : effectSets(o)) looks.append(FillStyle::withTextEffects(o, set));
+    return looks;
+}
+
+void TextLayout::paintLetters(QPainter &painter, const SceneObject &o, int index, qreal slideHeight) {
+    const int was = tLetters;
+    tLetters = qMax(0, index);
+    {
+        LayerEffects::PassScope face(LayerEffects::Pass::Face);
+        paint(painter, o, slideHeight);
+    }
+    tLetters = was;
+}
+
 void TextLayout::paint(QPainter &painter, const SceneObject &o, qreal slideHeight) {
-    // STYLE3D: only words laid out in a box have anything drawn behind them.
+    // Only words laid out in a box have anything drawn behind them.
     if (LayerEffects::pass() == LayerEffects::Pass::Behind && (onPath(o) || maths(o) || legacy(o) || o.columns > 1)) return;
     if (onPath(o)) {
         const auto metrics = measure(o);
@@ -930,20 +926,13 @@ void TextLayout::paint(QPainter &painter, const SceneObject &o, qreal slideHeigh
     const qreal spare = qMax(0.0, o.rect.height() - metrics.renderedHeight);
     const qreal dy = o.verticalAlign == 1 ? spare / 2 : o.verticalAlign == 2 ? spare : 0;
     const QPointF origin = o.rect.topLeft() + QPointF(overhangShift(o, metrics.effectiveSize), dy - FontSwap::verticalFix(o, metrics.effectiveSize).shift);
-    // BOTH-EFFECTS-1: a text box's own effects (no fill, no outline to carry
+    // A text box's own effects (no fill, no outline to carry
     // them) are drawn on its words, as PowerPoint does: each kind only where
     // the words have none of their own.
-    const SceneObject *fx = &o;
-    SceneObject merged;
-    const bool boxGlow = o.glowRadius > 0 && o.glowColor.alpha() > 0 && !(o.textGlowRadius > 0);
-    const bool boxShadow = o.boxShadowEnabled && !o.shadowEnabled;
-    if (boxGlow || boxShadow) {
-        merged = o;
-        if (boxGlow) { merged.textGlowRadius = o.glowRadius; merged.textGlowColor = o.glowColor; }
-        if (boxShadow) merged.swapBoxShadow();
-        fx = &merged;
-    }
-    // STYLE3D: stretches with effects of their own draw them from their own
+    const bool boxShadow = boxShadowOnWords(o);
+    const SceneObject merged = boxShadow ? effectsCarrier(o) : SceneObject();
+    const SceneObject *fx = boxShadow ? &merged : &o;
+    // Stretches with effects of their own draw them from their own
     // letters (the rest of the words draw the box's).
     const QVector<QVariantMap> sets = effectSets(o);
     struct Cast { SceneObject look; std::shared_ptr<QTextDocument> letters; };
@@ -954,7 +943,18 @@ void TextLayout::paint(QPainter &painter, const SceneObject &o, qreal slideHeigh
         for (int i = 0; i < sets.size(); ++i)
             casts.append({FillStyle::withTextEffects(o, sets.at(i)), layout(o, metrics.effectiveSize, false, i + 1)});
     }
-    const QSizeF area(o.rect.width() + overhang(o, metrics.effectiveSize), qMax(metrics.renderedHeight, o.rect.height()));
+    // Only one stretch's letters, for its effects cast from the turned words
+    // (paintLetters).
+    if (tLetters >= 0) {
+        if (tLetters < casts.size()) {
+            painter.save();
+            painter.translate(origin);
+            casts.at(tLetters).letters->documentLayout()->draw(&painter, context);
+            painter.restore();
+        }
+        return;
+    }
+    const QSizeF area(o.rect.width(), qMax(metrics.renderedHeight, o.rect.height()));
     const qreal effectSize = !o.origFont.isEmpty() && o.fontScale > 0 ? metrics.effectiveSize / o.fontScale : metrics.effectiveSize;
     const auto pass = LayerEffects::pass();
     // Shadow and glow first, under the words and not cut off at the box.
@@ -977,16 +977,25 @@ void TextLayout::paint(QPainter &painter, const SceneObject &o, qreal slideHeigh
     } else
         doc->documentLayout()->draw(&painter, context);
     painter.restore();
-    // TEXT-SHADOW-2: an inner shadow goes over the words, cut as they are.
+    // An inner shadow goes over the words, cut as they are.
     for (const auto &cast : casts) {
         const SceneObject &e = cast.look;
         if (!(e.shadowEnabled && e.shadowInner && e.shadowColor.alpha() > 0)) continue;
         painter.save();
-        if (o.textFit < 2 && !fitIsKept(o)) painter.setClipRect(o.rect, Qt::IntersectClip);
+        painter.setClipRect(o.rect, Qt::IntersectClip);
         paintInnerShadow(painter, e, *cast.letters, context, origin, area, effectSize, slideHeight,
                          boxShadow && &cast == &casts.first());
         painter.restore();
     }
+}
+
+QRectF TextLayout::linesRect(const SceneObject &o) {
+    if (onPath(o) || maths(o) || legacy(o) || o.columns > 1) return o.rect;
+    const auto metrics = measure(o);
+    const qreal height = qMin(o.rect.height(), metrics.renderedHeight);
+    const qreal spare = qMax(0.0, o.rect.height() - metrics.renderedHeight);
+    const qreal dy = o.verticalAlign == 1 ? spare / 2 : o.verticalAlign == 2 ? spare : 0;
+    return QRectF(o.rect.left(), o.rect.top() + dy, o.rect.width(), qMax<qreal>(1e-3, height));
 }
 
 QString TextLayout::editorHtml(const SceneObject &object) {

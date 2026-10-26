@@ -67,7 +67,7 @@ bool TextRuns::apply(SceneObject &object, int start, int end, const QString &key
     if (start >= end) return false;
     static const QStringList keys{"weight", "italic", "underline", "strike",
                                   "baseline", "fontSize", "fontFamily", "color", "language",
-                                  "fill", "outline", "effects"};   // STYLE3D
+                                  "fill", "outline", "effects"};
     if (!keys.contains(key)) return false;
     QVariantMap styled;
     if (key == "fill" && !FillStyle::checkTextFill(value, &styled)) return false;
@@ -179,7 +179,7 @@ QVariantList TextRuns::encode(const QVector<TextRun> &runs) {
         if (run.origFontSize > 0) row.insert("origFontSize", run.origFontSize);
         if (!qFuzzyCompare(run.fontScale, 1.0)) row.insert("fontScale", run.fontScale);
         if (run.origWeight) row.insert("origWeight", run.origWeight);
-        // STYLE3D: written only when set.
+        // Written only when set.
         if (!run.fill.isEmpty()) row.insert("fill", run.fill);
         if (!run.outline.isEmpty()) row.insert("outline", run.outline);
         if (!run.effects.isEmpty()) row.insert("effects", run.effects);

@@ -1,6 +1,7 @@
 #include "render/shapeeffects.h"
 
 #include "core/scene.h"
+#include "render/effectmodel.h"
 
 #include <QCache>
 #include <QImage>
@@ -11,69 +12,6 @@
 #include <cmath>
 
 namespace {
-
-// Blurs a plane of strengths in place: a Gaussian of this standard deviation
-// (pixels), one direction then the other. Past its edges the plane is taken to
-// go on at `outside` (0 for a shadow; 1 for what lies outside an inner one).
-void gaussian(QVector<float> &plane, int w, int h, qreal sigma, float outside) {
-    if (sigma < 0.3) return;
-    const int r = qCeil(sigma * 3);
-    QVector<float> k(2 * r + 1);
-    float sum = 0;
-    for (int i = -r; i <= r; ++i) sum += (k[i + r] = float(std::exp(-i * i / (2 * sigma * sigma))));
-    for (auto &v : k) v /= sum;
-    QVector<float> line(qMax(w, h));
-    auto pass = [&](int count, int stride, float *start) {
-        for (int i = 0; i < count; ++i) line[i] = start[i * stride];
-        for (int i = 0; i < count; ++i) {
-            float v = 0;
-            for (int j = -r; j <= r; ++j) {
-                const int at = i + j;
-                v += (at < 0 || at >= count ? outside : line[at]) * k[j + r];
-            }
-            start[i * stride] = v;
-        }
-    };
-    for (int y = 0; y < h; ++y) pass(w, 1, plane.data() + y * w);
-    for (int x = 0; x < w; ++x) pass(h, w, plane.data() + x);
-}
-
-// Distance from every pixel to the nearest marked one, in pixels (exact
-// Euclidean, Felzenszwalb & Huttenlocher's two passes).
-QVector<float> distanceTo(const QVector<bool> &marked, int w, int h) {
-    const float far = 1e20f;
-    QVector<float> d(w * h);
-    for (int i = 0; i < w * h; ++i) d[i] = marked[i] ? 0 : far;
-    const int n = qMax(w, h);
-    QVector<float> f(n), out(n), z(n + 1);
-    QVector<int> v(n);
-    auto pass = [&](int count) {
-        int k = 0;
-        v[0] = 0; z[0] = -far; z[1] = far;
-        for (int q = 1; q < count; ++q) {
-            auto meet = [&](int r) { return ((f[q] + q * q) - (f[r] + r * r)) / (2.0f * (q - r)); };
-            float s = meet(v[k]);
-            while (s <= z[k]) s = meet(v[--k]);
-            ++k; v[k] = q; z[k] = s; z[k + 1] = far;
-        }
-        k = 0;
-        for (int q = 0; q < count; ++q) {
-            while (z[k + 1] < q) ++k;
-            out[q] = (q - v[k]) * (q - v[k]) + f[v[k]];
-        }
-    };
-    for (int x = 0; x < w; ++x) {
-        for (int y = 0; y < h; ++y) f[y] = d[y * w + x];
-        pass(h);
-        for (int y = 0; y < h; ++y) d[y * w + x] = out[y];
-    }
-    for (int y = 0; y < h; ++y) {
-        std::copy(d.cbegin() + y * w, d.cbegin() + (y + 1) * w, f.begin());
-        pass(w);
-        for (int x = 0; x < w; ++x) d[y * w + x] = std::sqrt(out[x]);
-    }
-    return d;
-}
 
 // A path's coverage as strengths 0-1, over `region` (slide units) at `scale`
 // pixels per unit, moved by `t` first.
@@ -107,21 +45,42 @@ QString signature(const QPainterPath &path) {
     return QString::number(h, 16) + QLatin1Char(':') + QString::number(path.elementCount());
 }
 
-// The shadow's own move: resized and slanted about the anchor, then moved.
+// The shadow's own move: slanted, then resized, about the anchor, then moved.
+// PowerPoint slants the whole shape before resizing it (measured: the top of an
+// "upper left" perspective shadow moves tan(20°) x the full height).
 QTransform shadowMove(const SceneObject &o) {
     const QPointF a = ShapeEffects::anchor(o.rect, o.shadowAlign);
     QTransform t;
     t.translate(o.shadowX, o.shadowY);
     t.translate(a.x(), a.y());
-    t.shear(std::tan(qDegreesToRadians(o.shadowSkewX)), std::tan(qDegreesToRadians(o.shadowSkewY)));
     t.scale(o.shadowScaleX / 100.0, o.shadowScaleY / 100.0);
+    t.shear(std::tan(qDegreesToRadians(o.shadowSkewX)), std::tan(qDegreesToRadians(o.shadowSkewY)));
     t.translate(-a.x(), -a.y());
     return t;
 }
 
-// How soft a PowerPoint blur radius is, as a Gaussian's standard deviation.
-// (A blur radius is taken as reaching about 2.5 deviations: unmeasured.)
-qreal sigmaOf(qreal blur) { return qMax<qreal>(0, blur) / 2.5; }
+// What the object casts, as drawn by `drawn` (its own transparency, so a
+// half-transparent fill casts a half-strength shadow, as PowerPoint does), over
+// `region` at `scale`, moved by `t` first.
+QVector<float> drawnCoverage(const std::function<void(QPainter &)> &drawn, const QTransform &t, const QRectF &region, qreal scale, int w, int h) {
+    QImage image(w, h, QImage::Format_ARGB32_Premultiplied);
+    image.fill(Qt::transparent);
+    {
+        QPainter p(&image);
+        p.setRenderHint(QPainter::Antialiasing);
+        p.setRenderHint(QPainter::SmoothPixmapTransform);
+        p.scale(scale, scale);
+        p.translate(-region.topLeft());
+        p.setTransform(t, true);
+        drawn(p);
+    }
+    QVector<float> plane(w * h);
+    for (int y = 0; y < h; ++y) {
+        const auto *row = reinterpret_cast<const QRgb *>(image.constScanLine(y));
+        for (int x = 0; x < w; ++x) plane[y * w + x] = qAlpha(row[x]) / 255.f;
+    }
+    return plane;
+}
 
 QMutex lock;
 QCache<QString, QImage> &cache() {
@@ -157,11 +116,14 @@ bool ShapeEffects::soft(const SceneObject &o) {
     const bool shadow = o.shadowEnabled && o.shadowColor.alpha() > 0;
     if (glow) return true;
     if (!shadow) return false;
-    return o.shadowInner || o.shadowBlur > 0 || !qFuzzyCompare(o.shadowScaleX, 100.0) || !qFuzzyCompare(o.shadowScaleY, 100.0) ||
+    // A see-through fill or outline casts a fainter shadow (render/effectmodel.h).
+    const bool seeThrough = (o.fillStyle != 5 && o.fill.alpha() < 255) || (o.strokeWidth > 0 && o.strokeColor.alpha() < 255);
+    return o.shadowInner || o.shadowBlur > 0 || seeThrough || !qFuzzyCompare(o.shadowScaleX, 100.0) || !qFuzzyCompare(o.shadowScaleY, 100.0) ||
            !qFuzzyIsNull(o.shadowSkewX) || !qFuzzyIsNull(o.shadowSkewY);
 }
 
-void ShapeEffects::paintBehind(QPainter &painter, const SceneObject &o, const QPainterPath &area, const QPainterPath &outline) {
+void ShapeEffects::paintBehind(QPainter &painter, const SceneObject &o, const QPainterPath &area, const QPainterPath &outline,
+                               const std::function<void(QPainter &)> &drawn) {
     const bool glow = o.glowRadius > 0 && o.glowColor.alpha() > 0;
     const bool shadow = o.shadowEnabled && !o.shadowInner && o.shadowColor.alpha() > 0;
     if (!glow && !shadow) return;
@@ -170,37 +132,41 @@ void ShapeEffects::paintBehind(QPainter &painter, const SceneObject &o, const QP
     if (shape.isEmpty()) return;
     const QRectF bounds = shape.boundingRect();
     const QTransform move = shadow ? shadowMove(o) : QTransform();
-    const qreal sigma = shadow ? sigmaOf(o.shadowBlur) : 0;
-    QRectF region = bounds.adjusted(-o.glowRadius * 1.2, -o.glowRadius * 1.2, o.glowRadius * 1.2, o.glowRadius * 1.2);
-    if (shadow) region = region.united(move.map(shape).boundingRect().adjusted(-3 * sigma, -3 * sigma, 3 * sigma, 3 * sigma));
+    const qreal sigma = shadow ? EffectModel::sigma(o.shadowBlur) : 0;
+    const qreal grow = glow ? EffectModel::glowGrow(o.glowRadius, EffectModel::unitsPerPoint()) : 0;
+    const qreal glowSigma = glow ? EffectModel::glowSigma(o.glowRadius) : 0;
+    const qreal reach = grow + 4 * glowSigma;
+    QRectF region = bounds.adjusted(-reach, -reach, reach, reach);
+    if (shadow) region = region.united(move.map(shape).boundingRect().adjusted(-4 * sigma, -4 * sigma, 4 * sigma, 4 * sigma));
     region.adjust(-1, -1, 1, 1);
     const qreal scale = drawScale(painter, region.size());
-    const int w = qMax(1, qCeil(region.width() * scale)), h = qMax(1, qCeil(region.height() * scale));
+    region = EffectModel::onPixels(painter.worldTransform(), region, scale);
+    const int w = qMax(1, qRound(region.width() * scale)), h = qMax(1, qRound(region.height() * scale));
+    // What the object casts: as drawn when the caller can draw it, else its
+    // silhouette at full strength.
+    QVector<float> cast;
+    QString castKey = QStringLiteral("solid");
+    if (shadow && drawn) {
+        cast = drawnCoverage(drawn, move, region, scale, w, h);
+        castKey = QString::number(qHashBits(cast.constData(), size_t(cast.size()) * sizeof(float)), 16);
+    }
     const QString key = QStringList{QStringLiteral("behind"), signature(shape), QString::number(w), QString::number(h),
                                     QString::number(region.x()), QString::number(region.y()),
                                     QString::number(glow ? o.glowRadius : 0), o.glowColor.name(QColor::HexArgb),
                                     QString::number(shadow), o.shadowColor.name(QColor::HexArgb), QString::number(sigma),
                                     QString::number(move.m11()), QString::number(move.m12()), QString::number(move.m21()),
-                                    QString::number(move.m22()), QString::number(move.dx()), QString::number(move.dy())}
+                                    QString::number(move.m22()), QString::number(move.dx()), QString::number(move.dy()),
+                                    QString::number(grow), castKey}
                             .join(QLatin1Char('|'));
     QImage picture = cached(key);
     if (picture.isNull()) {
-        const QVector<float> body = coverage(shape, QTransform(), region, scale, w, h);
-        QVector<float> halo(w * h, 0.f), cast;
-        if (glow) {
-            // Half strength half-way out, all but gone at the glow's size
-            // (unmeasured against PowerPoint for shapes; text glow is measured).
-            QVector<bool> inside(w * h);
-            for (int i = 0; i < w * h; ++i) inside[i] = body[i] >= 0.5f;
-            const QVector<float> d = distanceTo(inside, w, h);
-            const qreal at = o.glowRadius * 0.5 * scale, fade = qMax<qreal>(0.5, o.glowRadius * 0.2 * scale);
-            const float strength = float(o.glowColor.alphaF());
-            for (int i = 0; i < w * h; ++i)
-                halo[i] = qMax(body[i], float(0.5 * std::erfc((d[i] - at) / (fade * M_SQRT2)))) * strength;
-        }
+        QVector<float> halo(w * h, 0.f);
+        if (glow)
+            halo = EffectModel::glow(coverage(shape, QTransform(), region, scale, w, h), w, h, grow * scale, glowSigma * scale,
+                                     float(o.glowColor.alphaF()));
         if (shadow) {
-            cast = coverage(shape, move, region, scale, w, h);
-            gaussian(cast, w, h, sigma * scale, 0.f);
+            if (cast.isEmpty()) cast = coverage(shape, move, region, scale, w, h);
+            EffectModel::gaussian(cast, w, h, sigma * scale, 0.f);
             const float strength = float(o.shadowColor.alphaF());
             for (auto &v : cast) v *= strength;
         }
@@ -223,23 +189,40 @@ void ShapeEffects::paintBehind(QPainter &painter, const SceneObject &o, const QP
 
 void ShapeEffects::paintInside(QPainter &painter, const SceneObject &o, const QPainterPath &area) {
     if (!o.shadowEnabled || !o.shadowInner || o.shadowColor.alpha() == 0 || area.isEmpty()) return;
-    const qreal sigma = sigmaOf(o.shadowBlur);
-    const QRectF region = area.boundingRect().adjusted(-1, -1, 1, 1);
+    const qreal sigma = EffectModel::sigma(o.shadowBlur);
+    // The outside moves against the shadow's direction, so the edge the shadow
+    // points to darkens (as PowerPoint draws it: dir 45° darkens bottom and right).
+    const QTransform move = QTransform::fromTranslate(-o.shadowX, -o.shadowY);
+    // What casts it is the shape with its outline (as PowerPoint, measured: the
+    // band is narrower by the outline), and the picture is made wide enough to
+    // hold all of it moved and softened, so nothing past its edge counts as
+    // outside.
+    QPainterPath cast = area;
+    if (o.strokeWidth > 0) {
+        QPainterPathStroker stroker;
+        stroker.setWidth(o.strokeWidth);
+        stroker.setJoinStyle(Qt::MiterJoin);
+        cast = cast.united(stroker.createStroke(area));
+        cast.setFillRule(Qt::WindingFill);
+    }
+    const qreal reach = 4 * sigma + 1;
+    QRectF region = area.boundingRect().united(move.map(cast).boundingRect()).adjusted(-reach, -reach, reach, reach);
     const qreal scale = drawScale(painter, region.size());
-    const int w = qMax(1, qCeil(region.width() * scale)), h = qMax(1, qCeil(region.height() * scale));
-    const QTransform move = QTransform::fromTranslate(o.shadowX, o.shadowY);
+    region = EffectModel::onPixels(painter.worldTransform(), region, scale);
+    const int w = qMax(1, qRound(region.width() * scale)), h = qMax(1, qRound(region.height() * scale));
     const QString key = QStringList{QStringLiteral("inside"), signature(area), QString::number(w), QString::number(h),
                                     QString::number(region.x()), QString::number(region.y()), o.shadowColor.name(QColor::HexArgb),
-                                    QString::number(sigma), QString::number(o.shadowX), QString::number(o.shadowY)}
+                                    QString::number(sigma), QString::number(o.shadowX), QString::number(o.shadowY),
+                                    QString::number(o.strokeWidth)}
                             .join(QLatin1Char('|'));
     QImage picture = cached(key);
     if (picture.isNull()) {
         const QVector<float> body = coverage(area, QTransform(), region, scale, w, h);
-        // What lies outside the shape, moved in by the shadow's offset and
+        // What lies outside the shape, moved back by the shadow's offset and
         // softened, seen through the shape.
-        QVector<float> outside = coverage(area, move, region, scale, w, h);
+        QVector<float> outside = coverage(cast, move, region, scale, w, h);
         for (auto &v : outside) v = 1 - v;
-        gaussian(outside, w, h, sigma * scale, 1.f);
+        EffectModel::gaussian(outside, w, h, sigma * scale, 1.f);
         const QColor c = o.shadowColor;
         const float strength = float(c.alphaF());
         QImage image(w, h, QImage::Format_ARGB32_Premultiplied);

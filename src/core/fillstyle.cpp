@@ -286,7 +286,7 @@ SceneObject FillStyle::boxShape(const SceneObject &o) {
     box.swapBoxShadow();
     box.boxShadowEnabled = false;
     box.boxDrawn = false;
-    // STYLE3D: the words' own effects stay with the words.
+    // The words' own effects stay with the words.
     box.textReflection = Effects3D::Reflection();
     box.textFormat3d = Effects3D::Format();
     box.textScene3d = Effects3D::Scene();
@@ -304,7 +304,7 @@ QVector<SceneObject> FillStyle::split(const SceneObject &o) {
     words.glowRadius = 0;
     // An outlined box with no fill casts its shadow from its words too.
     if (o.fillStyle != 5) words.boxShadowEnabled = false;
-    // STYLE3D: the box's soft edges, reflection and 3-D format are the box's.
+    // The box's soft edges, reflection and 3-D format are the box's.
     words.softEdge = 0;
     words.reflection = Effects3D::Reflection();
     words.format3d = Effects3D::Format();
@@ -341,7 +341,7 @@ void FillStyle::copyPicture(SceneObject &to, const SceneObject &from) {
     
 }
 
-// ---- STYLE3D: Text Fill, Text Outline and a stretch's own text effects
+// ---- Text Fill, Text Outline and a stretch's own text effects
 
 namespace FillStyle {
 
